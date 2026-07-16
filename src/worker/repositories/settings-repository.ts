@@ -1,5 +1,6 @@
 import type { AppSettings, InitialSettings, RegionCode, Theme } from "../../shared/domain";
 
+/** D1 查询别名后的内部行模型，与对外 AppSettings 分离以避免泄漏数据库列命名。 */
 interface SettingsRow {
   enabledRegionsJson: string;
   defaultSearchRegion: RegionCode;
@@ -11,10 +12,15 @@ interface SettingsRow {
   createdAt: string;
 }
 
+/**
+ * 单管理员全局设置的持久化边界。数据库约束保证仅有 id=1，
+ * 因此仓储不会接受任意设置 ID，避免个人站点误演变为多租户数据模型。
+ */
 export class SettingsRepository {
   public constructor(private readonly database: D1Database) {}
 
   public async saveInitial(settings: InitialSettings): Promise<void> {
+    // 初始化只写入用户必须选择的地区；其余偏好使用迁移定义的安全默认值，减少首次配置负担。
     await this.database
       .prepare(
         `INSERT INTO settings (
@@ -35,6 +41,7 @@ export class SettingsRepository {
   }
 
   public async get(): Promise<AppSettings | null> {
+    // 使用显式列和别名而不是 SELECT *，确保新增敏感设置列不会意外被 API 返回。
     const row = await this.database
       .prepare(
         `SELECT
@@ -51,10 +58,10 @@ export class SettingsRepository {
       )
       .first<SettingsRow>();
 
-    if (!row) {
-      return null;
-    }
+    // 无单例设置记录意味着部署尚未完成首次管理员初始化。
+    if (!row) return null;
 
+    // enabled_regions_json 是受控 RegionCode 数组；写入由服务层校验，读取时恢复为领域类型供 UI 使用。
     return {
       enabledRegions: JSON.parse(row.enabledRegionsJson) as RegionCode[],
       defaultSearchRegion: row.defaultSearchRegion,

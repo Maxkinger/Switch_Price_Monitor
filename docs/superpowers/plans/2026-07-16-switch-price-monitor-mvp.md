@@ -16,6 +16,7 @@
 - Price collection occurs every six hours; manual refresh has a 15-minute cooldown; daily report defaults to `Asia/Shanghai` 09:00.
 - Preserve price history by the selected policy; delete fetch logs after 90 days.
 - Never return, log, export, or commit passwords, recovery codes, Telegram credentials, or other secrets.
+- Before each task, read `AGENTS.md` and `docs/README.md`; every new or modified source, test, SQL migration and configuration file requires accurate, detailed Chinese comments explaining responsibility and key business/security constraints.
 - Use `apply_patch` for source edits, test each task before committing, and do not deploy until all acceptance checks pass.
 
 ---
@@ -146,6 +147,8 @@ git commit -m "feat: add D1 price monitoring schema"
 
 ## Task 3: Implement first-run setup, authentication, and session security
 
+实施状态（2026-07-16）：认证服务、D1 迁移和 HTTP 接口已完成并通过测试；首次运行与登录页面将在 Task 8 的前端实现中接入。
+
 **Files:**
 - Create: `src/worker/services/auth-service.ts`, `src/worker/routes/auth-routes.ts`, `src/worker/repositories/auth-repository.ts`
 - Create: `src/shared/regions.ts`
@@ -156,7 +159,7 @@ git commit -m "feat: add D1 price monitoring schema"
 - `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/auth/recover`.
 - `requireAdmin(request, env): Promise<AdminSession>` rejects invalid/missing sessions with `401`.
 
-- [ ] **Step 1: Write failing initialization and login tests**
+- [x] **Step 1: Write failing initialization and login tests**
 
 ```ts
 it("requires the default search region to be selected during initialization", async () => {
@@ -171,16 +174,16 @@ it("allows initialization once and issues an HttpOnly session after login", asyn
 });
 ```
 
-- [ ] **Step 2: Run the auth tests and verify failure**
+- [x] **Step 2: Run the auth tests and verify failure**
 
 Run: `npm test -- --run test/auth.test.ts`  
 Expected: FAIL with missing authentication routes.
 
-- [ ] **Step 3: Implement password hashing, one-time setup and recovery code flow**
+- [x] **Step 3: Implement password hashing, one-time setup and recovery code flow**
 
-Use Web Crypto PBKDF2 with a random salt and a constant-time verification path. Persist only password/recovery-code hashes. Generate and return the recovery code only in the successful initialization response. Store sessions as random opaque tokens in a Secure, HttpOnly, SameSite=Lax cookie and keep only their SHA-256 hash in D1. Apply an IP+account lock after five failures within 15 minutes.
+Use Web Crypto PBKDF2 with a random salt and a constant-time verification path. Persist only password/recovery-code hashes. Generate and return the recovery code only in the successful initialization response. Store sessions as random opaque tokens in a Secure, HttpOnly, SameSite=Lax cookie and keep only their SHA-256 hash in D1. For the confirmed single-administrator deployment, apply an account-level lock after five failures for fifteen minutes; do not persist IP addresses unnecessarily.
 
-- [ ] **Step 4: Run auth test suite**
+- [x] **Step 4: Run auth test suite**
 
 Run: `npm test -- --run test/auth.test.ts`  
 Expected: PASS; second initialization returns `409`, expired/revoked sessions return `401`, and recovery code is one-time use.

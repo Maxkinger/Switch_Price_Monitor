@@ -1,5 +1,6 @@
 import type { SubscriptionInput, SubscriptionRecord } from "../../shared/domain";
 
+/** 联表聚合后的 D1 行模型；GROUP_CONCAT 为空时表示订阅尚未关联任何已验证地区商品。 */
 interface SubscriptionRow {
   id: string;
   gameId: string;
@@ -8,10 +9,15 @@ interface SubscriptionRow {
   regionalProductIds: string | null;
 }
 
+/**
+ * 订阅及其地区商品关联的仓储。订阅与价格历史分离，关闭订阅只更新 enabled，
+ * 后续功能不得通过删除订阅清掉用户已经积累的历史价格。
+ */
 export class SubscriptionRepository {
   public constructor(private readonly database: D1Database) {}
 
   public async create(input: SubscriptionInput): Promise<void> {
+    // 先创建主订阅再写关系表，保证每个地区商品都可追溯到同一个用户确认的订阅配置。
     await this.database
       .prepare(
         `INSERT INTO subscriptions (id, game_id, enabled, created_at, updated_at)
@@ -20,6 +26,7 @@ export class SubscriptionRepository {
       .bind(input.id, input.gameId, input.createdAt, input.createdAt)
       .run();
 
+    // 批量写入减少 Worker 与 D1 的往返；外键会拒绝不存在的地区商品，避免形成无效监控项。
     await this.database.batch(
       input.regionalProductIds.map((regionalProductId) =>
         this.database
@@ -30,6 +37,7 @@ export class SubscriptionRepository {
   }
 
   public async findByGameId(gameId: string): Promise<SubscriptionRecord | null> {
+    // 游戏在当前 MVP 只能有一个订阅，查询按 game_id 而不是展示名称，防止多语言标题造成重复匹配。
     const row = await this.database
       .prepare(
         `SELECT
@@ -46,10 +54,9 @@ export class SubscriptionRepository {
       .bind(gameId)
       .first<SubscriptionRow>();
 
-    if (!row) {
-      return null;
-    }
+    if (!row) return null;
 
+    // GROUP_CONCAT 仅是读取优化；返回前还原为领域数组，业务层不依赖数据库聚合格式。
     return {
       id: row.id,
       gameId: row.gameId,

@@ -1,12 +1,15 @@
 {
+  // Worker 与静态资源同域部署，个人管理员无需维护额外服务器或跨域凭据。
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "switch-price-monitor",
   "main": "./src/worker/index.ts",
   "compatibility_date": "2026-07-16",
+  // /api 请求优先进入 Worker；其余路径由 SPA 回退处理，支持浏览器直接访问前端路由。
   "assets": {
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*"]
   },
+  // 本地测试使用占位 D1 ID；实际部署必须在本机 Wrangler 配置或部署流程中替换，不得写入生产数据或秘密。
   "d1_databases": [
     {
       "binding": "DB",

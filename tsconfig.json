@@ -1,4 +1,5 @@
 {
+  // 前端、Worker 和测试共用严格类型检查；noEmit 防止 tsc 覆盖 Vite/Cloudflare 的专用构建产物。
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
@@ -8,6 +9,7 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
+    // 同时声明浏览器、Worker D1 与 Vitest 全局类型，避免把任一运行时 API 误当作任意值。
     "types": [
       "@cloudflare/workers-types",
       "@cloudflare/vitest-pool-workers/types",

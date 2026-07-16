@@ -1,18 +1,22 @@
 :root {
+  /* 基础暖色主题与中文系统字体；颜色变量后续会按用户主题设置覆盖，避免在组件内散落视觉常量。 */
   color: #362a22;
   background: #fff7ed;
   font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 * {
+  /* 所有组件采用边框盒模型，表单和卡片的尺寸不会因边框/内边距超出栅格。 */
   box-sizing: border-box;
 }
 
 body {
+  /* 移除浏览器默认边距，让应用外壳能可靠铺满视口。 */
   margin: 0;
 }
 
 .app-shell {
+  /* 当前占位页居中；后续左侧导航布局会复用该外壳类，保持初始加载无跳动。 */
   display: grid;
   min-height: 100vh;
   place-items: center;

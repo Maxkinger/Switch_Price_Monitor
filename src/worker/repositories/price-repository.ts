@@ -1,9 +1,14 @@
 import type { HistoricalLow, PriceSnapshot } from "../../shared/domain";
 
+/**
+ * 价格快照仓储只追加、不覆盖。当前价格、降价和历史最低价均从快照派生，
+ * 以保留来源切换、汇率波动和促销结束后的审计证据。
+ */
 export class PriceRepository {
   public constructor(private readonly database: D1Database) {}
 
   public async append(snapshot: PriceSnapshot): Promise<void> {
+    // 金额由调用方按最小货币单位规范化；仓储保持原样写入，避免浮点转换破坏跨币种比较。
     await this.database
       .prepare(
         `INSERT INTO price_snapshots (
@@ -27,6 +32,7 @@ export class PriceRepository {
   }
 
   public async countForRegionalProduct(regionalProductId: string): Promise<number> {
+    // 计数用于测试和后续数据保留任务，不把完整快照加载到 Worker 内存中。
     const row = await this.database
       .prepare("SELECT COUNT(*) AS count FROM price_snapshots WHERE regional_product_id = ?")
       .bind(regionalProductId)
@@ -36,6 +42,7 @@ export class PriceRepository {
   }
 
   public async lowestForRegionalProduct(regionalProductId: string): Promise<HistoricalLow | null> {
+    // 同价时取最早捕获记录，确保历史最低价日期稳定；关联地区表以支持日报直接显示地区名称。
     return this.database
       .prepare(
         `SELECT

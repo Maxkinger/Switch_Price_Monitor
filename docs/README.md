@@ -1,9 +1,11 @@
 # Switch Price Monitor 文档中心
 
-状态：设计进行中  
+状态：开发进行中
 最后更新：2026-07-16
 
 本目录按产品、架构与决策分类维护。每个需求或设计部分经确认后，应同步更新相应文档，并在需求追踪表中记录状态。
+
+项目级执行与注释规范见根目录 [AGENTS.md](../../AGENTS.md)。所有自动化开发代理在执行前必须阅读该文件；任何新增或改动的代码、测试、SQL 与配置均须配有与实现一致的中文详细注释。
 
 | 文档 | 用途 | 状态 |
 | --- | --- | --- |
@@ -13,7 +15,7 @@
 | [数据模型](architecture/data-model.md) | 业务实体、关系、保留策略与敏感数据边界 | 已确认部分 |
 | [API 设计](architecture/api-design.md) | 前后端接口边界和访问控制原则 | 已确认部分 |
 | [质量与验收策略](quality/quality-and-acceptance.md) | 可靠性、安全、测试和发布验收规则 | 已确认部分 |
-| [MVP 实施计划](superpowers/plans/2026-07-16-switch-price-monitor-mvp.md) | 8 个可独立验收任务的实施顺序、测试与提交点 | 已完成，待执行 |
+| [MVP 实施计划](superpowers/plans/2026-07-16-switch-price-monitor-mvp.md) | 8 个可独立验收任务的实施顺序、测试与提交点 | 已批准，执行中 |
 | [ADR-001：部署架构](decisions/ADR-001-cloudflare-workers-d1.md) | 采用 Cloudflare Workers Static Assets 与 D1 的决策 | 已确认 |
 
 ## 变更规则
