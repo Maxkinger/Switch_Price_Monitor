@@ -19,6 +19,22 @@ export const initialRegionCodes = ["US", "JP", "MX", "BR", "HK"] as const;
 /** 地区代码限定为受支持集合，防止把任意字符串写入地区商品或设置记录。 */
 export type RegionCode = (typeof initialRegionCodes)[number];
 
+/** 订阅创建前对某地区官方来源的确认结果；前端据此显示官方、第三方回退或不可监控状态。 */
+export type SubscriptionPreviewOfficialStatus = "official-available" | "official-id-unavailable";
+
+/**
+ * 只返回管理员决定是否创建订阅所需的来源信息，不包含任天堂响应、外部错误正文或任何凭据。
+ * fallbackSources 保留实际站点标识，使页面与 Telegram 后续展示能明确标记第三方，而不会伪装为官方价格。
+ */
+export interface SubscriptionRegionPreview {
+  regionCode: RegionCode;
+  officialStatus: SubscriptionPreviewOfficialStatus;
+  officialPriceId: string | null;
+  fallbackSources: Exclude<PriceSource, "official">[];
+  canMonitor: boolean;
+  message: string;
+}
+
 /** 三套已确认主题的稳定标识，持久化时不存储展示文案，便于后续本地化。 */
 export const themes = ["warm-card", "calm-dark", "clean-light"] as const;
 
