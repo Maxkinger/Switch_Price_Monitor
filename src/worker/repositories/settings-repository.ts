@@ -73,4 +73,29 @@ export class SettingsRepository {
       createdAt: row.createdAt,
     };
   }
+
+  /**
+   * 完整替换单例设置的可公开字段，同时保留首次初始化时间。调用者必须先在服务层合并与校验局部更新，
+   * 仓储不接受任意列名或动态 SQL，避免将未来的 Telegram 等敏感列意外写入或暴露。
+   */
+  public async save(settings: AppSettings, updatedAt: string): Promise<void> {
+    await this.database
+      .prepare(
+        `UPDATE settings
+         SET enabled_regions_json = ?, default_search_region = ?, theme = ?, timezone = ?,
+             daily_report_time = ?, tax_state = ?, price_history_retention = ?, updated_at = ?
+         WHERE id = 1`,
+      )
+      .bind(
+        JSON.stringify(settings.enabledRegions),
+        settings.defaultSearchRegion,
+        settings.theme,
+        settings.timezone,
+        settings.dailyReportTime,
+        settings.taxState,
+        settings.priceHistoryRetention,
+        updatedAt,
+      )
+      .run();
+  }
 }
