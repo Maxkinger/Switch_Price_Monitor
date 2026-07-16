@@ -28,4 +28,16 @@ export class NotificationEventRepository {
       .run();
     return result.meta.changes === 1;
   }
+
+  /**
+   * 标记一次已经确认成功的投递。仅 pending 记录可转换为 delivered，
+   * 使重复回调或重试无法改写第一次成功的审计时间；调用方不得把 Telegram 原始响应写入本表。
+   */
+  public async markDelivered(dedupeKey: string, sentAt: string): Promise<boolean> {
+    const result = await this.database
+      .prepare("UPDATE notification_events SET status = 'delivered', sent_at = ? WHERE dedupe_key = ? AND status = 'pending'")
+      .bind(sentAt, dedupeKey)
+      .run();
+    return result.meta.changes === 1;
+  }
 }

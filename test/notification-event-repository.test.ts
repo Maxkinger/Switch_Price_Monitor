@@ -22,4 +22,14 @@ describe("NotificationEventRepository", () => {
     await expect(events.reserve(input)).resolves.toBe(false);
     await expect(env.DB.prepare("SELECT event_type AS eventType, status FROM notification_events").all<{ eventType: string; status: string }>()).resolves.toMatchObject({ results: [{ eventType: "collection-failure", status: "pending" }] });
   });
+
+  it("records only the successful delivery timestamp without storing Telegram response data", async () => {
+    // 投递审计只需要安全状态和 Worker 时间；不保存响应正文可避免第三方错误内容意外带入数据库或导出文件。
+    const events = new NotificationEventRepository(env.DB);
+    const input = { regionalProductId: "product-notification", eventType: "collection-recovered" as const, dedupeKey: "product-notification:recovered:2026-07-16T18:00:00.000Z", createdAt: "2026-07-16T18:00:00.000Z" };
+    await events.reserve(input);
+
+    await expect(events.markDelivered(input.dedupeKey, "2026-07-16T18:00:01.000Z")).resolves.toBe(true);
+    await expect(env.DB.prepare("SELECT status, sent_at AS sentAt FROM notification_events WHERE dedupe_key = ?").bind(input.dedupeKey).first<{ status: string; sentAt: string | null }>()).resolves.toEqual({ status: "delivered", sentAt: "2026-07-16T18:00:01.000Z" });
+  });
 });
