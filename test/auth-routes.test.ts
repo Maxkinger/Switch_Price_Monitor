@@ -23,6 +23,15 @@ describe("authentication HTTP routes", () => {
     expect(login.headers.get("set-cookie")).toContain("Secure");
   });
 
+  it("reports only whether first-run setup is required without exposing administrator data", async () => {
+    // 前端需要据此决定显示初始化页还是登录页；响应只含布尔值，不能泄露地区、密码哈希、会话或恢复码状态。
+    await expect((await call("/api/auth/status", undefined, null, "GET")).json()).resolves.toEqual({ initialized: false });
+
+    await initializeThroughHttp();
+
+    await expect((await call("/api/auth/status", undefined, null, "GET")).json()).resolves.toEqual({ initialized: true });
+  });
+
   it("returns a retryable lock response after repeated invalid login requests", async () => {
     // HTTP 层必须把服务层的临时锁定显式映射为 429，前端才不会把暴力防护误显示成普通表单校验失败。
     await initializeThroughHttp();
@@ -68,12 +77,12 @@ async function initializeThroughHttp(): Promise<{ recoveryCode: string }> {
   return response.json<{ recoveryCode: string }>();
 }
 
-async function call(path: string, body?: unknown, cookie?: string | null): Promise<Response> {
+async function call(path: string, body?: unknown, cookie?: string | null, method = "POST"): Promise<Response> {
   // 静态资源不会参与认证 API；此绑定若被误用会使测试立刻失败，防止路由遗漏。
   const assets = { fetch: async () => new Response("unexpected asset request", { status: 500 }) } as unknown as Fetcher;
   return worker.fetch!(
     new Request(`https://example.test${path}`, {
-      method: "POST",
+      method,
       body: body === undefined ? undefined : JSON.stringify(body),
       headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
     }) as never,

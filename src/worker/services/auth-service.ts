@@ -44,6 +44,15 @@ export class AuthService {
     this.settings = new SettingsRepository(database);
   }
 
+  /**
+   * 供首次访问页面选择“初始化”或“登录”界面。只检查单管理员记录是否存在，
+   * 绝不返回密码哈希、地区、会话或恢复码状态，避免公开端点扩大认证信息暴露面。
+   */
+  public async isInitialized(): Promise<boolean> {
+    const credential = await this.database.prepare("SELECT id FROM admin_credentials WHERE id = 1").first();
+    return Boolean(credential);
+  }
+
   public async initialize(
     input: Omit<InitialSettings, "createdAt"> & { password: string; now: string },
   ): Promise<{ recoveryCode: string }> {
