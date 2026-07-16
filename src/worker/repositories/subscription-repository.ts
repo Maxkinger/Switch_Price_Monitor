@@ -65,6 +65,17 @@ export class SubscriptionRepository {
     return result.meta.changes === 1;
   }
 
+  /** 替换目标价配置并把所有地区状态重置为未命中，防止旧阈值的已通知状态抑制新阈值提醒。 */
+  public async setTargets(id: string, globalTargetCnyFen: number | null, regionTargets: Array<{ regionCode: string; targetAmountMinor: number }>, updatedAt: string): Promise<boolean> {
+    const updated = await this.database.prepare("UPDATE subscriptions SET global_target_cny_fen = ?, updated_at = ? WHERE id = ?").bind(globalTargetCnyFen, updatedAt, id).run();
+    if (updated.meta.changes !== 1) return false;
+    await this.database.batch([
+      this.database.prepare("DELETE FROM subscription_region_targets WHERE subscription_id = ?").bind(id),
+      ...regionTargets.map((target) => this.database.prepare("INSERT INTO subscription_region_targets (subscription_id, region_code, target_amount_minor, target_state) VALUES (?, ?, ?, 'unmet')").bind(id, target.regionCode, target.targetAmountMinor)),
+    ]);
+    return true;
+  }
+
   public async findByGameId(gameId: string): Promise<SubscriptionRecord | null> {
     // 游戏在当前 MVP 只能有一个订阅，查询按 game_id 而不是展示名称，防止多语言标题造成重复匹配。
     const row = await this.database

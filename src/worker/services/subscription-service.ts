@@ -49,4 +49,9 @@ export class SubscriptionService {
       throw new SubscriptionNotFoundError("订阅不存在。");
     }
   }
+
+  /** 保存全局人民币和单区当地货币目标；单区记录由规则层优先使用。 */
+  public async setTargets(subscriptionId: string, globalTargetCnyFen: number | null, regionTargets: Array<{ regionCode: string; targetAmountMinor: number }>, now: string): Promise<void> {
+    if (!(await this.subscriptions.setTargets(subscriptionId, globalTargetCnyFen, regionTargets, now))) throw new SubscriptionNotFoundError("订阅不存在。");
+  }
 }

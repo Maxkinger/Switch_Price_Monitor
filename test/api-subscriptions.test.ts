@@ -89,6 +89,23 @@ describe("subscription management HTTP routes", () => {
     await expect(reenabled.json()).resolves.toEqual({ subscriptionId: "subscription-overcooked-2", enabled: true });
     await expect(env.DB.prepare("SELECT enabled AS enabled FROM subscriptions WHERE id = ?").bind("subscription-overcooked-2").first<{ enabled: number }>()).resolves.toEqual({ enabled: 1 });
   });
+
+  it("saves a global CNY target and a regional local-currency target for a subscription", async () => {
+    // 单区目标价格优先于全局人民币目标；两者都以最小货币单位保存，避免浮点金额让提醒阈值出现偏差。
+    const cookie = await initializeAndLogin();
+    await createSubscription(cookie);
+    const response = await call(
+      "/api/subscriptions/subscription-overcooked-2",
+      { globalTargetCnyFen: 5000, regionTargets: [{ regionCode: "JP", targetAmountMinor: 800 }] },
+      cookie,
+      "PATCH",
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ subscriptionId: "subscription-overcooked-2", globalTargetCnyFen: 5000, regionTargets: [{ regionCode: "JP", targetAmountMinor: 800 }] });
+    await expect(env.DB.prepare("SELECT global_target_cny_fen AS target FROM subscriptions WHERE id = ?").bind("subscription-overcooked-2").first<{ target: number }>()).resolves.toEqual({ target: 5000 });
+    await expect(env.DB.prepare("SELECT target_amount_minor AS target FROM subscription_region_targets WHERE subscription_id = ? AND region_code = ?").bind("subscription-overcooked-2", "JP").first<{ target: number }>()).resolves.toEqual({ target: 800 });
+  });
 });
 
 async function seedSubscriptionCandidate(): Promise<void> {
