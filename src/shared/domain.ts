@@ -5,7 +5,7 @@
 export const priceSources = [
   "official",
   "eshop-prices",
-  "ntprices",
+  "nt-deals",
   "deku-deals",
   "green-pipe",
 ] as const;

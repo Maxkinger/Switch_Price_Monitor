@@ -129,7 +129,7 @@ Expected: FAIL because migrations and repositories do not exist.
 `0001_core.sql` creates settings, credentials, sessions, games, regional_products, subscriptions and subscription_region_targets. `0002_price_tracking.sql` creates price_snapshots, exchange_rates, fetch_logs, regional_product_health and notification_events, including indexes on `(regional_product_id, captured_at DESC)` and `(subscription_id, status)`. Store monetary values as integer minor units and CNY as integer fen.
 
 ```ts
-export type PriceSource = "official" | "eshop-prices" | "ntprices" | "deku-deals" | "green-pipe";
+export type PriceSource = "official" | "eshop-prices" | "nt-deals" | "deku-deals" | "green-pipe";
 export interface PriceSnapshot { regionalProductId: string; amountMinor: number; currency: string; cnyFen: number | null; source: PriceSource; capturedAt: string; }
 ```
 
@@ -197,6 +197,8 @@ git commit -m "feat: add administrator setup and authentication"
 
 ## Task 4: Validate provider feasibility and implement provider contracts
 
+实施状态（2026-07-16）：提供方契约、顺序回退、身份校验及美国区官方 JSON-LD 解析已完成并通过测试。五区受控验证已记录 US 成功与 JP/MX/BR/HK 待验证限制；在逐区请求形态和条款完成前，不能将未验证来源默认投入生产采集。
+
 **Files:**
 - Create: `docs/decisions/ADR-002-price-provider-validation.md`, `test/fixtures/providers/`
 - Create: `src/worker/providers/types.ts`, `src/worker/providers/provider-chain.ts`, `src/worker/providers/official-nintendo.ts`, `src/worker/providers/third-party.ts`, `src/worker/providers/exchange-rate.ts`
@@ -207,7 +209,7 @@ git commit -m "feat: add administrator setup and authentication"
 - `ProviderChain.fetch(product, enabledProviders): Promise<ProviderResult | null>`.
 - `ExchangeRateProvider.getDailyRates(currencies: string[]): Promise<RateResult[]>`.
 
-- [ ] **Step 1: Write fixtures and failing fallback tests**
+- [x] **Step 1: Write fixtures and failing fallback tests**
 
 ```ts
 it("returns a marked fallback price when official collection fails", async () => {
@@ -220,12 +222,12 @@ it("rejects a result whose title or product type differs from the confirmed prod
 });
 ```
 
-- [ ] **Step 2: Run provider tests and verify failure**
+- [x] **Step 2: Run provider tests and verify failure**
 
 Run: `npm test -- --run test/provider-chain.test.ts`  
 Expected: FAIL because provider interfaces are not implemented.
 
-- [ ] **Step 3: Implement contracts, timeouts, retry and validation**
+- [x] **Step 3: Implement contracts, timeouts, retry and validation**
 
 Implement a 15-second abort timeout, exactly one retry for network errors, sequential source priority, and canonical title/publisher/product-type validation. Create the ADR with five-region evidence for the confirmed official endpoint or documented limitation; record request shape, response fields, terms review date, and the chosen extraction method. Do not hard-code price results or scrape browser pages from the client.
 
@@ -258,7 +260,7 @@ git commit -m "feat: add validated price provider chain"
 
 ```ts
 it("does not create an immediate alert for a third-party drop", () => {
-  expect(evaluateOfficialDrop({ amountMinor: 1000, source: "official" }, { amountMinor: 800, source: "ntprices" })).toBe(false);
+  expect(evaluateOfficialDrop({ amountMinor: 1000, source: "official" }, { amountMinor: 800, source: "nt-deals" })).toBe(false);
 });
 
 it("triggers a target only on the first crossing and resets after recovery", () => {

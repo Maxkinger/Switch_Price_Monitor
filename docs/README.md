@@ -17,6 +17,7 @@
 | [质量与验收策略](quality/quality-and-acceptance.md) | 可靠性、安全、测试和发布验收规则 | 已确认部分 |
 | [MVP 实施计划](superpowers/plans/2026-07-16-switch-price-monitor-mvp.md) | 8 个可独立验收任务的实施顺序、测试与提交点 | 已批准，执行中 |
 | [ADR-001：部署架构](decisions/ADR-001-cloudflare-workers-d1.md) | 采用 Cloudflare Workers Static Assets 与 D1 的决策 | 已确认 |
+| [ADR-002：价格来源验证](decisions/ADR-002-price-provider-validation.md) | 来源准入、五区可行性与回退边界 | 已确认部分 |
 
 ## 变更规则
 
