@@ -33,6 +33,11 @@ export interface ProviderResult {
   source: PriceSource;
   amountMinor: number;
   currency: string;
+  /**
+   * 仅依赖任天堂地区价格 API 的官方适配器填写此字段。来源链据此再次核对已确认的地区映射，
+   * 防止 API 即使返回了合法金额，也因请求或响应串区而污染另一服的价格历史；JSON-LD 适配器不需要该字段。
+   */
+  officialPriceId?: string;
   title: string;
   publisher: string | null;
   productType: ProductType;
