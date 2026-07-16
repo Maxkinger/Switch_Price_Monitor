@@ -33,8 +33,8 @@ describe("NotificationEventRepository", () => {
     await expect(env.DB.prepare("SELECT status, sent_at AS sentAt FROM notification_events WHERE dedupe_key = ?").bind(input.dedupeKey).first<{ status: string; sentAt: string | null }>()).resolves.toEqual({ status: "delivered", sentAt: "2026-07-16T18:00:01.000Z" });
   });
 
-  it("returns only pending events in creation order for the delivery scheduler", async () => {
-    // 已投递事件绝不能再次进入发送队列；读取模型只暴露投递决策需要的字段，避免泄露数据库内部 ID 或 Telegram 配置。
+  it("returns only pending events with game and region labels in creation order for the delivery scheduler", async () => {
+    // 已投递事件绝不能再次进入发送队列；发送文本需要安全的游戏名和区域标签，绝不把内部商品 ID 或 Telegram 配置交给消息格式化层。
     const events = new NotificationEventRepository(env.DB);
     const delivered = { regionalProductId: "product-notification", eventType: "collection-failure" as const, dedupeKey: "delivered", createdAt: "2026-07-16T12:00:00.000Z" };
     const pending = { regionalProductId: "product-notification", eventType: "collection-recovered" as const, dedupeKey: "pending", createdAt: "2026-07-16T18:00:00.000Z" };
@@ -42,6 +42,6 @@ describe("NotificationEventRepository", () => {
     await events.reserve(pending);
     await events.markDelivered(delivered.dedupeKey, "2026-07-16T12:00:01.000Z");
 
-    await expect(events.pending()).resolves.toEqual([{ regionalProductId: "product-notification", eventType: "collection-recovered", dedupeKey: "pending", createdAt: "2026-07-16T18:00:00.000Z" }]);
+    await expect(events.pending()).resolves.toEqual([{ regionalProductId: "product-notification", eventType: "collection-recovered", dedupeKey: "pending", createdAt: "2026-07-16T18:00:00.000Z", gameNameZh: "通知测试游戏", regionCode: "US" }]);
   });
 });

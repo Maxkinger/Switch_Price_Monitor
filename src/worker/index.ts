@@ -10,11 +10,12 @@ import { handleManualRefreshRoute } from "./routes/manual-refresh-routes";
 import { handleSettingsRoute } from "./routes/settings-routes";
 import { handleSubscriptionRoute } from "./routes/subscription-routes";
 import { RetentionRepository } from "./repositories/retention-repository";
+import { NotificationEventRepository } from "./repositories/notification-event-repository";
 import { SettingsRepository } from "./repositories/settings-repository";
 import { DashboardService } from "./services/dashboard-service";
 import type { DailyReportSubscription } from "./services/report-service";
 import { RetentionService } from "./services/retention-service";
-import { runScheduled, runScheduledMaintenance } from "./services/scheduler-service";
+import { runPendingNotificationDelivery, runScheduled, runScheduledMaintenance } from "./services/scheduler-service";
 import { TelegramService } from "./services/telegram-service";
 
 export interface Env {
@@ -78,13 +79,19 @@ const worker: ExportedHandler<Env> = {
       }));
       return;
     }
-    // 每分钟 Cron 只执行管理员时区的日报时刻判断，未知 Cron 必须忽略以避免配置错误意外触发外部 Telegram 请求。
+    // 每分钟 Cron 负责日报时刻判断与待发送即时通知；未知 Cron 必须忽略以避免配置错误意外触发外部 Telegram 请求。
     if (event.cron !== "* * * * *") return;
     const telegram = env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID
       ? new TelegramService({ botToken: env.TELEGRAM_BOT_TOKEN, chatId: env.TELEGRAM_CHAT_ID })
       : undefined;
     // DashboardService 的结果完全由本 Worker 构造；在单一适配点收窄为日报 DTO，避免在 Telegram 服务传播宽松的数据库读取类型。
     const overview = new DashboardService(env.DB);
+    // 即时事件不等日报时刻：成功后才由仓储原子更新为 delivered，失败则保持 pending 留给下一分钟重试。
+    ctx.waitUntil(runPendingNotificationDelivery(scheduledAt, {
+      events: new NotificationEventRepository(env.DB),
+      marker: new NotificationEventRepository(env.DB),
+      telegram,
+    }));
     ctx.waitUntil(runScheduled(scheduledAt, {
       settings: new SettingsRepository(env.DB),
       overview: { getOverview: async () => ({ subscriptions: (await overview.getOverview()).subscriptions as unknown as DailyReportSubscription[] }) },

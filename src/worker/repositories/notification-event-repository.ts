@@ -6,12 +6,17 @@ export interface NotificationEventReservation {
   createdAt: string;
 }
 
-/** 待发送读取模型只暴露格式化和确认投递需要的字段，隐藏自增主键及任何未来内部审计列。 */
+/**
+ * 待发送读取模型只暴露格式化和确认投递需要的字段，隐藏自增主键及任何未来内部审计列。
+ * 游戏名和地区标签来自关联主档，供 Telegram 生成可读文本；关联记录被删除时允许为 null，发送器必须安全降级而非泄露内部标识。
+ */
 export interface PendingNotificationEvent {
   regionalProductId: string | null;
   eventType: NotificationEventReservation["eventType"];
   dedupeKey: string;
   createdAt: string;
+  gameNameZh: string | null;
+  regionCode: string | null;
 }
 
 /**
@@ -56,11 +61,17 @@ export class NotificationEventRepository {
   public async pending(): Promise<PendingNotificationEvent[]> {
     const result = await this.database
       .prepare(
-        `SELECT regional_product_id AS regionalProductId, event_type AS eventType,
-                dedupe_key AS dedupeKey, created_at AS createdAt
+        `SELECT notification_events.regional_product_id AS regionalProductId,
+                notification_events.event_type AS eventType,
+                notification_events.dedupe_key AS dedupeKey,
+                notification_events.created_at AS createdAt,
+                games.name_zh AS gameNameZh,
+                regional_products.region_code AS regionCode
          FROM notification_events
-         WHERE status = 'pending'
-         ORDER BY created_at ASC, id ASC`,
+         LEFT JOIN regional_products ON regional_products.id = notification_events.regional_product_id
+         LEFT JOIN games ON games.id = regional_products.game_id
+         WHERE notification_events.status = 'pending'
+         ORDER BY notification_events.created_at ASC, notification_events.id ASC`,
       )
       .all<PendingNotificationEvent>();
     return result.results;
