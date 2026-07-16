@@ -295,7 +295,7 @@ git commit -m "feat: add price collection and monitoring rules"
 
 ## Task 6: Add subscription, settings, dashboard, history, and export APIs
 
-实施状态（2026-07-16）：已完成受管理员会话保护的订阅创建、软停用、重新启用、基础设置及仪表盘概览接口。创建接口校验非空且去重的地区商品列表，并验证其属于所选游戏且仍启用；重复 `gameId` 返回既有订阅，保留原有地区配置。停用仅更新 `enabled`，不删除地区配置或历史。设置接口支持地区、默认搜索区、主题、时区、日报时间、税务州和历史保留策略的安全局部更新。仪表盘返回订阅、游戏、地区配置、最新价格来源和分区历史最低价；刷新状态、历史、导出及地区/目标价编辑接口仍待实现。
+实施状态（2026-07-16）：已完成受管理员会话保护的订阅创建、软停用、重新启用、基础设置、仪表盘概览和历史读取接口。创建接口校验非空且去重的地区商品列表，并验证其属于所选游戏且仍启用；重复 `gameId` 返回既有订阅，保留原有地区配置。停用仅更新 `enabled`，不删除地区配置或历史。设置接口支持地区、默认搜索区、主题、时区、日报时间、税务州和历史保留策略的安全局部更新。仪表盘返回订阅、游戏、地区配置、最新价格来源和分区历史最低价；历史支持按订阅和地区读取不可变快照。刷新状态、导出及地区/目标价编辑接口仍待实现。
 
 **Files:**
 - Create: `src/worker/routes/subscription-routes.ts`, `src/worker/routes/settings-routes.ts`, `src/worker/routes/dashboard-routes.ts`, `src/worker/routes/export-routes.ts`

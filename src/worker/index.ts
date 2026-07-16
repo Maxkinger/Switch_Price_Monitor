@@ -4,6 +4,7 @@
  */
 import { handleAuthRoute } from "./routes/auth-routes";
 import { handleDashboardRoute } from "./routes/dashboard-routes";
+import { handleHistoryRoute } from "./routes/history-routes";
 import { handleSettingsRoute } from "./routes/settings-routes";
 import { handleSubscriptionRoute } from "./routes/subscription-routes";
 
@@ -33,6 +34,10 @@ const worker: ExportedHandler<Env> = {
     // 仪表盘聚合订阅和价格历史，属于管理员私有信息，必须在静态资源层之前完成会话校验。
     const dashboardResponse = await handleDashboardRoute(request, env.DB);
     if (dashboardResponse) return dashboardResponse;
+
+    // 历史快照属于管理员私有价格轨迹，必须在静态资源回退前进行会话校验和查询参数验证。
+    const historyResponse = await handleHistoryRoute(request, env.DB);
+    if (historyResponse) return historyResponse;
 
     // 订阅写入会改变后续采集与通知范围，因此必须在静态资源回退之前进入带会话校验的管理 API。
     const subscriptionResponse = await handleSubscriptionRoute(request, env.DB);
