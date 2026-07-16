@@ -4,8 +4,8 @@ import worker, { type Env } from "../src/worker";
 
 describe("GET /api/health", () => {
   it("returns a stable health payload", async () => {
-    const response = await worker.fetch(
-      new Request("https://example.test/api/health"),
+    const response = await worker.fetch!(
+      new Request("https://example.test/api/health") as never,
       {} as Env,
       {} as ExecutionContext,
     );
