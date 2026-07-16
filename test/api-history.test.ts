@@ -34,6 +34,18 @@ describe("history HTTP route", () => {
     expect(response.headers.get("content-type")).toContain("text/csv");
     await expect(response.text()).resolves.toContain("region_code,amount_minor,currency,cny_fen,source,captured_at");
   });
+
+  it("exports subscription configuration and fetch logs through separate field allowlists", async () => {
+    // 三种导出用途不同；订阅配置和诊断日志也必须独立固定列，不能复用包含认证字段的任何管理查询。
+    const cookie = await login();
+    await seedHistory();
+    await env.DB.prepare("INSERT INTO fetch_logs (regional_product_id,source,status,message,captured_at) VALUES (?,?,?,?,?)").bind("jp-1", "official", "success", "价格已读取", "2026-07-16T00:00:00.000Z").run();
+    const subscriptions = await call("/api/export?kind=subscriptions", cookie);
+    const logs = await call("/api/export?kind=fetch-logs", cookie);
+
+    await expect(subscriptions.text()).resolves.toContain("subscription_id,game_id,enabled,region_code,regional_product_id");
+    await expect(logs.text()).resolves.toContain("region_code,source,status,message,captured_at");
+  });
 });
 
 async function seedHistory(): Promise<void> {
