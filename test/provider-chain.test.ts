@@ -54,6 +54,17 @@ describe("ProviderChain", () => {
     await expect(new ProviderChain().fetch(product, [wrongProductType])).resolves.toBeNull();
   });
 
+  it("rejects an official price API result whose confirmed price id differs from the regional mapping", async () => {
+    // 价格 API 的金额和标题即使看似正确，也不能跨地区复用另一个官方 ID；否则错误映射会把其他商品或地区的价格写入当前历史。
+    const productWithOfficialId = { ...product, officialPriceId: "70050000064985" };
+    const mismatchedOfficialApi: PriceProvider = {
+      source: "official",
+      fetch: async () => validResult({ source: "official", officialPriceId: "70050000000000" }),
+    };
+
+    await expect(new ProviderChain().fetch(productWithOfficialId, [mismatchedOfficialApi])).resolves.toBeNull();
+  });
+
   it("retries a transient network failure exactly once before accepting a valid official result", async () => {
     // 仅网络错误可重试一次：既能覆盖临时连接抖动，也不会对解析错误或身份不符商品反复请求第三方站点。
     let calls = 0;

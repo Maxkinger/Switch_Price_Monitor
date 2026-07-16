@@ -62,10 +62,14 @@ export class ProviderChain {
 
   /**
    * 只有来源、币种、规范化标题、发行商（若管理员已确认）与商品类型全部一致才接受。
-   * 对标题仅忽略大小写和标点，既容忍商店排版差异，也不会把“Deluxe”“Gourmet”等有意义文字吞掉。
+   * 若官方地区价格 API 回传了 officialPriceId，还必须与本区确认 ID 精确相同；未带该字段的既有 JSON-LD 官方解析器保持原有身份校验，
+   * 既防止跨区价格污染历史，也避免把经过验证的旧提供方误判为无效。标题仅忽略大小写和标点，不会吞掉“Deluxe”“Gourmet”等有意义文字。
    */
   private matchesConfirmedProduct(product: RegionalProduct, expectedSource: ProviderResult["source"], result: ProviderResult): boolean {
-    return result.source === expectedSource
+    const hasMatchingOfficialId = result.officialPriceId === undefined
+      || (expectedSource === "official" && product.officialPriceId !== null && result.officialPriceId === product.officialPriceId);
+    return hasMatchingOfficialId
+      && result.source === expectedSource
       && result.currency === product.currency
       && normalizeIdentity(result.title) === normalizeIdentity(product.canonicalTitle)
       && result.productType === product.productType

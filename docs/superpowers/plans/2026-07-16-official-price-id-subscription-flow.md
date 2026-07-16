@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **实施状态（2026-07-17）：** 六项后端任务已完成并通过全量测试、类型检查、生产构建与差异检查。日区是唯一已验证的官方 ID 适配器；其他四区仍按 ADR-002 在订阅前预告第三方回退，等待各区专用验证器与前端确认流程。
+
 **Goal:** 让管理员确认地区商品后，系统自动保存可验证的任天堂官方价格 ID；在创建订阅前按地区预览官方或第三方来源，并让日区先通过公开官方价格接口采集。
 
 **Architecture:** 在已有 `regional_products.official_product_id` 字段上扩充采集读取模型，而不是新建重复标识。新增日区官方价格 API 适配器：它只接受添加流程已确认的地区商品，先验证响应地区、货币和价格 ID，再以该受控映射的商品身份构造结果。商品确认服务通过地区专用的 ID 解析器输出不可持久化预览；创建服务只消费已经确认并持久化的地区商品 ID。
@@ -44,7 +46,7 @@
 - Produces: `RegionalProduct.officialPriceId: string | null`，供官方接口适配器安全决定是否请求。
 - Consumes: `regional_products.official_product_id`，该字段已由 `migrations/0001_core.sql` 建立，禁止另建重复列。
 
-- [ ] **Step 1: 写入失败测试，证明读取模型保留本区官方价格 ID**
+- [x] **Step 1: 写入失败测试，证明读取模型保留本区官方价格 ID**
 
 ```ts
 await env.DB.prepare(
@@ -56,13 +58,13 @@ await expect(new CollectionRepository(env.DB).enabledRegionalProducts()).resolve
 ]);
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/collection-repository.test.ts`
 
 Expected: FAIL，因为返回的 `RegionalProduct` 尚无 `officialPriceId`。
 
-- [ ] **Step 3: 最小实现字段传递与中文边界注释**
+- [x] **Step 3: 最小实现字段传递与中文边界注释**
 
 ```ts
 export interface RegionalProduct {
@@ -78,13 +80,13 @@ interface CollectionProductRow {
 products.official_product_id AS officialPriceId,
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [x] **Step 4: 运行测试确认通过**
 
 Run: `npm test -- --run test/collection-repository.test.ts`
 
 Expected: PASS，且断言返回 `officialPriceId: "70050000064985"`。
 
-- [ ] **Step 5: 提交最小模型改动**
+- [x] **Step 5: 提交最小模型改动**
 
 ```bash
 git add src/worker/providers/types.ts src/worker/repositories/collection-repository.ts test/collection-repository.test.ts
@@ -103,7 +105,7 @@ git commit -m "feat: expose regional official price id"
 - Consumes: `RegionalProduct`；仅在 `regionCode === "JP"` 且 `officialPriceId !== null` 时请求 `https://api.ec.nintendo.com/v1/price?country=JP&ids=<id>&lang=ja`。
 - Produces: 成功时 `ProviderResult`，其 `source` 为 `official`，金额来自 `regular_price.raw_value`，并携带 `officialPriceId` 用于链路校验。
 
-- [ ] **Step 1: 写入失败测试，覆盖成功、跨区拒绝与响应错配**
+- [x] **Step 1: 写入失败测试，覆盖成功、跨区拒绝与响应错配**
 
 ```ts
 it("uses the confirmed Japanese id and rejects a mismatched title id", async () => {
@@ -121,13 +123,13 @@ it("returns null when a Japanese mapping has no id, a non-JP product is supplied
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/official-nintendo-price-api.test.ts`
 
 Expected: FAIL，因为 `createNintendoPriceApiProvider` 尚不存在。
 
-- [ ] **Step 3: 编写只支持已验证日区边界的最小适配器**
+- [x] **Step 3: 编写只支持已验证日区边界的最小适配器**
 
 ```ts
 export function createNintendoPriceApiProvider(fetchPrice: typeof fetch = fetch): PriceProvider {
@@ -147,13 +149,13 @@ export function createNintendoPriceApiProvider(fetchPrice: typeof fetch = fetch)
 
 实现 `parseJapanesePrice` 时必须：只接受普通对象；严格比较 `country === "JP"`、`title_id` 与字符串化的 `officialPriceId`、`sales_status === "onsale"`、`currency === "JPY"` 和非负安全整数 `raw_value`；网络异常包装为 `ProviderNetworkError`；任何结构/业务不符返回 `null`。标题、发行商和类型只能复制自已确认的 `RegionalProduct`，并在注释中说明该信任边界。
 
-- [ ] **Step 4: 运行专项与相邻提供方测试**
+- [x] **Step 4: 运行专项与相邻提供方测试**
 
 Run: `npm test -- --run test/official-nintendo-price-api.test.ts test/official-nintendo.test.ts test/provider-chain.test.ts`
 
 Expected: PASS，且不触发真实网络请求。
 
-- [ ] **Step 5: 提交日区官方适配器**
+- [x] **Step 5: 提交日区官方适配器**
 
 ```bash
 git add src/worker/providers/types.ts src/worker/providers/official-nintendo-price-api.ts test/official-nintendo-price-api.test.ts
@@ -171,7 +173,7 @@ git commit -m "feat: add Japanese official price api provider"
 - Consumes: `{ regionCode: RegionCode; currency: string; productUrl: string; canonicalTitle: string; publisher: string | null; productType: ProductType }` 与可注入 `PriceProvider`。
 - Rule: 首版只从日区官方 URL 的 `/item/software/D<数字>` 路径中提取 ID；其他地区返回 `unsupported-region`，由预览明确展示第三方回退，不能套用日区规则。
 
-- [ ] **Step 1: 写入失败测试，确保只识别经过验证的日区 URL**
+- [x] **Step 1: 写入失败测试，确保只识别经过验证的日区 URL**
 
 ```ts
 it("extracts the JP price id, then accepts it only after the official provider verifies price and currency", async () => {
@@ -185,13 +187,13 @@ it("does not derive an id from another region or a malformed JP link", async () 
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/official-price-id-service.test.ts`
 
 Expected: FAIL，因为 `OfficialPriceIdService` 尚不存在。
 
-- [ ] **Step 3: 最小实现 URL 提取与二次验证**
+- [x] **Step 3: 最小实现 URL 提取与二次验证**
 
 ```ts
 const japaneseStorePath = /^\/item\/software\/D(\d+)\/?$/;
@@ -216,13 +218,13 @@ return (await this.official.fetch(product, new AbortController().signal))
 
 无效 URL 必须捕获 `new URL` 的异常并返回 `unrecognized-url`，不得让管理员输入造成 500；服务不得写 D1，确保预览取消不会留下半成品映射。
 
-- [ ] **Step 4: 运行服务与提供方测试**
+- [x] **Step 4: 运行服务与提供方测试**
 
 Run: `npm test -- --run test/official-price-id-service.test.ts test/official-nintendo-price-api.test.ts`
 
 Expected: PASS，且不同地区绝不复用日区 ID。
 
-- [ ] **Step 5: 提交自动确认服务**
+- [x] **Step 5: 提交自动确认服务**
 
 ```bash
 git add src/worker/services/official-price-id-service.ts test/official-price-id-service.test.ts
@@ -241,7 +243,7 @@ git commit -m "feat: verify Japanese price ids during product confirmation"
 - Consumes: 已确认地区候选与 `OfficialPriceIdService`；首版回退顺序固定为 `['eshop-prices', 'nt-deals']`，并集中在 `defaultFallbackSources` 常量，供将来的设置来源排序替换。
 - Rule: `official-available` 的 `fallbackSources` 仍返回默认顺序供官方运行时失败时回退；`official-id-unavailable` 必须在 `message` 中明确“将使用第三方”；没有任何允许来源时 `canMonitor` 为 `false`。
 
-- [ ] **Step 1: 写入失败测试，覆盖三种管理员可见状态**
+- [x] **Step 1: 写入失败测试，覆盖三种管理员可见状态**
 
 ```ts
 await expect(preview.create([verifiedJp, unsupportedHk])).resolves.toEqual([
@@ -254,13 +256,13 @@ await expect(new SubscriptionPreviewService(unavailableResolver, []).create([uns
 ]);
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/subscription-preview-service.test.ts`
 
 Expected: FAIL，因为预览 DTO 与服务尚不存在。
 
-- [ ] **Step 3: 实现纯服务与简体中文状态文案**
+- [x] **Step 3: 实现纯服务与简体中文状态文案**
 
 ```ts
 export const defaultFallbackSources = ["eshop-prices", "nt-deals"] as const;
@@ -276,13 +278,13 @@ return { regionCode: candidate.regionCode, officialStatus: resolution.status, of
 
 DTO 不得包含任天堂原始响应、URL 查询参数以外的用户数据或任何外部错误正文；仅返回管理员确认决策所需字段。
 
-- [ ] **Step 4: 运行预览与共享类型测试**
+- [x] **Step 4: 运行预览与共享类型测试**
 
 Run: `npm test -- --run test/subscription-preview-service.test.ts`
 
 Expected: PASS，三种状态的 `canMonitor` 和中文提示均稳定。
 
-- [ ] **Step 5: 提交预览服务**
+- [x] **Step 5: 提交预览服务**
 
 ```bash
 git add src/shared/domain.ts src/worker/services/subscription-preview-service.ts test/subscription-preview-service.test.ts
@@ -301,7 +303,7 @@ git commit -m "feat: preview regional price sources before subscription"
 - Consumes: `requireAdmin`、`OfficialPriceIdService`、`SubscriptionPreviewService`、`createNintendoPriceApiProvider`。
 - Validation: 候选数组非空；地区必须为 `US|JP|MX|BR|HK`；URL 必须为 `https:`；标题非空；发行商可为 `null`；类型必须为受控 `ProductType`；同一区最多一个候选。
 
-- [ ] **Step 1: 写入失败 API 测试，覆盖会话守卫、日区成功和其他区回退预告**
+- [x] **Step 1: 写入失败 API 测试，覆盖会话守卫、日区成功和其他区回退预告**
 
 ```ts
 const unauthorized = await handleProductRoute(new Request("https://example.test/api/products/preview-sources", { method: "POST", body: JSON.stringify({ candidates: [jpCandidate] }) }), env.DB, preview);
@@ -317,13 +319,13 @@ await expect(response.json()).resolves.toMatchObject({ regions: [
 
 测试中的外部 `fetch` 必须注入为本地响应桩件；不得调用真实任天堂接口。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/api-product-preview.test.ts`
 
 Expected: FAIL，因为路由未挂载或返回静态资源响应。
 
-- [ ] **Step 3: 实现路由、输入收窄和 Worker 注册**
+- [x] **Step 3: 实现路由、输入收窄和 Worker 注册**
 
 ```ts
 if (request.method !== "POST" || path !== "/api/products/preview-sources") return null;
@@ -336,13 +338,13 @@ return Response.json({ regions: await preview.create(candidates) });
 
 将路由签名定义为 `handleProductRoute(request, database, preview: SubscriptionPreviewService)`，并由 `index.ts` 创建生产实例 `new SubscriptionPreviewService(new OfficialPriceIdService(createNintendoPriceApiProvider()), defaultFallbackSources)` 后在静态资源回退前、订阅写入路由前传入。API 测试直接传入固定的 `preview` 桩件，因此不触发真实网络。任何校验错误返回 `422 VALIDATION_ERROR`，不得回显堆栈、外部响应或数据库异常。
 
-- [ ] **Step 4: 运行 API 相关回归测试**
+- [x] **Step 4: 运行 API 相关回归测试**
 
 Run: `npm test -- --run test/api-product-preview.test.ts test/auth-guard.test.ts test/api-subscriptions.test.ts`
 
 Expected: PASS，匿名用户 401、无效输入 422、预览不插入 `games`、`regional_products` 或 `subscriptions`。
 
-- [ ] **Step 5: 提交预览 API**
+- [x] **Step 5: 提交预览 API**
 
 ```bash
 git add src/worker/routes/product-routes.ts src/worker/index.ts test/api-product-preview.test.ts
@@ -362,7 +364,7 @@ git commit -m "feat: add protected subscription source preview api"
 - Consumes: `ProviderResult.officialPriceId?: string`；只有专用官方价格 API 填写该字段。
 - Rule: `ProviderChain` 对携带 `officialPriceId` 的官方结果必须同时验证其等于 `RegionalProduct.officialPriceId`；没有该字段的既有 JSON-LD 官方适配器维持标题、发行商、类型与货币验证，避免无关回归。
 
-- [ ] **Step 1: 写入失败测试，防止官方价格 API 的错误 ID 通过链路**
+- [x] **Step 1: 写入失败测试，防止官方价格 API 的错误 ID 通过链路**
 
 ```ts
 it("rejects an official API result whose confirmed price id differs from the regional mapping", async () => {
@@ -374,13 +376,13 @@ it("rejects an official API result whose confirmed price id differs from the reg
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/provider-chain.test.ts`
 
 Expected: FAIL，因为链路尚未比较 `officialPriceId`。
 
-- [ ] **Step 3: 最小实现可选 ID 校验并同步文档**
+- [x] **Step 3: 最小实现可选 ID 校验并同步文档**
 
 ```ts
 const hasMatchingOfficialId = result.officialPriceId === undefined
@@ -395,13 +397,13 @@ return hasMatchingOfficialId
 
 更新 API 文档，列出 `POST /api/products/preview-sources` 的会话、输入和无持久化约束；更新质量文档，列出“跨区 ID 拒绝、官方 ID 缺失的第三方预告、官方 API 响应错配”三项离线验收；在追踪表把 FR-001、FR-002 标为已实现相应后端边界，明确跨区自动搜索与前端确认页面仍在后续界面任务中实现。
 
-- [ ] **Step 4: 运行全量验证与注释一致性检查**
+- [x] **Step 4: 运行全量验证与注释一致性检查**
 
 Run: `npm test -- --run && npx tsc --noEmit && npm run build && git diff --check`
 
 Expected: 全部通过；逐项复读本任务改动的中文注释，确认它们仍准确描述“日区专用、各区不复用、预览不写库、第三方不即时通知”的边界。
 
-- [ ] **Step 5: 提交链路与文档更新**
+- [x] **Step 5: 提交链路与文档更新**
 
 ```bash
 git add src/worker/providers/provider-chain.ts test/provider-chain.test.ts docs/architecture/api-design.md docs/quality/quality-and-acceptance.md docs/requirements/traceability.md
