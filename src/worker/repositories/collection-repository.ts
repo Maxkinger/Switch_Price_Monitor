@@ -5,6 +5,8 @@ interface CollectionProductRow {
   id: string;
   regionCode: RegionalProduct["regionCode"];
   currency: string;
+  /** 读取可空的地区专属官方价格 ID；采集器据此决定是否能安全调用需要该 ID 的官方接口。 */
+  officialPriceId: string | null;
   productUrl: string;
   canonicalTitle: string;
   publisher: string | null;
@@ -21,7 +23,7 @@ export class CollectionRepository {
   public async enabledRegionalProducts(): Promise<RegionalProduct[]> {
     const result = await this.database.prepare(
       `SELECT products.id AS id, products.region_code AS regionCode, products.currency AS currency,
-              products.product_url AS productUrl, games.name_en AS canonicalTitle,
+              products.official_product_id AS officialPriceId, products.product_url AS productUrl, games.name_en AS canonicalTitle,
               games.publisher AS publisher, games.product_type AS productType
        FROM subscriptions
        INNER JOIN subscription_regions ON subscription_regions.subscription_id = subscriptions.id

@@ -14,6 +14,11 @@ export interface RegionalProduct {
   id: string;
   regionCode: RegionCode;
   currency: string;
+  /**
+   * 由商品确认流程从本区官方链接或公开数据验证出的价格标识。它可以为空，表示该区不得请求依赖 ID 的官方接口，
+   * 而应在创建前预告第三方回退；该值绝不允许跨区复用，避免把其他 eShop 的价格写入错误的地区历史。
+   */
+  officialPriceId: string | null;
   productUrl: string;
   canonicalTitle: string;
   publisher: string | null;

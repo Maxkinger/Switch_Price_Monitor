@@ -17,6 +17,8 @@ describe("ProviderChain", () => {
     id: "us-overcooked-upgrade",
     regionCode: "US",
     currency: "USD",
+    // 此测试覆盖通用来源链而非日区价格接口，显式缺少价格 ID 可防止未来错误把任意官方结果当作地区 API 结果接受。
+    officialPriceId: null,
     productUrl: "https://www.nintendo.com/us/store/products/example/",
     canonicalTitle: "Overcooked! 2 - Nintendo Switch 2 Edition Upgrade Pack",
     publisher: "Team17",
