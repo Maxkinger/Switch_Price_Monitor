@@ -21,7 +21,7 @@
 | `price_snapshots` | 不可变价格历史 | 金额、货币、标价/税后口径、CNY 价格/汇率、来源、采集时间、有效性 |
 | `exchange_rates` | 每日汇率记录 | 货币、CNY 中间汇率、来源、读取时间、是否过期 |
 | `fetch_logs` | 采集诊断 | 来源、状态、耗时、安全错误摘要、采集时间；90 天清理 |
-| `regional_product_health` | 故障与恢复状态 | 连续失败次数、最近成功时间、异常通知状态 |
+| `regional_product_health` | 故障与恢复状态 | 连续失败次数、最近成功时间、异常通知状态；由采集结果服务写回，供后续通知事件去重 |
 | `notification_events` | 通知去重与审计 | 类型、关联订阅/地区、状态变迁、Telegram 发送结果和时间 |
 | `manual_refresh_requests` | 手动刷新队列 | 单行最近请求时间与 queued/running 状态；以原子更新强制 15 分钟冷却，调度器仅能原子认领一次 queued 请求，不保存会话或浏览器标识 |
 
