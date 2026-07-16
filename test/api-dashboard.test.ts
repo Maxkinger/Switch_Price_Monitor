@@ -34,8 +34,38 @@ describe("dashboard HTTP route", () => {
           nameEn: "Overcooked! 2",
           enabled: true,
           regionalProductIds: ["product-overcooked-2-us"],
+          regions: [
+            {
+              regionalProductId: "product-overcooked-2-us",
+              regionCode: "US",
+              currency: "USD",
+              current: null,
+              historicalLow: null,
+            },
+          ],
         },
       ],
+    });
+  });
+
+  it("returns the latest snapshot and the regional historical low without treating a third-party result as official", async () => {
+    // 当前价按最新采集时间选择，历史最低价按本币最小金额选择；来源字段必须原样返回，让前端清楚标记第三方数据。
+    const cookie = await initializeAndLogin();
+    await seedSubscription();
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO price_snapshots (regional_product_id, amount_minor, currency, cny_fen, source, captured_at) VALUES (?, ?, ?, ?, ?, ?)").bind("product-overcooked-2-us", 999, "USD", 6800, "official", "2026-07-15T00:00:00.000Z"),
+      env.DB.prepare("INSERT INTO price_snapshots (regional_product_id, amount_minor, currency, cny_fen, source, captured_at) VALUES (?, ?, ?, ?, ?, ?)").bind("product-overcooked-2-us", 1099, "USD", 7450, "eshop-prices", "2026-07-16T00:00:00.000Z"),
+    ]);
+    const response = await call("/api/dashboard", cookie);
+    const body = await response.json<{ subscriptions: Array<{ regions: Array<{ current: unknown; historicalLow: unknown }> }> }>();
+
+    expect(response.status).toBe(200);
+    expect(body.subscriptions[0].regions[0]).toEqual({
+      regionalProductId: "product-overcooked-2-us",
+      regionCode: "US",
+      currency: "USD",
+      current: { amountMinor: 1099, cnyFen: 7450, source: "eshop-prices", capturedAt: "2026-07-16T00:00:00.000Z" },
+      historicalLow: { amountMinor: 999, cnyFen: 6800, source: "official", capturedAt: "2026-07-15T00:00:00.000Z" },
     });
   });
 });
