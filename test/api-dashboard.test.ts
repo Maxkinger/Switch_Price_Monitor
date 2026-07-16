@@ -34,6 +34,7 @@ describe("dashboard HTTP route", () => {
           nameEn: "Overcooked! 2",
           enabled: true,
           regionalProductIds: ["product-overcooked-2-us"],
+          allRegionHistoricalLow: null,
           regions: [
             {
               regionalProductId: "product-overcooked-2-us",
@@ -45,6 +46,31 @@ describe("dashboard HTTP route", () => {
           ],
         },
       ],
+    });
+  });
+
+  it("uses converted CNY values to select one all-region historical low", async () => {
+    // 跨区比较不能拿美元分与日元分直接比大小；该断言固定使用已保存的人民币分，验证最便宜区遵循同一购买成本口径。
+    const cookie = await initializeAndLogin();
+    await seedSubscription();
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO regional_products (id, game_id, region_code, currency, product_url, match_source) VALUES (?, ?, ?, ?, ?, ?)").bind("product-overcooked-2-jp", "game-overcooked-2", "JP", "JPY", "https://example.test/jp", "manual_selection"),
+      env.DB.prepare("INSERT INTO subscription_regions (subscription_id, regional_product_id) VALUES (?, ?)").bind("subscription-overcooked-2", "product-overcooked-2-jp"),
+      env.DB.prepare("INSERT INTO price_snapshots (regional_product_id, amount_minor, currency, cny_fen, source, captured_at) VALUES (?, ?, ?, ?, ?, ?)").bind("product-overcooked-2-us", 999, "USD", 6800, "official", "2026-07-15T00:00:00.000Z"),
+      env.DB.prepare("INSERT INTO price_snapshots (regional_product_id, amount_minor, currency, cny_fen, source, captured_at) VALUES (?, ?, ?, ?, ?, ?)").bind("product-overcooked-2-jp", 1000, "JPY", 4200, "official", "2026-07-14T00:00:00.000Z"),
+    ]);
+    const response = await call("/api/dashboard", cookie);
+    const body = await response.json<{ subscriptions: Array<{ allRegionHistoricalLow: unknown }> }>();
+
+    expect(response.status).toBe(200);
+    expect(body.subscriptions[0].allRegionHistoricalLow).toEqual({
+      regionalProductId: "product-overcooked-2-jp",
+      regionCode: "JP",
+      amountMinor: 1000,
+      currency: "JPY",
+      cnyFen: 4200,
+      source: "official",
+      capturedAt: "2026-07-14T00:00:00.000Z",
     });
   });
 
