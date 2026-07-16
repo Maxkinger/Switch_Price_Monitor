@@ -345,6 +345,8 @@ git commit -m "feat: add subscription settings and export APIs"
 
 ## Task 7: Implement scheduled reports and Telegram delivery
 
+实施状态（2026-07-16）：日报纯格式化服务已完成并通过测试，可展示官方/第三方来源、各区当前价格、全区与分区历史最低价，并在 Telegram 4096 字符限制内标注页码分页。Telegram 发送、Cron 调度、采集执行与异常通知仍待接入。
+
 **Files:**
 - Create: `src/worker/services/report-service.ts`, `src/worker/services/telegram-service.ts`, `src/worker/services/scheduler-service.ts`
 - Modify: `src/worker/index.ts`
