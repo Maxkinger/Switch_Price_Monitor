@@ -23,7 +23,7 @@
 | `fetch_logs` | 采集诊断 | 来源、状态、耗时、安全错误摘要、采集时间；90 天清理 |
 | `regional_product_health` | 故障与恢复状态 | 连续失败次数、最近成功时间、异常通知状态 |
 | `notification_events` | 通知去重与审计 | 类型、关联订阅/地区、状态变迁、Telegram 发送结果和时间 |
-| `manual_refresh_requests` | 手动刷新队列 | 单行最近请求时间与 queued/running 状态；以原子更新强制 15 分钟冷却，不保存会话或浏览器标识 |
+| `manual_refresh_requests` | 手动刷新队列 | 单行最近请求时间与 queued/running 状态；以原子更新强制 15 分钟冷却，调度器仅能原子认领一次 queued 请求，不保存会话或浏览器标识 |
 
 ## 3. 关键关系与约束
 
