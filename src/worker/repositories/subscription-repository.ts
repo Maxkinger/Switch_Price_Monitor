@@ -76,6 +76,21 @@ export class SubscriptionRepository {
     return true;
   }
 
+  /** 查询订阅的逻辑游戏，用于地区编辑前验证商品归属；不把订阅的其他内部字段暴露给路由。 */
+  public async gameIdForSubscription(id: string): Promise<string | null> {
+    const row = await this.database.prepare("SELECT game_id AS gameId FROM subscriptions WHERE id = ?").bind(id).first<{ gameId: string }>();
+    return row?.gameId ?? null;
+  }
+
+  /** 替换地区关联而保留订阅、历史快照和目标价记录；新地区范围只影响后续采集和通知。 */
+  public async replaceRegionalProducts(id: string, regionalProductIds: string[], updatedAt: string): Promise<void> {
+    await this.database.batch([
+      this.database.prepare("DELETE FROM subscription_regions WHERE subscription_id = ?").bind(id),
+      ...regionalProductIds.map((productId) => this.database.prepare("INSERT INTO subscription_regions (subscription_id, regional_product_id) VALUES (?, ?)").bind(id, productId)),
+      this.database.prepare("UPDATE subscriptions SET updated_at = ? WHERE id = ?").bind(updatedAt, id),
+    ]);
+  }
+
   public async findByGameId(gameId: string): Promise<SubscriptionRecord | null> {
     // 游戏在当前 MVP 只能有一个订阅，查询按 game_id 而不是展示名称，防止多语言标题造成重复匹配。
     const row = await this.database

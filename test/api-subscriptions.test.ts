@@ -106,6 +106,17 @@ describe("subscription management HTTP routes", () => {
     await expect(env.DB.prepare("SELECT global_target_cny_fen AS target FROM subscriptions WHERE id = ?").bind("subscription-overcooked-2").first<{ target: number }>()).resolves.toEqual({ target: 5000 });
     await expect(env.DB.prepare("SELECT target_amount_minor AS target FROM subscription_region_targets WHERE subscription_id = ? AND region_code = ?").bind("subscription-overcooked-2", "JP").first<{ target: number }>()).resolves.toEqual({ target: 800 });
   });
+
+  it("replaces a subscription's monitored regional products without creating another subscription", async () => {
+    // 地区编辑应替换监控范围而非新增订阅；旧价格历史仍保留在地区商品上，只有未来采集范围发生变化。
+    const cookie = await initializeAndLogin();
+    await createSubscription(cookie);
+    const response = await call("/api/subscriptions/subscription-overcooked-2", { regionalProductIds: ["product-overcooked-2-jp"] }, cookie, "PATCH");
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ subscriptionId: "subscription-overcooked-2", regionalProductIds: ["product-overcooked-2-jp"] });
+    await expect(env.DB.prepare("SELECT COUNT(*) AS count FROM subscription_regions WHERE subscription_id = ?").bind("subscription-overcooked-2").first<{ count: number }>()).resolves.toEqual({ count: 1 });
+  });
 });
 
 async function seedSubscriptionCandidate(): Promise<void> {

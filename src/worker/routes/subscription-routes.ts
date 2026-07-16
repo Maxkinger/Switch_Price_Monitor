@@ -38,6 +38,7 @@ export async function handleSubscriptionRoute(request: Request, database: D1Data
 
     const update = readSubscriptionUpdate(await request.json<unknown>());
     if (update.kind === "enabled") { await service.setEnabled(action.subscriptionId, update.enabled, new Date().toISOString()); return Response.json({ subscriptionId: action.subscriptionId, enabled: update.enabled }); }
+    if (update.kind === "regions") { await service.replaceRegionalProducts(action.subscriptionId, update.regionalProductIds, new Date().toISOString()); return Response.json({ subscriptionId: action.subscriptionId, regionalProductIds: update.regionalProductIds }); }
     await service.setTargets(action.subscriptionId, update.globalTargetCnyFen, update.regionTargets, new Date().toISOString());
     return Response.json({ subscriptionId: action.subscriptionId, globalTargetCnyFen: update.globalTargetCnyFen, regionTargets: update.regionTargets });
   } catch (error) {
@@ -95,9 +96,14 @@ function readCreateSubscriptionInput(value: unknown): { id: string; gameId: stri
 }
 
 /** PATCH 只接受启用状态或完整目标价配置，禁止把地区商品编辑等尚未实现的字段静默忽略。 */
-function readSubscriptionUpdate(value: unknown): { kind: "enabled"; enabled: boolean } | { kind: "targets"; globalTargetCnyFen: number | null; regionTargets: Array<{ regionCode: string; targetAmountMinor: number }> } {
+function readSubscriptionUpdate(value: unknown): { kind: "enabled"; enabled: boolean } | { kind: "regions"; regionalProductIds: string[] } | { kind: "targets"; globalTargetCnyFen: number | null; regionTargets: Array<{ regionCode: string; targetAmountMinor: number }> } {
   if (!isRecord(value)) throw new SubscriptionRequestError("请求内容必须是对象。");
   if (typeof value.enabled === "boolean") return { kind: "enabled", enabled: value.enabled };
+  if (Array.isArray(value.regionalProductIds)) {
+    const regionalProductIds = value.regionalProductIds.map((id) => readNonEmptyString(id, "地区商品标识无效。"));
+    if (regionalProductIds.length === 0 || new Set(regionalProductIds).size !== regionalProductIds.length) throw new SubscriptionRequestError("地区商品选择无效。");
+    return { kind: "regions", regionalProductIds };
+  }
   if (!(value.globalTargetCnyFen === null || (Number.isInteger(value.globalTargetCnyFen) && (value.globalTargetCnyFen as number) > 0)) || !Array.isArray(value.regionTargets)) throw new SubscriptionRequestError("目标价设置无效。");
   const regionTargets = value.regionTargets.map((target) => {
     if (!isRecord(target) || typeof target.regionCode !== "string" || !Number.isInteger(target.targetAmountMinor) || (target.targetAmountMinor as number) <= 0) throw new SubscriptionRequestError("单区目标价无效。");

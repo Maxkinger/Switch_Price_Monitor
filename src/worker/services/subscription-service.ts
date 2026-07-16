@@ -54,4 +54,12 @@ export class SubscriptionService {
   public async setTargets(subscriptionId: string, globalTargetCnyFen: number | null, regionTargets: Array<{ regionCode: string; targetAmountMinor: number }>, now: string): Promise<void> {
     if (!(await this.subscriptions.setTargets(subscriptionId, globalTargetCnyFen, regionTargets, now))) throw new SubscriptionNotFoundError("订阅不存在。");
   }
+
+  /** 更新监控地区前确认订阅存在且全部地区商品属于同一逻辑游戏，避免跨游戏历史混合。 */
+  public async replaceRegionalProducts(subscriptionId: string, regionalProductIds: string[], now: string): Promise<void> {
+    const gameId = await this.subscriptions.gameIdForSubscription(subscriptionId);
+    if (!gameId) throw new SubscriptionNotFoundError("订阅不存在。");
+    if (!(await this.subscriptions.hasEnabledProductsForGame(gameId, regionalProductIds))) throw new RegionalProductMismatchError("地区商品不属于所选游戏。");
+    await this.subscriptions.replaceRegionalProducts(subscriptionId, regionalProductIds, now);
+  }
 }

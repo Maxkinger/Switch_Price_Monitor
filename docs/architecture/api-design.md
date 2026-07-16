@@ -38,7 +38,7 @@
 | `POST /api/auth/logout` | 可带会话 Cookie | 撤销当前会话并立即清除浏览器 Cookie；无 Cookie 时仍幂等返回 `204`。 |
 | `POST /api/subscriptions` | 已登录管理员 | 接受已确认的 `id`、`gameId` 和非空、去重的 `regionalProductIds`；每个地区商品必须属于该游戏且处于启用状态。同一 `gameId` 已存在订阅时返回既有 `subscriptionId` 与 `created: false`，不会覆盖原地区选择。匿名请求返回 `401`。 |
 | `POST /api/subscriptions/:id/disable` | 已登录管理员 | 软停用订阅并返回 `204`；不删除地区配置、价格历史或目标价状态，后续采集器据此停止创建新记录和通知。不存在的订阅返回 `404`。 |
-| `PATCH /api/subscriptions/:id` | 已登录管理员 | 接受 `{ "enabled": boolean }`，或完整目标价配置 `{ "globalTargetCnyFen": number\|null, "regionTargets": [...] }`；单区当地货币目标由提醒规则优先使用，更新目标会重置其命中状态。 |
+| `PATCH /api/subscriptions/:id` | 已登录管理员 | 接受启用状态、完整目标价配置，或非空且去重的 `regionalProductIds` 地区范围；地区商品必须属于订阅的同一游戏且启用，替换地区不删除既有历史。 |
 | `GET /api/settings` | 已登录管理员 | 返回可公开的单例设置，不含 Telegram 或认证秘密字段。 |
 | `PATCH /api/settings` | 已登录管理员 | 局部更新启用地区、默认搜索区、主题、时区、日报时间、税务州与历史保留策略；默认搜索区必须属于启用地区，更新不会改写既有订阅。 |
 | `GET /api/dashboard` | 已登录管理员 | 返回按创建顺序排列的订阅概览，包括游戏名称、启用状态、已确认地区商品、各区最新快照及当地货币历史最低价；最新快照保留原始来源标记，首次尚未订阅时稳定返回空数组。刷新状态将在后续读取模型中追加。 |
