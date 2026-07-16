@@ -9,12 +9,21 @@ import { handleHistoryRoute } from "./routes/history-routes";
 import { handleManualRefreshRoute } from "./routes/manual-refresh-routes";
 import { handleSettingsRoute } from "./routes/settings-routes";
 import { handleSubscriptionRoute } from "./routes/subscription-routes";
+import { SettingsRepository } from "./repositories/settings-repository";
+import { DashboardService } from "./services/dashboard-service";
+import type { DailyReportSubscription } from "./services/report-service";
+import { runScheduled } from "./services/scheduler-service";
+import { TelegramService } from "./services/telegram-service";
 
 export interface Env {
   /** 静态资源绑定仅服务前端文件；所有敏感业务操作必须走下方 Worker API。 */
   ASSETS: Fetcher;
   /** D1 是价格历史与管理员配置的唯一持久化入口，前端绝不能直接访问。 */
   DB: D1Database;
+  /** Telegram 凭据仅由 Cloudflare Secret 在运行时注入；可选字段使未配置部署安全跳过日报。 */
+  TELEGRAM_BOT_TOKEN?: string;
+  /** Chat ID 与 Bot Token 同样不得回传前端或写入数据库、日志和测试快照。 */
+  TELEGRAM_CHAT_ID?: string;
 }
 
 /** Cloudflare 导出的唯一请求处理器；后续受保护业务路由应在静态资源回退前注册。 */
@@ -55,6 +64,21 @@ const worker: ExportedHandler<Env> = {
 
     // 非 API 请求交给静态资源层，避免把 React 文件路由与业务 API 混在一起。
     return env.ASSETS.fetch(request);
+  },
+
+  async scheduled(event, env, ctx) {
+    // 每分钟 Cron 专门检查管理员选择的日报时刻；未来六小时采集 Cron 会使用不同表达式接入同一入口。
+    if (event.cron !== "* * * * *") return;
+    const telegram = env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID
+      ? new TelegramService({ botToken: env.TELEGRAM_BOT_TOKEN, chatId: env.TELEGRAM_CHAT_ID })
+      : undefined;
+    // DashboardService 的结果完全由本 Worker 构造；在单一适配点收窄为日报 DTO，避免在 Telegram 服务传播宽松的数据库读取类型。
+    const overview = new DashboardService(env.DB);
+    ctx.waitUntil(runScheduled(new Date(event.scheduledTime).toISOString(), {
+      settings: new SettingsRepository(env.DB),
+      overview: { getOverview: async () => ({ subscriptions: (await overview.getOverview()).subscriptions as unknown as DailyReportSubscription[] }) },
+      telegram,
+    }));
   },
 };
 

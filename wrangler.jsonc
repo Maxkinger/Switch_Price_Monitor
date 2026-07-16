@@ -16,5 +16,9 @@
       "database_name": "switch-price-monitor",
       "database_id": "00000000-0000-0000-0000-000000000000"
     }
-  ]
+  ],
+  // 每分钟仅执行轻量的本地时区判断，才能支持管理员设置任意 HH:mm；不命中日报时刻不会读取价格或访问 Telegram。
+  "triggers": {
+    "crons": ["* * * * *"]
+  }
 }

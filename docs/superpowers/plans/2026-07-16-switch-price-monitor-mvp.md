@@ -345,7 +345,7 @@ git commit -m "feat: add subscription settings and export APIs"
 
 ## Task 7: Implement scheduled reports and Telegram delivery
 
-实施状态（2026-07-16）：日报纯格式化服务与 Telegram 安全投递边界已完成并通过测试，可展示官方/第三方来源、各区当前价格、全区与分区历史最低价，并在 Telegram 4096 字符限制内标注页码分页；发送按页顺序进行，结果不回显 Token、Chat ID 或第三方原始错误。Worker Secret 绑定、Cron 调度、采集执行与异常通知仍待接入。
+实施状态（2026-07-16）：日报纯格式化服务、Telegram 安全投递边界与 Worker Cron 调度已完成并通过测试，可展示官方/第三方来源、各区当前价格、全区与分区历史最低价，并在 Telegram 4096 字符限制内标注页码分页；发送按页顺序进行，结果不回显 Token、Chat ID 或第三方原始错误。每分钟 Cron 以管理员 IANA 时区判断日报时刻，且仅在运行时同时存在 Telegram Secret 时读取价格和发送。六小时采集执行、手动刷新队列消费、异常通知和部署 Secret 配置仍待接入。
 
 **Files:**
 - Create: `src/worker/services/report-service.ts`, `src/worker/services/telegram-service.ts`, `src/worker/services/scheduler-service.ts`
