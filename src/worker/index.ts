@@ -3,6 +3,7 @@
  * 价格提供方、D1 和 Telegram 凭据只会在 Worker 侧使用，浏览器不会获得直接访问能力。
  */
 import { handleAuthRoute } from "./routes/auth-routes";
+import { handleSubscriptionRoute } from "./routes/subscription-routes";
 
 export interface Env {
   /** 静态资源绑定仅服务前端文件；所有敏感业务操作必须走下方 Worker API。 */
@@ -22,6 +23,10 @@ const worker: ExportedHandler<Env> = {
     // 认证路由必须在静态资源前处理，避免密码请求被错误当作前端文件。
     const authResponse = await handleAuthRoute(request, env.DB);
     if (authResponse) return authResponse;
+
+    // 订阅写入会改变后续采集与通知范围，因此必须在静态资源回退之前进入带会话校验的管理 API。
+    const subscriptionResponse = await handleSubscriptionRoute(request, env.DB);
+    if (subscriptionResponse) return subscriptionResponse;
 
     // 非 API 请求交给静态资源层，避免把 React 文件路由与业务 API 混在一起。
     return env.ASSETS.fetch(request);

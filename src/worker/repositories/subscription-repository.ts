@@ -16,6 +16,23 @@ interface SubscriptionRow {
 export class SubscriptionRepository {
   public constructor(private readonly database: D1Database) {}
 
+  /**
+   * 确认所有地区商品同时属于指定游戏且仍启用。关系表的外键只能保证商品存在，
+   * 无法阻止跨游戏关联；用计数与已去重输入长度比较可在写订阅前阻断这种数据污染。
+   */
+  public async hasEnabledProductsForGame(gameId: string, regionalProductIds: string[]): Promise<boolean> {
+    const placeholders = regionalProductIds.map(() => "?").join(", ");
+    const row = await this.database
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM regional_products
+         WHERE game_id = ? AND enabled = 1 AND id IN (${placeholders})`,
+      )
+      .bind(gameId, ...regionalProductIds)
+      .first<{ count: number }>();
+    return row?.count === regionalProductIds.length;
+  }
+
   public async create(input: SubscriptionInput): Promise<void> {
     // 先创建主订阅再写关系表，保证每个地区商品都可追溯到同一个用户确认的订阅配置。
     await this.database

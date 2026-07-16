@@ -295,6 +295,8 @@ git commit -m "feat: add price collection and monitoring rules"
 
 ## Task 6: Add subscription, settings, dashboard, history, and export APIs
 
+实施状态（2026-07-16）：已完成受管理员会话保护的 `POST /api/subscriptions`。该接口校验非空且去重的地区商品列表，并验证其属于所选游戏且仍启用；重复 `gameId` 返回既有订阅，保留原有地区配置。设置、仪表盘、历史、导出、停用与重新启用接口仍待实现。
+
 **Files:**
 - Create: `src/worker/routes/subscription-routes.ts`, `src/worker/routes/settings-routes.ts`, `src/worker/routes/dashboard-routes.ts`, `src/worker/routes/export-routes.ts`
 - Create: `src/worker/services/subscription-service.ts`, `src/worker/services/export-service.ts`
@@ -305,7 +307,7 @@ git commit -m "feat: add price collection and monitoring rules"
 - `GET /api/dashboard`, `GET /api/history?subscriptionId=&region=`.
 - `GET /api/export?kind=subscriptions|prices|fetch-logs`.
 
-- [ ] **Step 1: Write failing protected API tests**
+- [x] **Step 1: Write failing protected API tests（订阅创建部分）**
 
 ```ts
 it("opens an existing subscription instead of inserting a duplicate", async () => {
@@ -320,16 +322,16 @@ it("does not export secrets", async () => {
 });
 ```
 
-- [ ] **Step 2: Run API tests and verify failure**
+- [x] **Step 2: Run API tests and verify failure（订阅创建部分）**
 
 Run: `npm test -- --run test/api-subscriptions.test.ts test/api-settings-and-export.test.ts`  
 Expected: FAIL because route handlers do not exist.
 
-- [ ] **Step 3: Implement route handlers and validation**
+- [ ] **Step 3: Implement route handlers and validation（订阅创建部分已完成）**
 
 Require `requireAdmin` for every route except auth. Validate enabled/default regions, 15-minute manual-refresh cooldown, all three theme values, source ordering, retention selection, and CSV kind. Use streaming CSV rows for price history; soft-disable subscriptions and expose re-enable via `PATCH`.
 
-- [ ] **Step 4: Run API integration tests**
+- [ ] **Step 4: Run API integration tests（订阅创建部分已通过）**
 
 Run: `npm test -- --run test/api-subscriptions.test.ts test/api-settings-and-export.test.ts`  
 Expected: PASS; unauthenticated requests return `401`, duplicate subscription is not created, and CSV contains headers but no secret fields.
