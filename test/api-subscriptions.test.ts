@@ -73,6 +73,22 @@ describe("subscription management HTTP routes", () => {
     await expect(response.json()).resolves.toEqual({ code: "VALIDATION_ERROR", error: "地区商品不属于所选游戏。" });
     await expect(env.DB.prepare("SELECT COUNT(*) AS count FROM subscriptions").first<{ count: number }>()).resolves.toEqual({ count: 0 });
   });
+
+  it("soft-disables and re-enables a subscription without removing its regional configuration", async () => {
+    // 取消订阅只应暂停采集与通知；地区选择和历史关联必须留下，重新启用时无需再次搜索、匹配商品。
+    const cookie = await initializeAndLogin();
+    await createSubscription(cookie);
+
+    const disabled = await call("/api/subscriptions/subscription-overcooked-2/disable", undefined, cookie);
+    expect(disabled.status).toBe(204);
+    await expect(env.DB.prepare("SELECT enabled AS enabled FROM subscriptions WHERE id = ?").bind("subscription-overcooked-2").first<{ enabled: number }>()).resolves.toEqual({ enabled: 0 });
+    await expect(env.DB.prepare("SELECT COUNT(*) AS count FROM subscription_regions").first<{ count: number }>()).resolves.toEqual({ count: 2 });
+
+    const reenabled = await call("/api/subscriptions/subscription-overcooked-2", { enabled: true }, cookie, "PATCH");
+    expect(reenabled.status).toBe(200);
+    await expect(reenabled.json()).resolves.toEqual({ subscriptionId: "subscription-overcooked-2", enabled: true });
+    await expect(env.DB.prepare("SELECT enabled AS enabled FROM subscriptions WHERE id = ?").bind("subscription-overcooked-2").first<{ enabled: number }>()).resolves.toEqual({ enabled: 1 });
+  });
 });
 
 async function seedSubscriptionCandidate(): Promise<void> {
@@ -143,12 +159,26 @@ async function initializeAndLogin(): Promise<string> {
   return login.headers.get("set-cookie") ?? "";
 }
 
-async function call(path: string, body?: unknown, cookie?: string): Promise<Response> {
+async function createSubscription(cookie: string): Promise<void> {
+  // 公共夹具从真实创建端点建立初始状态，保证停用测试也覆盖受保护写入的完整调用链。
+  const response = await call(
+    "/api/subscriptions",
+    {
+      id: "subscription-overcooked-2",
+      gameId: "game-overcooked-2",
+      regionalProductIds: ["product-overcooked-2-us", "product-overcooked-2-jp"],
+    },
+    cookie,
+  );
+  expect(response.status).toBe(201);
+}
+
+async function call(path: string, body?: unknown, cookie?: string, method = "POST"): Promise<Response> {
   // 订阅管理是 JSON API，测试资源绑定若被调用就会报错，确保请求没有意外落到静态前端层。
   const assets = { fetch: async () => new Response("unexpected asset request", { status: 500 }) } as unknown as Fetcher;
   return worker.fetch!(
     new Request(`https://example.test${path}`, {
-      method: "POST",
+      method,
       body: body === undefined ? undefined : JSON.stringify(body),
       headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
     }) as never,

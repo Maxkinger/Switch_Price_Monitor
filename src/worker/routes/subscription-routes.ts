@@ -1,5 +1,9 @@
 import { SubscriptionRepository } from "../repositories/subscription-repository";
-import { RegionalProductMismatchError, SubscriptionService } from "../services/subscription-service";
+import {
+  RegionalProductMismatchError,
+  SubscriptionNotFoundError,
+  SubscriptionService,
+} from "../services/subscription-service";
 import { requireAdmin } from "./auth-guard";
 
 /**
@@ -8,8 +12,9 @@ import { requireAdmin } from "./auth-guard";
  */
 export async function handleSubscriptionRoute(request: Request, database: D1Database): Promise<Response | null> {
   const path = new URL(request.url).pathname;
-  // 未匹配的请求交还给主路由，避免此模块意外截获未来的订阅详情、更新或删除端点。
-  if (request.method !== "POST" || path !== "/api/subscriptions") return null;
+  const action = readSubscriptionAction(request.method, path);
+  // 未匹配的请求交还给主路由，避免此模块意外截获未来的商品发现、历史或静态资源端点。
+  if (!action) return null;
 
   // 认证失败统一使用固定响应，既不泄露会话是否过期，也不给匿名调用者数据库错误细节。
   if (!(await requireAdmin(request, database))) {
@@ -17,26 +22,58 @@ export async function handleSubscriptionRoute(request: Request, database: D1Data
   }
 
   try {
-    const body = await request.json<unknown>();
-    const input = readCreateSubscriptionInput(body);
-    const result = await new SubscriptionService(new SubscriptionRepository(database)).createOrOpen(input, new Date().toISOString());
-    // 只有真正插入时返回 201；重复提交返回 200 让前端按幂等成功处理，而不是误提示“创建失败”。
-    return Response.json(result, { status: result.created ? 201 : 200 });
+    const service = new SubscriptionService(new SubscriptionRepository(database));
+    if (action.kind === "create") {
+      const input = readCreateSubscriptionInput(await request.json<unknown>());
+      const result = await service.createOrOpen(input, new Date().toISOString());
+      // 只有真正插入时返回 201；重复提交返回 200 让前端按幂等成功处理，而不是误提示“创建失败”。
+      return Response.json(result, { status: result.created ? 201 : 200 });
+    }
+
+    if (action.kind === "disable") {
+      await service.setEnabled(action.subscriptionId, false, new Date().toISOString());
+      // 停用成功不回传旧配置，防止前端把过期详情误当作仍可采集的状态；读取接口会提供最新显示模型。
+      return new Response(null, { status: 204 });
+    }
+
+    const enabled = readEnabledUpdate(await request.json<unknown>());
+    await service.setEnabled(action.subscriptionId, enabled, new Date().toISOString());
+    return Response.json({ subscriptionId: action.subscriptionId, enabled });
   } catch (error) {
     // 可预期的表单或商品归属错误使用 422；数据库故障则使用通用 500，任何路径都不回显 JSON、SQL 或堆栈。
     const isValidationError = error instanceof SubscriptionRequestError || error instanceof RegionalProductMismatchError;
+    const isNotFound = error instanceof SubscriptionNotFoundError;
     return Response.json(
       {
-        code: isValidationError ? "VALIDATION_ERROR" : "INTERNAL_ERROR",
-        error: isValidationError && error instanceof Error ? error.message : "订阅暂时无法创建，请稍后重试。",
+        code: isNotFound ? "NOT_FOUND" : isValidationError ? "VALIDATION_ERROR" : "INTERNAL_ERROR",
+        error: (isValidationError || isNotFound) && error instanceof Error ? error.message : "订阅暂时无法处理，请稍后重试。",
       },
-      { status: isValidationError ? 422 : 500 },
+      { status: isNotFound ? 404 : isValidationError ? 422 : 500 },
     );
   }
 }
 
 /** 路由专属参数错误避免复用认证错误语义，让日志与前端能够区分登录和订阅表单问题。 */
 class SubscriptionRequestError extends Error {}
+
+/** 路由动作收窄后才访问路径中的订阅 ID，避免未来新增子路径时被宽松字符串判断错误消费。 */
+type SubscriptionAction =
+  | { kind: "create" }
+  | { kind: "disable"; subscriptionId: string }
+  | { kind: "set-enabled"; subscriptionId: string };
+
+/**
+ * 支持首版已确认的创建、停用与重新启用端点。URL 中的 ID 会解码后再以参数化 SQL 传递，
+ * 不能拼入查询文本；空 ID 仍交由未匹配路径处理，避免对无效地址泄露订阅存在性。
+ */
+function readSubscriptionAction(method: string, path: string): SubscriptionAction | null {
+  if (method === "POST" && path === "/api/subscriptions") return { kind: "create" };
+  const disableMatch = method === "POST" ? path.match(/^\/api\/subscriptions\/([^/]+)\/disable$/) : null;
+  if (disableMatch) return { kind: "disable", subscriptionId: decodeURIComponent(disableMatch[1]) };
+  const updateMatch = method === "PATCH" ? path.match(/^\/api\/subscriptions\/([^/]+)$/) : null;
+  if (updateMatch) return { kind: "set-enabled", subscriptionId: decodeURIComponent(updateMatch[1]) };
+  return null;
+}
 
 /**
  * 将不可信 JSON 收窄为订阅服务所需的三个字段。地区商品列表必须非空且去重，
@@ -54,6 +91,14 @@ function readCreateSubscriptionInput(value: unknown): { id: string; gameId: stri
     throw new SubscriptionRequestError("地区商品不能重复选择。");
   }
   return { id, gameId, regionalProductIds };
+}
+
+/** 当前 PATCH 仅开放 enabled，拒绝静默接受其他字段，防止尚未实现的地区与目标价编辑被误认为已保存。 */
+function readEnabledUpdate(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.enabled !== "boolean") {
+    throw new SubscriptionRequestError("订阅启用状态无效。");
+  }
+  return value.enabled;
 }
 
 /** 只接受普通对象形态，数组、null 与原型对象都不应被当作浏览器表单提交解析。 */

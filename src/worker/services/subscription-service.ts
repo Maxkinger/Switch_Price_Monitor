@@ -10,6 +10,9 @@ export interface CreateOrOpenSubscriptionResult {
 /** 地区商品不存在、属于其他游戏或已停用时统一抛出，避免把数据库细节暴露为 API 响应。 */
 export class RegionalProductMismatchError extends Error {}
 
+/** 停用或重新启用不存在的订阅使用显式领域错误，路由可返回 404 而非把它伪装为成功。 */
+export class SubscriptionNotFoundError extends Error {}
+
 /**
  * 订阅服务承载“同一逻辑游戏只有一个订阅”的业务规则。
  * 它不在这里搜索或猜测商品；传入的地区商品 ID 必须已由后续的商品确认流程验证，避免把本体、DLC 与升级包混订。
@@ -35,5 +38,15 @@ export class SubscriptionService {
 
     await this.subscriptions.create({ ...input, createdAt: now });
     return { subscriptionId: input.id, created: true };
+  }
+
+  /**
+   * 切换订阅软状态。停用不是删除操作：历史快照、地区映射和目标价状态都要继续存在，
+   * 采集器仅根据 enabled 决定是否继续生成新记录和通知。
+   */
+  public async setEnabled(subscriptionId: string, enabled: boolean, now: string): Promise<void> {
+    if (!(await this.subscriptions.setEnabled(subscriptionId, enabled, now))) {
+      throw new SubscriptionNotFoundError("订阅不存在。");
+    }
   }
 }

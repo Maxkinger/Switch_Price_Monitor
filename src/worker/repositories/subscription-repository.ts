@@ -53,6 +53,18 @@ export class SubscriptionRepository {
     );
   }
 
+  /**
+   * 软停用或重新启用只更新订阅状态与审计时间，不触碰关系表和价格快照。
+   * 这样“取消订阅”可立即停止任务，同时允许管理员未来恢复原有的地区组合和历史最低价。
+   */
+  public async setEnabled(id: string, enabled: boolean, updatedAt: string): Promise<boolean> {
+    const result = await this.database
+      .prepare("UPDATE subscriptions SET enabled = ?, updated_at = ? WHERE id = ?")
+      .bind(enabled ? 1 : 0, updatedAt, id)
+      .run();
+    return result.meta.changes === 1;
+  }
+
   public async findByGameId(gameId: string): Promise<SubscriptionRecord | null> {
     // 游戏在当前 MVP 只能有一个订阅，查询按 game_id 而不是展示名称，防止多语言标题造成重复匹配。
     const row = await this.database
