@@ -3,6 +3,7 @@
  * 价格提供方、D1 和 Telegram 凭据只会在 Worker 侧使用，浏览器不会获得直接访问能力。
  */
 import { handleAuthRoute } from "./routes/auth-routes";
+import { handleDashboardRoute } from "./routes/dashboard-routes";
 import { handleSettingsRoute } from "./routes/settings-routes";
 import { handleSubscriptionRoute } from "./routes/subscription-routes";
 
@@ -28,6 +29,10 @@ const worker: ExportedHandler<Env> = {
     // 全局设置会影响后续商品搜索、主题与日报调度，必须由管理员会话保护并先于静态资源回退处理。
     const settingsResponse = await handleSettingsRoute(request, env.DB);
     if (settingsResponse) return settingsResponse;
+
+    // 仪表盘聚合订阅和价格历史，属于管理员私有信息，必须在静态资源层之前完成会话校验。
+    const dashboardResponse = await handleDashboardRoute(request, env.DB);
+    if (dashboardResponse) return dashboardResponse;
 
     // 订阅写入会改变后续采集与通知范围，因此必须在静态资源回退之前进入带会话校验的管理 API。
     const subscriptionResponse = await handleSubscriptionRoute(request, env.DB);
