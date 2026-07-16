@@ -6,6 +6,14 @@ export interface NotificationEventReservation {
   createdAt: string;
 }
 
+/** 待发送读取模型只暴露格式化和确认投递需要的字段，隐藏自增主键及任何未来内部审计列。 */
+export interface PendingNotificationEvent {
+  regionalProductId: string | null;
+  eventType: NotificationEventReservation["eventType"];
+  dedupeKey: string;
+  createdAt: string;
+}
+
 /**
  * 通知事件的 D1 去重边界。唯一键由业务层以地区商品、事件类型和状态变迁时刻组成，
  * 即使 Cron 重试或多个 Worker 重叠，数据库也只会允许一次待发送记录，防止 Telegram 重复打扰管理员。
@@ -39,5 +47,22 @@ export class NotificationEventRepository {
       .bind(sentAt, dedupeKey)
       .run();
     return result.meta.changes === 1;
+  }
+
+  /**
+   * 按创建时间稳定读取待投递事件。已 delivered 的事件不会再次返回，
+   * 因此发送器可以在单次 Cron 中顺序投递并逐条确认，不会重复发送成功消息。
+   */
+  public async pending(): Promise<PendingNotificationEvent[]> {
+    const result = await this.database
+      .prepare(
+        `SELECT regional_product_id AS regionalProductId, event_type AS eventType,
+                dedupe_key AS dedupeKey, created_at AS createdAt
+         FROM notification_events
+         WHERE status = 'pending'
+         ORDER BY created_at ASC, id ASC`,
+      )
+      .all<PendingNotificationEvent>();
+    return result.results;
   }
 }

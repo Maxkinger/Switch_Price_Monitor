@@ -32,4 +32,16 @@ describe("NotificationEventRepository", () => {
     await expect(events.markDelivered(input.dedupeKey, "2026-07-16T18:00:01.000Z")).resolves.toBe(true);
     await expect(env.DB.prepare("SELECT status, sent_at AS sentAt FROM notification_events WHERE dedupe_key = ?").bind(input.dedupeKey).first<{ status: string; sentAt: string | null }>()).resolves.toEqual({ status: "delivered", sentAt: "2026-07-16T18:00:01.000Z" });
   });
+
+  it("returns only pending events in creation order for the delivery scheduler", async () => {
+    // 已投递事件绝不能再次进入发送队列；读取模型只暴露投递决策需要的字段，避免泄露数据库内部 ID 或 Telegram 配置。
+    const events = new NotificationEventRepository(env.DB);
+    const delivered = { regionalProductId: "product-notification", eventType: "collection-failure" as const, dedupeKey: "delivered", createdAt: "2026-07-16T12:00:00.000Z" };
+    const pending = { regionalProductId: "product-notification", eventType: "collection-recovered" as const, dedupeKey: "pending", createdAt: "2026-07-16T18:00:00.000Z" };
+    await events.reserve(delivered);
+    await events.reserve(pending);
+    await events.markDelivered(delivered.dedupeKey, "2026-07-16T12:00:01.000Z");
+
+    await expect(events.pending()).resolves.toEqual([{ regionalProductId: "product-notification", eventType: "collection-recovered", dedupeKey: "pending", createdAt: "2026-07-16T18:00:00.000Z" }]);
+  });
 });
