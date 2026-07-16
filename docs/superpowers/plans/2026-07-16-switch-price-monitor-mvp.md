@@ -247,6 +247,8 @@ git commit -m "feat: add validated price provider chain"
 
 ## Task 5: Build collection, historical-low, target-price, and health services
 
+实施状态（2026-07-16）：不可变采集核心、日汇率人民币换算、官方降价、目标价去重和三次失败/恢复状态机已完成并通过测试。D1 健康状态写回、全区人民币历史最低价查询、日志与历史保留清理将在管理 API 与调度任务接入时完成。
+
 **Files:**
 - Create: `src/worker/services/collection-service.ts`, `src/worker/services/price-rules.ts`, `src/worker/services/retention-service.ts`
 - Create: `test/collection-service.test.ts`, `test/price-rules.test.ts`
@@ -256,7 +258,7 @@ git commit -m "feat: add validated price provider chain"
 - `evaluateOfficialDrop(previous, current): boolean`.
 - `evaluateTarget(target, price, priorState): "trigger" | "reset" | "none"`.
 
-- [ ] **Step 1: Write failing collection and alert-rule tests**
+- [x] **Step 1: Write failing collection and alert-rule tests**
 
 ```ts
 it("does not create an immediate alert for a third-party drop", () => {
@@ -270,16 +272,16 @@ it("triggers a target only on the first crossing and resets after recovery", () 
 });
 ```
 
-- [ ] **Step 2: Run price-rule tests and verify failure**
+- [x] **Step 2: Run price-rule tests and verify failure**
 
 Run: `npm test -- --run test/price-rules.test.ts test/collection-service.test.ts`  
 Expected: FAIL because collection and rule services do not exist.
 
-- [ ] **Step 3: Implement immutable collection flow**
+- [x] **Step 3: Implement immutable collection flow（核心）**
 
 Fetch the day’s rates once, collect each enabled region through the provider chain, append source-tagged snapshots, calculate CNY fen and Oregon tax display fields, and retain the previous snapshot on total failure. Maintain health counters; notify state changes at exactly three consecutive failures and the next recovery. Query historical lows by region plus the all-region lowest CNY snapshot.
 
-- [ ] **Step 4: Run service tests**
+- [x] **Step 4: Run service tests（核心）**
 
 Run: `npm test -- --run test/price-rules.test.ts test/collection-service.test.ts`  
 Expected: PASS, including stale price/rate behavior and historical-low values.
