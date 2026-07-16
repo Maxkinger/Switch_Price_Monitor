@@ -7,15 +7,19 @@ import { handleDashboardRoute } from "./routes/dashboard-routes";
 import { handleExportRoute } from "./routes/export-routes";
 import { handleHistoryRoute } from "./routes/history-routes";
 import { handleManualRefreshRoute } from "./routes/manual-refresh-routes";
+import { handleProductRoute } from "./routes/product-routes";
 import { handleSettingsRoute } from "./routes/settings-routes";
 import { handleSubscriptionRoute } from "./routes/subscription-routes";
+import { createNintendoPriceApiProvider } from "./providers/official-nintendo-price-api";
 import { RetentionRepository } from "./repositories/retention-repository";
 import { NotificationEventRepository } from "./repositories/notification-event-repository";
 import { SettingsRepository } from "./repositories/settings-repository";
 import { DashboardService } from "./services/dashboard-service";
+import { OfficialPriceIdService } from "./services/official-price-id-service";
 import type { DailyReportSubscription } from "./services/report-service";
 import { RetentionService } from "./services/retention-service";
 import { runPendingNotificationDelivery, runScheduled, runScheduledMaintenance } from "./services/scheduler-service";
+import { defaultFallbackSources, SubscriptionPreviewService } from "./services/subscription-preview-service";
 import { TelegramService } from "./services/telegram-service";
 
 export interface Env {
@@ -60,6 +64,14 @@ const worker: ExportedHandler<Env> = {
     // 导出可包含长期价格轨迹，必须通过管理员会话并由白名单导出服务生成，不能交给静态层或任意 SQL。
     const exportResponse = await handleExportRoute(request, env.DB);
     if (exportResponse) return exportResponse;
+
+    // 订阅前预览只读且必须先经管理员会话验证；每个请求构造无状态服务，避免在 Worker 实例间缓存候选 URL 或外部响应。
+    const productResponse = await handleProductRoute(
+      request,
+      env.DB,
+      new SubscriptionPreviewService(new OfficialPriceIdService(createNintendoPriceApiProvider()), defaultFallbackSources),
+    );
+    if (productResponse) return productResponse;
 
     // 订阅写入会改变后续采集与通知范围，因此必须在静态资源回退之前进入带会话校验的管理 API。
     const subscriptionResponse = await handleSubscriptionRoute(request, env.DB);
