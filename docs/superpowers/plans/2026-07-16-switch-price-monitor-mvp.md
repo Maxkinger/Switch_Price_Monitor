@@ -247,7 +247,7 @@ git commit -m "feat: add validated price provider chain"
 
 ## Task 5: Build collection, historical-low, target-price, and health services
 
-实施状态（2026-07-16）：不可变采集核心、日汇率人民币换算、官方降价、目标价去重和三次失败/恢复状态机已完成并通过测试。采集仓储现已只枚举启用订阅中的启用地区商品，防止停用配置继续访问外部来源。历史保留已具备经过 D1 验证的清理服务：价格快照按永久/一年/两年日历边界严格删除，采集日志固定清理九十天前记录；Cron 调度器对该服务的实际调用仍待接入。D1 健康状态写回、真实执行器和全区人民币历史最低价查询仍待完成。
+实施状态（2026-07-16）：不可变采集核心、日汇率人民币换算、官方降价、目标价去重和三次失败/恢复状态机已完成并通过测试。采集仓储现已只枚举启用订阅中的启用地区商品，防止停用配置继续访问外部来源。历史保留已具备经过 D1 验证的清理服务，并由独立六小时 Cron 实际调用：价格快照按永久/一年/两年日历边界严格删除，采集日志固定清理九十天前记录。D1 健康状态写回、真实价格采集执行器和全区人民币历史最低价查询仍待完成。
 
 **Files:**
 - Create: `src/worker/services/collection-service.ts`, `src/worker/services/price-rules.ts`, `src/worker/services/retention-service.ts`

@@ -1,4 +1,6 @@
+import type { AppSettings } from "../../shared/domain";
 import { buildDailyReport, type DailyReportSubscription, type TelegramMessage } from "./report-service";
+import type { RetentionCleanupResult } from "./retention-service";
 import type { TelegramDeliveryResult } from "./telegram-service";
 
 /** 调度器只依赖时区和日报时刻，隔离完整设置对象可避免将未来的秘密字段误传入任务逻辑。 */
@@ -16,11 +18,27 @@ export interface DailyReportTelegramSender {
   send(messages: TelegramMessage[]): Promise<TelegramDeliveryResult[]>;
 }
 
+/** 维护任务只读取历史保留策略；缩小接口可防止六小时任务误依赖日报时区或 Telegram 配置。 */
+export interface MaintenanceSettingsReader {
+  get(): Promise<{ priceHistoryRetention: AppSettings["priceHistoryRetention"] } | null>;
+}
+
+/** 维护端口只暴露受控清理，不返回原始价格或日志内容，避免调度边界扩大数据暴露面。 */
+export interface RetentionMaintenanceRunner {
+  cleanup(now: string, policy: AppSettings["priceHistoryRetention"]): Promise<RetentionCleanupResult>;
+}
+
 /** 依赖注入让时间判断、数据库读取和 Telegram 网络投递可分别在 Worker 测试中验证。 */
 export interface SchedulerDependencies {
   settings: DailyReportSettingsReader;
   overview: DailyReportOverviewReader;
   telegram?: DailyReportTelegramSender;
+}
+
+/** 六小时维护不需要 Telegram 或仪表盘读取；独立依赖使其在通知未配置时仍能安全控制数据量。 */
+export interface MaintenanceDependencies {
+  settings: MaintenanceSettingsReader;
+  retention: RetentionMaintenanceRunner;
 }
 
 /** 调度结果仅用于 Worker 内部诊断和测试，不含价格正文、Telegram 响应或任何秘密。 */
@@ -29,6 +47,11 @@ export type ScheduledResult =
   | { kind: "setup-not-complete" }
   | { kind: "telegram-not-configured" }
   | { kind: "daily-report-dispatched"; deliveries: TelegramDeliveryResult[] };
+
+/** 六小时维护结果只提供执行状态和聚合删除数量，供 Worker 诊断使用而不泄漏历史内容。 */
+export type ScheduledMaintenanceResult =
+  | { kind: "setup-not-complete" }
+  | { kind: "maintenance-completed"; cleanup: RetentionCleanupResult };
 
 /**
  * 在每分钟 Cron 唤醒时按管理员时区决定是否发送日报。只有命中精确 HH:mm 且 Telegram Secret 完整时
@@ -43,6 +66,16 @@ export async function runScheduled(now: string, dependencies: SchedulerDependenc
   const overview = await dependencies.overview.getOverview();
   const messages = buildDailyReport({ subscriptions: overview.subscriptions, timezone: settings.timezone, generatedAt: now });
   return { kind: "daily-report-dispatched", deliveries: await dependencies.telegram.send(messages) };
+}
+
+/**
+ * 在六小时 Cron 触发时执行数据保留。未完成首次设置时不猜测策略也不删除任何数据；
+ * 已初始化后，RetentionService 负责严格的日历边界与固定九十天日志规则，未来价格采集可在同一频率入口追加。
+ */
+export async function runScheduledMaintenance(now: string, dependencies: MaintenanceDependencies): Promise<ScheduledMaintenanceResult> {
+  const settings = await dependencies.settings.get();
+  if (!settings) return { kind: "setup-not-complete" };
+  return { kind: "maintenance-completed", cleanup: await dependencies.retention.cleanup(now, settings.priceHistoryRetention) };
 }
 
 /**

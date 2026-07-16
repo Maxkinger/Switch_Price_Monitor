@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { runScheduled } from "../src/worker/services/scheduler-service";
+import { runScheduled, runScheduledMaintenance } from "../src/worker/services/scheduler-service";
 import type { DailyReportSubscription, TelegramMessage } from "../src/worker/services/report-service";
 
 describe("scheduled daily report dispatch", () => {
@@ -27,6 +27,15 @@ describe("scheduled daily report dispatch", () => {
 
     await expect(runScheduled("2026-07-16T01:00:00.000Z", { settings, overview })).resolves.toEqual({ kind: "telegram-not-configured" });
     expect(overview.getOverview).not.toHaveBeenCalled();
+  });
+
+  it("runs retention maintenance through the dedicated six-hour scheduling boundary", async () => {
+    // 数据保留是独立的存储安全任务；六小时入口避免每分钟日报检查重复扫描历史，同时为后续同频价格采集预留单一边界。
+    const retention = { cleanup: vi.fn<(now: string, policy: "forever" | "one-year" | "two-years") => Promise<{ priceSnapshotsDeleted: number; fetchLogsDeleted: number }>>().mockResolvedValue({ priceSnapshotsDeleted: 2, fetchLogsDeleted: 3 }) };
+    const settings = { get: vi.fn<() => Promise<{ priceHistoryRetention: "two-years" }>>().mockResolvedValue({ priceHistoryRetention: "two-years" }) };
+
+    await expect(runScheduledMaintenance("2026-07-16T01:01:00.000Z", { settings, retention })).resolves.toEqual({ kind: "maintenance-completed", cleanup: { priceSnapshotsDeleted: 2, fetchLogsDeleted: 3 } });
+    expect(retention.cleanup).toHaveBeenCalledExactlyOnceWith("2026-07-16T01:01:00.000Z", "two-years");
   });
 });
 

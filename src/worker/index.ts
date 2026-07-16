@@ -9,10 +9,12 @@ import { handleHistoryRoute } from "./routes/history-routes";
 import { handleManualRefreshRoute } from "./routes/manual-refresh-routes";
 import { handleSettingsRoute } from "./routes/settings-routes";
 import { handleSubscriptionRoute } from "./routes/subscription-routes";
+import { RetentionRepository } from "./repositories/retention-repository";
 import { SettingsRepository } from "./repositories/settings-repository";
 import { DashboardService } from "./services/dashboard-service";
 import type { DailyReportSubscription } from "./services/report-service";
-import { runScheduled } from "./services/scheduler-service";
+import { RetentionService } from "./services/retention-service";
+import { runScheduled, runScheduledMaintenance } from "./services/scheduler-service";
 import { TelegramService } from "./services/telegram-service";
 
 export interface Env {
@@ -67,14 +69,23 @@ const worker: ExportedHandler<Env> = {
   },
 
   async scheduled(event, env, ctx) {
-    // 每分钟 Cron 专门检查管理员选择的日报时刻；未来六小时采集 Cron 会使用不同表达式接入同一入口。
+    const scheduledAt = new Date(event.scheduledTime).toISOString();
+    // 六小时任务仅执行 D1 保留维护，避免每分钟日报检查重复扫描长期历史；价格采集会在其来源验证完成后接入同一频率。
+    if (event.cron === "0 */6 * * *") {
+      ctx.waitUntil(runScheduledMaintenance(scheduledAt, {
+        settings: new SettingsRepository(env.DB),
+        retention: new RetentionService(new RetentionRepository(env.DB)),
+      }));
+      return;
+    }
+    // 每分钟 Cron 只执行管理员时区的日报时刻判断，未知 Cron 必须忽略以避免配置错误意外触发外部 Telegram 请求。
     if (event.cron !== "* * * * *") return;
     const telegram = env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID
       ? new TelegramService({ botToken: env.TELEGRAM_BOT_TOKEN, chatId: env.TELEGRAM_CHAT_ID })
       : undefined;
     // DashboardService 的结果完全由本 Worker 构造；在单一适配点收窄为日报 DTO，避免在 Telegram 服务传播宽松的数据库读取类型。
     const overview = new DashboardService(env.DB);
-    ctx.waitUntil(runScheduled(new Date(event.scheduledTime).toISOString(), {
+    ctx.waitUntil(runScheduled(scheduledAt, {
       settings: new SettingsRepository(env.DB),
       overview: { getOverview: async () => ({ subscriptions: (await overview.getOverview()).subscriptions as unknown as DailyReportSubscription[] }) },
       telegram,
