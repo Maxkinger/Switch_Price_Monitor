@@ -23,6 +23,17 @@ describe("history HTTP route", () => {
       { regionCode: "JP", amountMinor: 1000, currency: "JPY", cnyFen: 4200, source: "official", capturedAt: "2026-07-15T00:00:00.000Z" },
     ] });
   });
+
+  it("exports price history as a CSV without authentication or Telegram fields", async () => {
+    // CSV 只包含价格分析所需的公开业务字段，避免导出把管理员哈希、会话或未来 Telegram 秘密一并带走。
+    const cookie = await login();
+    await seedHistory();
+    const response = await call("/api/export?kind=prices", cookie);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/csv");
+    await expect(response.text()).resolves.toContain("region_code,amount_minor,currency,cny_fen,source,captured_at");
+  });
 });
 
 async function seedHistory(): Promise<void> {
