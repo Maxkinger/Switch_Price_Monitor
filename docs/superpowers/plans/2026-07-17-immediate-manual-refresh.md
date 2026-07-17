@@ -148,7 +148,7 @@ git push origin main
 - Produces `ManualRefreshService.refresh(now): Promise<{ executedAt: string; attempted: number; collected: number; stale: number }>`。
 - `handleManualRefreshRoute(request, database, runner)` consumes the runner and returns `200` after a completed collection or existing safe error response.
 
-- [ ] **Step 1: 写入失败测试**
+- [x] **Step 1: 写入失败测试**
 
 将 API 路由测试改为注入运行器，并断言实际执行而非返回 `202`：
 
@@ -171,13 +171,13 @@ it("runs one collection immediately after accepting the administrator cooldown s
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/api-refresh.test.ts test/six-hour-collection.test.ts`
 
 Expected: FAIL，因为路由仍返回 `202 queued`，尚未接收并等待即时采集运行器。
 
-- [ ] **Step 3: 实现即时服务和受控路由**
+- [x] **Step 3: 实现即时服务和受控路由**
 
 在 `manual-refresh-service.ts` 定义窄运行器端口，并在冷却成功后等待同一实例：
 
@@ -203,7 +203,7 @@ return Response.json({ status: "completed", ...result });
 
 在 `index.ts` 提取 `createLiveCollectionRunner(env)`，其中保留当前的 `CollectionRepository`、汇率服务、官方提供方注册表、`CollectionService`、健康服务和通知事件接线。`fetch` 路由与六小时 `scheduled` 都调用此工厂，保证路径复用而不共享浏览器状态。
 
-- [ ] **Step 4: 运行后端回归**
+- [x] **Step 4: 运行后端回归**
 
 Run: `npm test -- --run test/api-refresh.test.ts test/worker-maintenance.test.ts test/live-collection-runner.test.ts && npx tsc --noEmit`
 

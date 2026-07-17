@@ -69,7 +69,7 @@ const worker: ExportedHandler<Env> = {
     if (dashboardResponse) return dashboardResponse;
 
     // 手动刷新只允许管理员在请求内立即执行一次采集；冷却状态限制频率，防止匿名访问或重复点击放大外部来源负载。
-    const manualRefreshResponse = await handleManualRefreshRoute(request, env.DB);
+    const manualRefreshResponse = await handleManualRefreshRoute(request, env.DB, createLiveCollectionRunner(env));
     if (manualRefreshResponse) return manualRefreshResponse;
 
     // 历史快照属于管理员私有价格轨迹，必须在静态资源回退前进行会话校验和查询参数验证。
@@ -111,16 +111,7 @@ const worker: ExportedHandler<Env> = {
     // 六小时任务只执行历史维护与一次真实采集；手动刷新已由 HTTP 请求同步完成，
     // 因此不能读取其冷却记录，避免把状态记录误当成待执行队列并破坏固定采集频率。
     if (event.cron === "0 */6 * * *") {
-      const prices = new PriceRepository(env.DB);
-      const collection = new LiveCollectionRunner({
-        products: new CollectionRepository(env.DB),
-        rates: new DailyCnyRateService(createFrankfurterExchangeRateProvider(), new ExchangeRateRepository(env.DB)),
-        officialProviders: createOfficialProviderRegistry(),
-        collection: new CollectionService(new ProviderChain(), prices),
-        health: new ProductHealthService(env.DB),
-        previousOfficial: prices,
-        events: new NotificationEventRepository(env.DB),
-      });
+      const collection = createLiveCollectionRunner(env);
       ctx.waitUntil(runSixHourCollection(scheduledAt, {
         settings: new SettingsRepository(env.DB),
         retention: new RetentionService(new RetentionRepository(env.DB)),
@@ -148,5 +139,22 @@ const worker: ExportedHandler<Env> = {
     }));
   },
 };
+
+/**
+ * 统一装配自动与手动采集器，确保两条入口使用相同的官方来源、每日汇率、价格快照、健康检查和降价事件规则。
+ * 工厂每次仅创建无状态服务对象，不会在 Worker 实例间缓存管理员会话、外部页面响应或任何 Telegram 凭据。
+ */
+function createLiveCollectionRunner(env: Env): LiveCollectionRunner {
+  const prices = new PriceRepository(env.DB);
+  return new LiveCollectionRunner({
+    products: new CollectionRepository(env.DB),
+    rates: new DailyCnyRateService(createFrankfurterExchangeRateProvider(), new ExchangeRateRepository(env.DB)),
+    officialProviders: createOfficialProviderRegistry(),
+    collection: new CollectionService(new ProviderChain(), prices),
+    health: new ProductHealthService(env.DB),
+    previousOfficial: prices,
+    events: new NotificationEventRepository(env.DB),
+  });
+}
 
 export default worker;
