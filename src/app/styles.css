@@ -653,3 +653,47 @@ button:focus-visible {
     flex: 1 1 100%;
   }
 }
+
+/* 仪表盘与详情沿用既有暖色卡片系统；左侧导航在窄屏变为顶部横向入口，避免关键页面被隐藏。 */
+.monitor-app { display: grid; min-height: 100vh; grid-template-columns: 220px minmax(0, 1fr); background: #fff8f2; }
+.monitor-nav { display: grid; align-content: start; gap: 8px; padding: 30px 18px; border-right: 1px solid #ead9ca; background: #fffdf9; }
+.monitor-nav strong { margin-bottom: 18px; color: #422d22; }
+.monitor-nav button, .monitor-nav span { border: 0; padding: 10px 12px; color: #705d52; text-align: left; background: transparent; font: inherit; }
+.monitor-nav button { cursor: pointer; border-radius: 9px; }
+.monitor-nav__active { color: #7a3e20 !important; font-weight: 700; background: #fff0df !important; }
+.monitor-main { min-width: 0; padding: 34px; }
+.dashboard-page, .detail-page { width: min(1120px, 100%); margin: 0 auto; }
+.dashboard-header, .detail-header { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.dashboard-header h1, .detail-header h1 { margin: 0; color: #2d211c; font-size: clamp(30px, 4vw, 42px); letter-spacing: -.035em; }
+.dashboard-header p, .detail-header p { color: #705d52; }
+.dashboard-header > div:last-child, .detail-header > div:last-child { display: flex; flex-wrap: wrap; gap: 10px; }
+.dashboard-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 26px 0; overflow: hidden; border: 1px solid #ead9ca; border-radius: 16px; background: #ead9ca; }
+.dashboard-stats p { min-height: 84px; margin: 0; padding: 16px; color: #735d50; background: #fffdf9; font-size: 13px; }
+.dashboard-stats b { display: block; margin-bottom: 5px; color: #3b2920; font-size: 25px; }
+.subscription-list { display: grid; gap: 15px; }
+.subscription-summary { width: 100%; border: 1px solid #ead9ca; border-radius: 16px; padding: 20px; color: inherit; text-align: left; background: #fffdf9; cursor: pointer; }
+.subscription-summary:hover { border-color: #c97845; box-shadow: 0 9px 24px rgb(77 48 29 / 8%); }
+.subscription-summary header, .subscription-summary footer { display: flex; justify-content: space-between; gap: 10px; }
+.subscription-summary h2 { margin: 0; color: #36251d; font-size: 20px; }
+.subscription-summary header span { color: #874825; font-size: 13px; font-weight: 700; }
+.summary-regions, .detail-regions { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin: 18px 0; }
+.summary-regions p, .detail-regions article { display: grid; gap: 4px; margin: 0; padding: 12px; border-radius: 10px; background: #fff6ed; }
+.summary-regions b, .detail-regions h3 { color: #774222; font-size: 13px; }
+.summary-regions span, .detail-regions b { color: #38251c; font-size: 17px; }
+.summary-regions small, .detail-regions small { color: #7b6658; line-height: 1.45; }
+.subscription-summary footer { color: #685144; font-size: 13px; }
+.dashboard-empty, .detail-management { margin-top: 24px; border: 1px dashed #d9b79c; border-radius: 16px; padding: 28px; background: #fffdf9; }
+.detail-page > section { margin-top: 28px; }
+.detail-page h2 { color: #422d22; }
+.detail-regions article { border: 1px solid #ead9ca; background: #fffdf9; }
+.detail-regions h3 { margin: 0; }
+.detail-regions p { display: grid; gap: 5px; margin: 5px 0; }
+.detail-management { display: grid; gap: 18px; }
+.detail-management fieldset { display: grid; gap: 10px; border: 1px solid #ead9ca; border-radius: 12px; padding: 15px; }
+.detail-management legend { padding: 0 5px; color: #644236; font-weight: 700; }
+.detail-management label { display: grid; gap: 5px; color: #5e493d; font-size: 14px; }
+.detail-management label:has(input[type="checkbox"]) { display: flex; align-items: center; gap: 8px; }
+.detail-management input[type="checkbox"] { min-width: auto; padding: 0; }
+.page-loading { padding: 30px; color: #705d52; }
+@media (max-width: 820px) { .monitor-app { grid-template-columns: 1fr; } .monitor-nav { grid-template-columns: repeat(4, auto); align-items: center; overflow-x: auto; border-right: 0; border-bottom: 1px solid #ead9ca; padding: 12px; } .monitor-nav strong { margin: 0 10px 0 0; white-space: nowrap; } .dashboard-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .summary-regions, .detail-regions { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .monitor-main { padding: 20px 14px 40px; } .monitor-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); } .monitor-nav strong { grid-column: 1 / -1; } .dashboard-header, .detail-header { align-items: flex-start; flex-direction: column; } .dashboard-stats, .summary-regions, .detail-regions { grid-template-columns: 1fr; } }

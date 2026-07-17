@@ -11,7 +11,7 @@ import {
   showRecoveryCode,
   toggleEnabledRegion,
 } from "./auth-flow";
-import { SubscriptionWizardPage } from "./subscription-wizard-page";
+import { AppShell } from "./app-shell";
 import type { RegionCode } from "../shared/domain";
 
 /** 认证客户端为无状态同源边界，可在整个 SPA 生命周期复用而不保存任何秘密或 Cookie。 */
@@ -24,7 +24,7 @@ const authApi = createAuthApiClient();
 export function App() {
   const [auth, setAuth] = useState(initializeAuthFlow);
   const [pendingAction, setPendingAction] = useState<AuthPendingAction>(null);
-  const [wizardKey, setWizardKey] = useState(0);
+  const [appKey, setAppKey] = useState(0);
 
   /** 初次加载只询问是否已完成设置，不尝试读取会话 Cookie、管理员地区或任何认证材料。 */
   useEffect(() => {
@@ -110,11 +110,11 @@ export function App() {
 
   /** 商品端点报告 401 时卸载向导并清空认证状态机中的敏感值，阻止过期会话继续显示旧选择。 */
   function handleUnauthorized() {
-    setWizardKey((current) => current + 1);
+    setAppKey((current) => current + 1);
     setAuth((state) => ({ ...requireLogin(state), notice: "登录状态已失效，请重新登录。" }));
   }
 
-  if (auth.screen === "authenticated") return <SubscriptionWizardPage key={wizardKey} onUnauthorized={handleUnauthorized} />;
+  if (auth.screen === "authenticated") return <AppShell key={appKey} onUnauthorized={handleUnauthorized} />;
   return (
     <AuthScreens
       state={auth}
