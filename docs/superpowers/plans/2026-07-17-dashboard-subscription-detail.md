@@ -32,7 +32,7 @@
 - Consumes: `subscriptions`、`games`、`regional_products`、`subscription_regions`、`subscription_region_targets`、`price_snapshots`、`regional_product_health`。
 - Produces: `GET /api/subscriptions/:id` → `SubscriptionDetail`，其形状为 `{ subscriptionId, game: { id, nameZh, nameEn, productType }, enabled, globalTargetCnyFen, regionTargets, regions }`；每个 `regions` 项必须含 `regionalProductId`、`regionCode`、`currency`、`monitored`、`current`、`historicalLow` 和 `isStale`。
 
-- [ ] **Step 1: 写入订阅详情与匿名/不存在订阅的失败测试**
+- [x] **Step 1: 写入订阅详情与匿名/不存在订阅的失败测试**
 
 ```ts
 it("returns a subscribed game's confirmed regions, targets, current price and historical low", async () => {
@@ -53,13 +53,13 @@ it("does not expose subscription detail without a session and returns 404 for an
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/api-subscription-detail.test.ts`
 
 Expected: FAIL，因为 `GET /api/subscriptions/:id` 尚未由订阅路由处理。
 
-- [ ] **Step 3: 实现仓储、服务与 GET 路由**
+- [x] **Step 3: 实现仓储、服务与 GET 路由**
 
 ```ts
 export interface SubscriptionDetailRepositoryPort {
@@ -80,7 +80,7 @@ export class SubscriptionDetailService {
 
 在 `readSubscriptionAction` 中增加 `{ kind: "read"; subscriptionId: string }`，仅匹配 `GET /^\/api\/subscriptions\/([^/]+)$/`；会话校验继续先于数据库读取，服务抛出的 `SubscriptionNotFoundError` 复用既有安全 `404` 响应。
 
-- [ ] **Step 4: 运行订阅详情与既有订阅管理回归测试**
+- [x] **Step 4: 运行订阅详情与既有订阅管理回归测试**
 
 Run: `npm test -- --run test/api-subscription-detail.test.ts test/api-subscriptions.test.ts`
 

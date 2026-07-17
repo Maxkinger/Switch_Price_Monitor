@@ -1,4 +1,6 @@
 import { SubscriptionRepository } from "../repositories/subscription-repository";
+import { SubscriptionDetailRepository } from "../repositories/subscription-detail-repository";
+import { SubscriptionDetailService } from "../services/subscription-detail-service";
 import {
   RegionalProductMismatchError,
   SubscriptionNotFoundError,
@@ -22,6 +24,12 @@ export async function handleSubscriptionRoute(request: Request, database: D1Data
   }
 
   try {
+    if (action.kind === "read") {
+      // 详情只经受保护服务返回脱敏读取模型，不能把路由层的数据库行、会话或来源原始响应直接序列化给浏览器。
+      const detail = await new SubscriptionDetailService(new SubscriptionDetailRepository(database)).get(action.subscriptionId);
+      return Response.json(detail);
+    }
+
     const service = new SubscriptionService(new SubscriptionRepository(database));
     if (action.kind === "create") {
       const input = readCreateSubscriptionInput(await request.json<unknown>());
@@ -61,6 +69,7 @@ class SubscriptionRequestError extends Error {}
 /** 路由动作收窄后才访问路径中的订阅 ID，避免未来新增子路径时被宽松字符串判断错误消费。 */
 type SubscriptionAction =
   | { kind: "create" }
+  | { kind: "read"; subscriptionId: string }
   | { kind: "disable"; subscriptionId: string }
   | { kind: "set-enabled"; subscriptionId: string };
 
@@ -70,6 +79,8 @@ type SubscriptionAction =
  */
 function readSubscriptionAction(method: string, path: string): SubscriptionAction | null {
   if (method === "POST" && path === "/api/subscriptions") return { kind: "create" };
+  const readMatch = method === "GET" ? path.match(/^\/api\/subscriptions\/([^/]+)$/) : null;
+  if (readMatch) return { kind: "read", subscriptionId: decodeURIComponent(readMatch[1]) };
   const disableMatch = method === "POST" ? path.match(/^\/api\/subscriptions\/([^/]+)\/disable$/) : null;
   if (disableMatch) return { kind: "disable", subscriptionId: decodeURIComponent(disableMatch[1]) };
   const updateMatch = method === "PATCH" ? path.match(/^\/api\/subscriptions\/([^/]+)$/) : null;
