@@ -1,5 +1,5 @@
 import { env } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import worker, { type Env } from "../src/worker";
 import { handleProductRoute } from "../src/worker/routes/product-routes";
@@ -16,7 +16,12 @@ describe("product discovery HTTP routes", () => {
   });
 
   it("rejects anonymous default-region search and returns only the configured official candidates to an administrator", async () => {
-    const discovery = { searchDefaultRegion: async () => ({ status: "available" as const, candidates: [candidate()] }) };
+    // 路由依赖已扩展为完整的发现契约；未被本用例调用的方法仍给出受控空结果，防止类型检查遗漏接口变更。
+    const discovery = {
+      searchDefaultRegion: async () => ({ status: "available" as const, candidates: [candidate()] }),
+      resolveOfficialLink: async () => candidate(),
+      resolveRegions: async () => [],
+    };
     const anonymous = await handleProductRoute(request("/api/products/search", { query: "Overcooked" }), env.DB, fixedPreview(), discovery);
     expect(anonymous?.status).toBe(401);
 
@@ -24,6 +29,58 @@ describe("product discovery HTTP routes", () => {
     const response = await handleProductRoute(request("/api/products/search", { query: "Overcooked" }, cookie), env.DB, fixedPreview(), discovery);
     expect(response?.status).toBe(200);
     await expect(response?.json()).resolves.toEqual({ status: "available", candidates: [candidate()] });
+  });
+
+  it("returns a verified Hong Kong candidate only after an administrator submits its official link", async () => {
+    // 解析桩件模拟已由服务层验证的香港官方页面；路由本身只负责认证、输入边界和受控 DTO 的返回。
+    const resolveOfficialLink = vi.fn(async () => hongKongCandidate());
+    const discovery = {
+      searchDefaultRegion: async () => ({ status: "available" as const, candidates: [candidate()] }),
+      resolveOfficialLink,
+      resolveRegions: async () => [],
+    };
+    const cookie = await initializeAndLogin();
+
+    const response = await handleProductRoute(
+      request("/api/products/resolve-link", { regionCode: "HK", productUrl: hongKongCandidate().productUrl }, cookie),
+      env.DB,
+      fixedPreview(),
+      discovery,
+    );
+
+    expect(response?.status).toBe(200);
+    await expect(response?.json()).resolves.toEqual({ candidate: hongKongCandidate() });
+    expect(resolveOfficialLink).toHaveBeenCalledWith("HK", hongKongCandidate().productUrl);
+  });
+
+  it("returns a per-region manual-link state for each enabled region selected from the default-region results", async () => {
+    // 多选候选先由默认区搜索产生；此桩件证明路由不会自行猜测香港商品，而是原样交给服务层完成跨区处理。
+    const resolveRegions = vi.fn(async () => [{
+      candidateKey: `US:${candidate().productUrl}`,
+      regionCode: "HK" as const,
+      status: "needs-manual-link" as const,
+    }]);
+    const discovery = {
+      searchDefaultRegion: async () => ({ status: "available" as const, candidates: [candidate()] }),
+      resolveOfficialLink: async () => hongKongCandidate(),
+      resolveRegions,
+    };
+    const cookie = await initializeAndLogin();
+
+    const response = await handleProductRoute(
+      request("/api/products/resolve-regions", { candidates: [candidate()], enabledRegions: ["US", "HK"] }, cookie),
+      env.DB,
+      fixedPreview(),
+      discovery,
+    );
+
+    expect(response?.status).toBe(200);
+    await expect(response?.json()).resolves.toEqual({ regions: [{
+      candidateKey: `US:${candidate().productUrl}`,
+      regionCode: "HK",
+      status: "needs-manual-link",
+    }] });
+    expect(resolveRegions).toHaveBeenCalledWith([candidate()], ["US", "HK"]);
   });
 });
 
@@ -35,6 +92,11 @@ function fixedPreview(): SubscriptionPreviewService {
 /** 美区候选完整反映 API 应返回的公开字段，不携带任天堂响应正文、Cookie 或任意内部标识。 */
 function candidate() {
   return { regionCode: "US" as const, productUrl: "https://www.nintendo.com/us/store/products/overcooked-2-switch/", canonicalTitle: "Overcooked! 2", publisher: "Team17", productType: "game" as const, currency: "USD", coverUrl: null, currentPriceMinor: 999, regularPriceMinor: null };
+}
+
+/** 香港候选必须携带本区官方 URL 与港币；测试刻意不复用美区链接，防止跨区商品错误通过路由边界。 */
+function hongKongCandidate() {
+  return { regionCode: "HK" as const, productUrl: "https://www.nintendo.com/hk/soft/overcooked-2/", canonicalTitle: "Overcooked! 2", publisher: "Team17", productType: "game" as const, currency: "HKD", coverUrl: "https://assets.nintendo.com/overcooked-2.jpg", currentPriceMinor: 7800, regularPriceMinor: null };
 }
 
 /** 只构造本系统 JSON API 请求；Cookie 来自真实登录端点，避免测试伪造管理员会话。 */

@@ -1,7 +1,7 @@
-import { initialRegionCodes, type RegionCode } from "../../shared/domain";
+import { initialRegionCodes, type OfficialProductCandidate, type RegionCode } from "../../shared/domain";
 import type { ProductType } from "../providers/types";
 import type { OfficialPriceIdCandidate } from "../services/official-price-id-service";
-import type { OfficialProductDiscoveryService } from "../services/official-product-discovery-service";
+import { ProductDiscoveryError, type OfficialProductDiscoveryService } from "../services/official-product-discovery-service";
 import { SubscriptionPreviewService } from "../services/subscription-preview-service";
 import { requireAdmin } from "./auth-guard";
 
@@ -13,13 +13,15 @@ export async function handleProductRoute(
   request: Request,
   database: D1Database,
   preview: SubscriptionPreviewService,
-  discovery?: Pick<OfficialProductDiscoveryService, "searchDefaultRegion">,
+  discovery?: Pick<OfficialProductDiscoveryService, "searchDefaultRegion" | "resolveOfficialLink" | "resolveRegions">,
 ): Promise<Response | null> {
   const path = new URL(request.url).pathname;
-  // 精确白名单避免商品路由截获静态资源或未来端点；搜索服务未注入时保留旧预览路由的可测试性。
+  // 精确白名单避免商品路由截获静态资源或未来端点；发现服务未注入时保留旧预览路由的可测试性。
   const isPreview = request.method === "POST" && path === "/api/products/preview-sources";
   const isSearch = request.method === "POST" && path === "/api/products/search" && discovery !== undefined;
-  if (!isPreview && !isSearch) return null;
+  const isResolveLink = request.method === "POST" && path === "/api/products/resolve-link" && discovery !== undefined;
+  const isResolveRegions = request.method === "POST" && path === "/api/products/resolve-regions" && discovery !== undefined;
+  if (!isPreview && !isSearch && !isResolveLink && !isResolveRegions) return null;
 
   // 必须先验证管理员会话才解析请求体或访问官方接口，避免匿名调用借预览端点放大任天堂请求负载。
   if (!(await requireAdmin(request, database))) {
@@ -32,16 +34,27 @@ export async function handleProductRoute(
       const query = readSearchQuery(await request.json<unknown>());
       return Response.json(await discovery.searchDefaultRegion(query));
     }
+    if (isResolveLink && discovery) {
+      // 链接仅能交给服务端官方解析器验证，浏览器不得自报标题、币种或价格，以免伪造跨区商品身份。
+      const { regionCode, productUrl } = readOfficialLinkRequest(await request.json<unknown>());
+      return Response.json({ candidate: await discovery.resolveOfficialLink(regionCode, productUrl) });
+    }
+    if (isResolveRegions && discovery) {
+      // 先收窄每张已选候选和启用地区，再由服务依据官方公开搜索能力返回自动或人工确认状态；此过程不写 D1。
+      const { candidates, enabledRegions } = readRegionResolutionRequest(await request.json<unknown>());
+      return Response.json({ regions: await discovery.resolveRegions(candidates, enabledRegions) });
+    }
     const candidates = readConfirmationCandidates(await request.json<unknown>());
     // 服务只产生瞬时 DTO；即使官方验证失败，异常也不会把用户 URL、外部响应或秘密写入 D1。
     return Response.json({ regions: await preview.create(candidates) });
   } catch (error) {
     // 表单问题可以安全反馈给管理员；其他错误统一隐藏网络、解析和数据库内部细节。
-    const isValidationError = error instanceof ProductPreviewRequestError;
+    const isValidationError = error instanceof ProductPreviewRequestError || error instanceof ProductDiscoveryError;
     return Response.json(
       {
         code: isValidationError ? "VALIDATION_ERROR" : "INTERNAL_ERROR",
-        error: isValidationError ? error.message : "商品来源预览暂时无法生成，请稍后重试。",
+        // 领域错误均是服务端预设中文文案，可安全提示管理员；网络、页面解析与 D1 错误永远不回显给浏览器。
+        error: isValidationError ? error.message : "官方商品信息暂时无法获取，请稍后重试。",
       },
       { status: isValidationError ? 422 : 500 },
     );
@@ -54,6 +67,28 @@ function readSearchQuery(value: unknown): string {
   const query = value.query.trim();
   if (query.length === 0 || query.length > 100) throw new ProductPreviewRequestError("搜索名称长度应为 1 到 100 个字符。");
   return query;
+}
+
+/** 手动补充入口只接受支持地区与 HTTPS 链接；具体任天堂主机/路径仍在发现服务中统一验证，避免路由复制安全白名单。 */
+function readOfficialLinkRequest(value: unknown): { regionCode: RegionCode; productUrl: string } {
+  if (!isRecord(value)) throw new ProductPreviewRequestError("请求内容必须是对象。");
+  return { regionCode: readRegionCode(value.regionCode), productUrl: readHttpsUrl(value.productUrl) };
+}
+
+/**
+ * 跨区解析只消费由默认区官方搜索或官方链接解析得到的完整瞬时候选。所有字段在路由边界收窄，
+ * 因为这些值虽来自浏览器提交，却会影响后续的官方检索关键词与界面匹配状态，不能信任客户端对象形状。
+ */
+function readRegionResolutionRequest(value: unknown): { candidates: OfficialProductCandidate[]; enabledRegions: RegionCode[] } {
+  if (!isRecord(value)) throw new ProductPreviewRequestError("请求内容必须是对象。");
+  if (!Array.isArray(value.candidates) || value.candidates.length === 0) {
+    throw new ProductPreviewRequestError("请至少选择一个官方商品。");
+  }
+  const candidates = value.candidates.map((candidate) => readOfficialProductCandidate(candidate));
+  // 一个候选键只能表示一个已验证默认区商品；重复提交会制造重复地区确认卡，故在写入前的只读阶段即拒绝。
+  const candidateKeys = candidates.map((candidate) => `${candidate.regionCode}:${candidate.productUrl}`);
+  if (new Set(candidateKeys).size !== candidateKeys.length) throw new ProductPreviewRequestError("不能重复选择同一官方商品。");
+  return { candidates, enabledRegions: readRegionCodes(value.enabledRegions) };
 }
 
 /** 路由输入错误使用独立类型，避免把管理员表单问题误记为来源适配器或数据库故障。 */
@@ -80,8 +115,25 @@ function readConfirmationCandidates(value: unknown): OfficialPriceIdCandidate[] 
 }
 
 /**
+ * 发现候选在身份字段之外包含公开封面和最小货币单位价格。价格允许为 null，以表达官方公开结果未给出报价；
+ * 但只要出现数值，就必须是非负安全整数，避免浮点或负数在前端折扣与后续确认中产生错误语义。
+ */
+function readOfficialProductCandidate(value: unknown): OfficialProductCandidate {
+  if (!isRecord(value)) throw new ProductPreviewRequestError("官方商品信息无效。");
+  const identity = readCandidate(value);
+  const coverUrl = value.coverUrl === null ? null : readHttpsUrl(value.coverUrl);
+  const currentPriceMinor = readNullableMinorPrice(value.currentPriceMinor, "当前价格无效。");
+  const regularPriceMinor = readNullableMinorPrice(value.regularPriceMinor, "原价无效。");
+  if (currentPriceMinor !== null && regularPriceMinor !== null && regularPriceMinor < currentPriceMinor) {
+    throw new ProductPreviewRequestError("原价不能低于当前价格。");
+  }
+  return { ...identity, coverUrl, currentPriceMinor, regularPriceMinor };
+}
+
+/**
  * 每个字段均在 Worker 边界完成基础验证：URL 只接受 HTTPS，发行商允许 null，其他身份字段不能留空。
- * 更细的日区主机/路径和官方 ID 校验仍由 OfficialPriceIdService 负责，其他地区则明确预告第三方回退。
+ * 来源预览仍由 OfficialPriceIdService 按地区验证官方价格 ID；跨区发现会在服务层额外校验任天堂主机与路径，
+ * 因而此基础收窄不能被误当成官方链接认证。
  */
 function readCandidate(value: unknown): OfficialPriceIdCandidate {
   if (!isRecord(value)) throw new ProductPreviewRequestError("地区商品信息无效。");
@@ -102,11 +154,26 @@ function readRegionCode(value: unknown): RegionCode {
   return value as RegionCode;
 }
 
+/** 启用地区至少一个且不能重复；重复地区会让同一游戏产生两份相同的人工确认任务。 */
+function readRegionCodes(value: unknown): RegionCode[] {
+  if (!Array.isArray(value) || value.length === 0) throw new ProductPreviewRequestError("请至少选择一个启用地区。");
+  const regions = value.map((regionCode) => readRegionCode(regionCode));
+  if (new Set(regions).size !== regions.length) throw new ProductPreviewRequestError("启用地区不能重复。");
+  return regions;
+}
+
 /** 货币使用三位大写 ISO 形式；具体是否为该地区正确币种由地区专用官方适配器再行验证。 */
 function readCurrency(value: unknown): string {
   if (typeof value !== "string" || !/^[A-Z]{3}$/.test(value)) {
     throw new ProductPreviewRequestError("货币代码无效。");
   }
+  return value;
+}
+
+/** 公开价格统一以货币最小单位传输；null 用于“官方结果未验证出价格”，不会伪造成免费商品。 */
+function readNullableMinorPrice(value: unknown, message: string): number | null {
+  if (value === null) return null;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new ProductPreviewRequestError(message);
   return value;
 }
 

@@ -161,7 +161,7 @@ git commit -m "feat: add official product search adapter"
 - Produces: `OfficialProductDiscoveryService.resolveRegions(selected: OfficialProductCandidate[], enabledRegions: RegionCode[]): Promise<RegionResolution[]>`，其中每个选中游戏在每区返回一个 `automatic` 候选、`needs-manual-selection` 或 `needs-manual-link` 状态。
 - Produces: `POST /api/products/search`、`POST /api/products/resolve-link`、`POST /api/products/resolve-regions`，三者均为管理员专用只读端点。
 
-- [ ] **Step 1: 先写失败测试，覆盖默认区不可伪造、官方链接验证和香港区手动入口**
+- [x] **Step 1: 先写失败测试，覆盖默认区不可伪造、官方链接验证和香港区手动入口**
 
 ```ts
 it("reads the configured default region instead of a browser supplied region", async () => {
@@ -187,13 +187,13 @@ it("rejects an anonymous search and invalid official-link host without exposing 
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/official-nintendo-product-page.test.ts test/official-product-discovery-service.test.ts test/api-product-discovery.test.ts`
 
 Expected: FAIL，因为解析器、发现服务与三个受保护端点尚不存在。
 
-- [ ] **Step 3: 实现官方 JSON-LD 链接解析与发现服务**
+- [x] **Step 3: 实现官方 JSON-LD 链接解析与发现服务**
 
 ```ts
 public async searchDefaultRegion(query: string): Promise<OfficialSearchResult> {
@@ -219,13 +219,13 @@ public async resolveRegions(selected: OfficialProductCandidate[], enabledRegions
 
 路由必须先 `requireAdmin`，再限制 `query` 去首尾空格后为 `1..100` 个字符；`resolve-regions` 中每个默认区候选与地区候选按共享 DTO 运行时收窄，重复地区返回 422。所有外部异常统一返回 `{ code: "INTERNAL_ERROR", error: "官方商品信息暂时无法获取，请稍后重试。" }`，不回显网络细节。
 
-- [ ] **Step 4: 运行发现、认证与来源预览回归测试**
+- [x] **Step 4: 运行发现、认证与来源预览回归测试**
 
 Run: `npm test -- --run test/official-nintendo-product-page.test.ts test/official-product-discovery-service.test.ts test/api-product-discovery.test.ts test/api-product-preview.test.ts test/auth-guard.test.ts`
 
 Expected: PASS，搜索和解析无 D1 写入；香港区能由官方链接进入既有来源预览。
 
-- [ ] **Step 5: 提交发现与确认 API**
+- [x] **Step 5: 提交发现与确认 API**
 
 ```bash
 git add src/worker/providers/official-nintendo-product-page.ts src/worker/services/official-product-discovery-service.ts src/worker/routes/product-routes.ts src/worker/index.ts test/official-nintendo-product-page.test.ts test/official-product-discovery-service.test.ts test/api-product-discovery.test.ts
