@@ -41,6 +41,23 @@ export class PriceRepository {
     return row?.count ?? 0;
   }
 
+  /**
+   * 读取本地区最近一条官方成功快照，供新官方价格判断即时降价。
+   * 第三方快照即使更新更晚也必须排除，避免来源切换或第三方促销触发“官方降价”通知。
+   */
+  public async latestOfficialFor(regionalProductId: string): Promise<{ amountMinor: number; source: "official" } | null> {
+    return this.database
+      .prepare(
+        `SELECT amount_minor AS amountMinor, source
+         FROM price_snapshots
+         WHERE regional_product_id = ? AND source = 'official'
+         ORDER BY captured_at DESC, id DESC
+         LIMIT 1`,
+      )
+      .bind(regionalProductId)
+      .first<{ amountMinor: number; source: "official" }>();
+  }
+
   public async lowestForRegionalProduct(regionalProductId: string): Promise<HistoricalLow | null> {
     // 同价时取最早捕获记录，确保历史最低价日期稳定；关联地区表以支持日报直接显示地区名称。
     return this.database

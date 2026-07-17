@@ -145,7 +145,7 @@ git commit -m "feat: collect daily CNY exchange rates"
 - Consumes: `CollectionRepository.enabledRegionalProducts()`、`ProviderChain`、官方注册表、`DailyCnyRateService`、`CollectionService`、`ProductHealthService`。
 - Produces: `LiveCollectionRunner.run(now: string): Promise<{ attempted: number; collected: number; stale: number }>`。
 
-- [ ] **Step 1: 写入多地区成功、全失败与官方降价事件失败测试**
+- [x] **Step 1: 写入多地区成功、全失败与官方降价事件失败测试**
 
 ```ts
 it("collects every enabled regional product and records health separately", async () => {
@@ -156,13 +156,13 @@ it("collects every enabled regional product and records health separately", asyn
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/live-collection-runner.test.ts`
 
 Expected: FAIL，因为真实采集运行器不存在。
 
-- [ ] **Step 3: 实现统一执行器**
+- [x] **Step 3: 实现统一执行器**
 
 ```ts
 for (const product of await this.products.enabledRegionalProducts()) {
@@ -178,13 +178,13 @@ for (const product of await this.products.enabledRegionalProducts()) {
 
 执行器不得因单个商品的网络或解析失败中断其它地区。仅当 `outcome.source === "official"` 时读取上一条官方快照并调用 `evaluateOfficialDrop`；命中后通过 `NotificationEventRepository.reserve` 写入去重事件。扩展快照与仓储查询时必须保留来源、汇率和捕获时间，禁止更新历史行。
 
-- [ ] **Step 4: 运行执行器、健康和通知回归测试**
+- [x] **Step 4: 运行执行器、健康和通知回归测试**
 
 Run: `npm test -- --run test/live-collection-runner.test.ts test/collection-service.test.ts test/product-health-service.test.ts test/notification-event-repository.test.ts`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交真实采集执行器**
+- [x] **Step 5: 提交真实采集执行器**
 
 ```bash
 git add src/worker/services/live-collection-runner.ts src/worker/services/collection-service.ts src/worker/services/product-health-service.ts src/worker/repositories/collection-repository.ts src/worker/repositories/price-repository.ts test/live-collection-runner.test.ts

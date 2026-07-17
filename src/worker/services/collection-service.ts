@@ -35,6 +35,8 @@ export interface CollectionInput {
 export interface CollectedOutcome {
   kind: "collected";
   source: PriceSource;
+  /** 返回本次原始最小货币单位，使上层只在两个官方快照可比较时判断降价，不用重新读取或猜测刚写入的记录。 */
+  amountMinor: number;
   cnyFen: number | null;
   isRateStale: boolean;
 }
@@ -76,6 +78,7 @@ export class CollectionService {
     return {
       kind: "collected",
       source: result.source,
+      amountMinor: result.amountMinor,
       cnyFen,
       isRateStale: input.rate?.isStale ?? true,
     };
