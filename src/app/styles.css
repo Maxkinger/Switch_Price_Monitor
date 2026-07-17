@@ -475,6 +475,118 @@ button:focus-visible {
   background: #fff0de;
 }
 
+.auth-page {
+  /* 认证入口使用与订阅页一致的暖色画布，但将表单控制在更窄的阅读宽度以减少密码输入误操作。 */
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+}
+
+.auth-card {
+  /* 单一认证卡避免把登录、恢复码和地区选择拆成多层嵌套卡片，保证安全提示与主要操作在同一视觉焦点内。 */
+  width: min(520px, 100%);
+  border: 1px solid #ead9ca;
+  border-radius: 20px;
+  padding: 32px;
+  background: rgb(255 253 249 / 94%);
+  box-shadow: 0 15px 34px rgb(77 48 29 / 7%);
+}
+
+.auth-card h1,
+.auth-card p {
+  margin: 0;
+}
+
+.auth-card h1 {
+  color: #2d211c;
+  font-size: clamp(28px, 5vw, 38px);
+  letter-spacing: -0.035em;
+}
+
+.auth-card__lead {
+  margin-top: 10px !important;
+  color: #705d52;
+  line-height: 1.65;
+}
+
+.auth-form {
+  /* 认证输入统一使用纵向节奏，避免密码、地区复选框和默认区下拉在窄屏相互挤压。 */
+  display: grid;
+  gap: 9px;
+  margin-top: 24px;
+}
+
+.auth-form > label,
+.region-checkbox-grid legend {
+  color: #645248;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.region-checkbox-grid {
+  /* 原生复选框保留键盘和读屏器语义；网格只负责让五区信息紧凑且可扫描。 */
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 9px 0 3px;
+  border: 1px solid #e4d4c7;
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.region-checkbox-grid legend {
+  padding: 0 4px;
+}
+
+.region-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 31px;
+  color: #513c30;
+  font-size: 14px;
+}
+
+.region-checkbox input {
+  /* 复选框不继承文本输入的内边距和圆角，维持浏览器原生可访问尺寸。 */
+  min-width: auto;
+  padding: 0;
+}
+
+.auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.auth-notice {
+  /* 服务端错误已经过脱敏；此处以 alert 呈现，不显示请求、Cookie 或任何秘密字段。 */
+  margin: 5px 0 0;
+  border: 1px solid #e4bb92;
+  border-radius: 12px;
+  padding: 11px 12px;
+  color: #774222;
+  background: #fff0de;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.recovery-code {
+  /* 等宽显示仅辅助人工抄录；该输入只读且不触发自动复制，避免恢复码意外流入剪贴板历史。 */
+  width: 100%;
+  margin-top: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  letter-spacing: 0.04em;
+}
+
+.auth-help {
+  margin-top: 8px !important;
+  color: #7b6658;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 @media (max-width: 880px) {
   /* 中等宽度保留候选卡信息密度，降为两列而非压缩封面和价格。 */
   .candidate-grid {
@@ -526,6 +638,18 @@ button:focus-visible {
   }
 
   .candidate-actions button {
+    flex: 1 1 100%;
+  }
+
+  .auth-card {
+    padding: 24px 20px;
+  }
+
+  .region-checkbox-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-actions > button {
     flex: 1 1 100%;
   }
 }

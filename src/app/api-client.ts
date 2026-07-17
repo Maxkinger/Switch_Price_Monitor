@@ -37,10 +37,11 @@ export type RegionResolutionResponse =
 /**
  * 当本站 API 无法完成请求时抛出的受控错误。
  *
- * 页面可以安全显示该消息；不会把底层抓取器、数据库或外站响应的细节泄漏给浏览器。
+ * 页面可以安全显示该消息；`status` 只用于识别 401 并由认证壳层清除过期向导状态，
+ * 不会把底层抓取器、数据库或外站响应的细节泄漏给浏览器。
  */
 export class ProductApiError extends Error {
-  public constructor(message: string) {
+  public constructor(message: string, public readonly status: number) {
     super(message);
     this.name = "ProductApiError";
   }
@@ -69,7 +70,7 @@ export function createProductApiClient(request: typeof fetch = fetch) {
     };
 
     if (!response.ok) {
-      throw new ProductApiError(payload.error ?? "请求未完成，请稍后重试。");
+      throw new ProductApiError(payload.error ?? "请求未完成，请稍后重试。", response.status);
     }
 
     return payload as TResponse;

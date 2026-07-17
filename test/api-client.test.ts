@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createProductApiClient } from "../src/app/api-client";
+import { createProductApiClient, ProductApiError } from "../src/app/api-client";
 
 /**
  * 浏览器 API 客户端测试只验证本系统同源请求契约。它刻意注入请求函数而不启动 Worker，
@@ -18,5 +18,13 @@ describe("product API client", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ query: "Overcooked" }),
     }));
+  });
+
+  it("preserves only the 401 status and safe Worker summary so the authentication shell can discard stale wizard state", async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ error: "请先登录。" }, { status: 401 }));
+
+    await expect(createProductApiClient(request).searchProducts("Overcooked"))
+      .rejects.toEqual(expect.objectContaining({ name: "ProductApiError", message: "请先登录。", status: 401 }));
+    await expect(createProductApiClient(request).searchProducts("Overcooked")).rejects.toBeInstanceOf(ProductApiError);
   });
 });
