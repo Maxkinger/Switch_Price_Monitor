@@ -6,7 +6,7 @@ import worker, { type Env } from "../src/worker";
 describe("dashboard HTTP route", () => {
   beforeEach(async () => {
     // 仪表盘从订阅与价格历史派生；清理全部相关表确保空状态的返回不受其他 API 测试留下的快照影响。
-    await env.DB.exec("DELETE FROM price_snapshots; DELETE FROM subscription_regions; DELETE FROM subscriptions; DELETE FROM regional_products; DELETE FROM games; DELETE FROM sessions; DELETE FROM login_attempts; DELETE FROM admin_credentials; DELETE FROM settings;");
+    await env.DB.exec("DELETE FROM price_snapshots; DELETE FROM regional_product_health; DELETE FROM subscription_regions; DELETE FROM subscriptions; DELETE FROM regional_products; DELETE FROM games; DELETE FROM sessions; DELETE FROM login_attempts; DELETE FROM admin_credentials; DELETE FROM settings;");
   });
 
   it("returns an authenticated empty subscription overview before any game is added", async () => {
@@ -15,7 +15,16 @@ describe("dashboard HTTP route", () => {
     const response = await call("/api/dashboard", cookie);
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ subscriptions: [] });
+    await expect(response.json()).resolves.toEqual({
+      // 首次初始化时不应伪造采集记录；日报计划来自已保存的全局设置，因此仍可安全给出下一次执行时间。
+      stats: {
+        monitoredSubscriptionCount: 0,
+        availableRegionPriceCount: 0,
+        lastCapturedAt: null,
+        nextDailyReportAt: expect.any(String),
+      },
+      subscriptions: [],
+    });
   });
 
   it("lists an existing subscription with its game identity and selected regional products", async () => {
@@ -26,6 +35,12 @@ describe("dashboard HTTP route", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
+      stats: {
+        monitoredSubscriptionCount: 1,
+        availableRegionPriceCount: 0,
+        lastCapturedAt: null,
+        nextDailyReportAt: expect.any(String),
+      },
       subscriptions: [
         {
           subscriptionId: "subscription-overcooked-2",
@@ -42,6 +57,8 @@ describe("dashboard HTTP route", () => {
               currency: "USD",
               current: null,
               historicalLow: null,
+              // 从未成功采集的地区应显示等待首笔价格，而不是被健康表的默认零失败数误标为过期。
+              isStale: false,
             },
           ],
         },
@@ -92,7 +109,34 @@ describe("dashboard HTTP route", () => {
       currency: "USD",
       current: { amountMinor: 1099, cnyFen: 7450, source: "eshop-prices", capturedAt: "2026-07-16T00:00:00.000Z" },
       historicalLow: { amountMinor: 999, cnyFen: 6800, source: "official", capturedAt: "2026-07-15T00:00:00.000Z" },
+      isStale: false,
     });
+  });
+
+  it("returns dashboard statistics and marks a region stale after collection failures", async () => {
+    // 一次成功快照后出现连续失败时，仍可展示最近可信价格，但必须让管理员知道它不是本轮实时结果。
+    const cookie = await initializeAndLogin();
+    await seedSubscription();
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO price_snapshots (regional_product_id, amount_minor, currency, cny_fen, source, captured_at) VALUES (?, ?, ?, ?, ?, ?)").bind("product-overcooked-2-us", 999, "USD", 6800, "official", "2026-07-16T00:00:00.000Z"),
+      env.DB.prepare("INSERT INTO price_snapshots (regional_product_id, amount_minor, currency, cny_fen, source, captured_at) VALUES (?, ?, ?, ?, ?, ?)").bind("product-overcooked-2-us", 1099, "USD", 7450, "official", "2026-07-17T00:00:00.000Z"),
+      env.DB.prepare("INSERT INTO regional_product_health (regional_product_id, consecutive_failures, last_success_at, failure_notified, updated_at) VALUES (?, ?, ?, ?, ?)").bind("product-overcooked-2-us", 1, "2026-07-17T00:00:00.000Z", 0, "2026-07-17T06:00:00.000Z"),
+    ]);
+
+    const response = await call("/api/dashboard", cookie);
+    const body = await response.json<{
+      stats: { monitoredSubscriptionCount: number; availableRegionPriceCount: number; lastCapturedAt: string | null; nextDailyReportAt: string | null };
+      subscriptions: Array<{ regions: Array<{ isStale: boolean }> }>;
+    }>();
+
+    expect(response.status).toBe(200);
+    expect(body.stats).toEqual({
+      monitoredSubscriptionCount: 1,
+      availableRegionPriceCount: 1,
+      lastCapturedAt: "2026-07-17T00:00:00.000Z",
+      nextDailyReportAt: expect.any(String),
+    });
+    expect(body.subscriptions[0].regions[0].isStale).toBe(true);
   });
 });
 

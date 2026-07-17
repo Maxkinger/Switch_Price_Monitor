@@ -104,7 +104,7 @@ git commit -m "feat: add subscription detail read model"
 - Consumes: 既有订阅/快照查询和 `settings.timezone`、`settings.daily_report_time`。
 - Produces: `DashboardOverview = { stats: { monitoredSubscriptionCount, availableRegionPriceCount, lastCapturedAt, nextDailyReportAt }, subscriptions: DashboardSubscription[] }`；每个地区 `current` 和 `historicalLow` 保留金额、币种、来源和捕获时间，另含 `isStale`。
 
-- [ ] **Step 1: 写入概览统计、下次日报和地区过期状态的失败测试**
+- [x] **Step 1: 写入概览统计、下次日报和地区过期状态的失败测试**
 
 ```ts
 it("returns dashboard statistics and marks a region stale after collection failures", async () => {
@@ -120,13 +120,13 @@ it("returns dashboard statistics and marks a region stale after collection failu
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/api-dashboard.test.ts`
 
 Expected: FAIL，因为现有响应没有 `stats` 和地区 `isStale` 字段。
 
-- [ ] **Step 3: 实现类型明确的概览 DTO 和时间计算**
+- [x] **Step 3: 实现类型明确的概览 DTO 和时间计算**
 
 ```ts
 export interface DashboardOverview {
@@ -150,7 +150,7 @@ function nextDailyReportAt(now: Date, timezone: string, dailyReportTime: string)
 
 `DashboardService.getOverview(now = new Date())` 读取设置单例；未初始化设置时 `nextDailyReportAt` 为 `null`。地区查询 `LEFT JOIN regional_product_health`，只有快照存在且连续失败次数大于零才标为过期；从未采集的地区保持 `current: null` 和 `isStale: false`。统计只计算 `enabled = 1` 的订阅和非空当前快照，最后成功时间取所有最新快照的最大捕获时间；不要将浏览器时间、Telegram Secret 或价格来源正文写入响应。
 
-- [ ] **Step 4: 运行概览、日报与 Worker 调度回归测试**
+- [x] **Step 4: 运行概览、日报与 Worker 调度回归测试**
 
 Run: `npm test -- --run test/api-dashboard.test.ts test/report-service.test.ts test/scheduler-service.test.ts`
 
