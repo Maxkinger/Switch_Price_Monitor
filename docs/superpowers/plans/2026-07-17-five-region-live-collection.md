@@ -32,7 +32,7 @@
 - Consumes: `RegionalProduct`、`PriceProvider`、`createNintendoPriceApiProvider()`、`createOfficialNintendoProvider()`。
 - Produces: `createOfficialProviderRegistry(fetcher?: typeof fetch): { providersFor(product: RegionalProduct): PriceProvider[] }`。
 
-- [ ] **Step 1: 写入注册表失败测试**
+- [x] **Step 1: 写入注册表失败测试**
 
 ```ts
 it("uses the Japanese price API before the official page only for JP", async () => {
@@ -46,13 +46,13 @@ it("returns no provider for a product whose region and currency mapping is unsup
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/official-provider-registry.test.ts`
 
 Expected: FAIL，因为注册表模块不存在。
 
-- [ ] **Step 3: 实现最小地区注册表与解析边界**
+- [x] **Step 3: 实现最小地区注册表与解析边界**
 
 ```ts
 const regionCurrencies: Record<RegionalProduct["regionCode"], string> = {
@@ -68,13 +68,13 @@ public providersFor(product: RegionalProduct): PriceProvider[] {
 
 保留 `ProviderChain` 既有身份验证；JP API 继续拒绝非 JP/JPY/无本区 ID 输入，官方页面解析器在没有可验证 JSON-LD 时返回 `null`，使调用方进入失败处理而非猜测金额。
 
-- [ ] **Step 4: 运行注册表与现有提供方回归测试**
+- [x] **Step 4: 运行注册表与现有提供方回归测试**
 
 Run: `npm test -- --run test/official-provider-registry.test.ts test/official-nintendo-price-api.test.ts test/official-nintendo.test.ts test/provider-chain.test.ts`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交地区官方提供方注册表**
+- [x] **Step 5: 提交地区官方提供方注册表**
 
 ```bash
 git add src/worker/providers/official-provider-registry.ts src/worker/providers/official-nintendo-price-api.ts src/worker/providers/official-nintendo.ts test/official-provider-registry.test.ts
