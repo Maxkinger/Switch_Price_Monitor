@@ -16,6 +16,7 @@
 - Price collection occurs every six hours; manual refresh has a 15-minute cooldown; daily report defaults to `Asia/Shanghai` 09:00.
 - Preserve price history by the selected policy; delete fetch logs after 90 days.
 - Never return, log, export, or commit passwords, recovery codes, Telegram credentials, or other secrets.
+- Before each task, read `AGENTS.md` and `docs/README.md`; every new or modified source, test, SQL migration and configuration file requires accurate, detailed Chinese comments explaining responsibility and key business/security constraints.
 - Use `apply_patch` for source edits, test each task before committing, and do not deploy until all acceptance checks pass.
 
 ---
@@ -128,7 +129,7 @@ Expected: FAIL because migrations and repositories do not exist.
 `0001_core.sql` creates settings, credentials, sessions, games, regional_products, subscriptions and subscription_region_targets. `0002_price_tracking.sql` creates price_snapshots, exchange_rates, fetch_logs, regional_product_health and notification_events, including indexes on `(regional_product_id, captured_at DESC)` and `(subscription_id, status)`. Store monetary values as integer minor units and CNY as integer fen.
 
 ```ts
-export type PriceSource = "official" | "eshop-prices" | "ntprices" | "deku-deals" | "green-pipe";
+export type PriceSource = "official" | "eshop-prices" | "nt-deals" | "deku-deals" | "green-pipe";
 export interface PriceSnapshot { regionalProductId: string; amountMinor: number; currency: string; cnyFen: number | null; source: PriceSource; capturedAt: string; }
 ```
 
@@ -146,6 +147,8 @@ git commit -m "feat: add D1 price monitoring schema"
 
 ## Task 3: Implement first-run setup, authentication, and session security
 
+实施状态（2026-07-16）：认证服务、D1 迁移和 HTTP 接口已完成并通过测试；首次运行与登录页面将在 Task 8 的前端实现中接入。
+
 **Files:**
 - Create: `src/worker/services/auth-service.ts`, `src/worker/routes/auth-routes.ts`, `src/worker/repositories/auth-repository.ts`
 - Create: `src/shared/regions.ts`
@@ -156,7 +159,7 @@ git commit -m "feat: add D1 price monitoring schema"
 - `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/auth/recover`.
 - `requireAdmin(request, env): Promise<AdminSession>` rejects invalid/missing sessions with `401`.
 
-- [ ] **Step 1: Write failing initialization and login tests**
+- [x] **Step 1: Write failing initialization and login tests**
 
 ```ts
 it("requires the default search region to be selected during initialization", async () => {
@@ -171,16 +174,16 @@ it("allows initialization once and issues an HttpOnly session after login", asyn
 });
 ```
 
-- [ ] **Step 2: Run the auth tests and verify failure**
+- [x] **Step 2: Run the auth tests and verify failure**
 
 Run: `npm test -- --run test/auth.test.ts`  
 Expected: FAIL with missing authentication routes.
 
-- [ ] **Step 3: Implement password hashing, one-time setup and recovery code flow**
+- [x] **Step 3: Implement password hashing, one-time setup and recovery code flow**
 
-Use Web Crypto PBKDF2 with a random salt and a constant-time verification path. Persist only password/recovery-code hashes. Generate and return the recovery code only in the successful initialization response. Store sessions as random opaque tokens in a Secure, HttpOnly, SameSite=Lax cookie and keep only their SHA-256 hash in D1. Apply an IP+account lock after five failures within 15 minutes.
+Use Web Crypto PBKDF2 with a random salt and a constant-time verification path. Persist only password/recovery-code hashes. Generate and return the recovery code only in the successful initialization response. Store sessions as random opaque tokens in a Secure, HttpOnly, SameSite=Lax cookie and keep only their SHA-256 hash in D1. For the confirmed single-administrator deployment, apply an account-level lock after five failures for fifteen minutes; do not persist IP addresses unnecessarily.
 
-- [ ] **Step 4: Run auth test suite**
+- [x] **Step 4: Run auth test suite**
 
 Run: `npm test -- --run test/auth.test.ts`  
 Expected: PASS; second initialization returns `409`, expired/revoked sessions return `401`, and recovery code is one-time use.
@@ -194,6 +197,8 @@ git commit -m "feat: add administrator setup and authentication"
 
 ## Task 4: Validate provider feasibility and implement provider contracts
 
+实施状态（2026-07-16）：提供方契约、顺序回退、身份校验及美国区官方 JSON-LD 解析已完成并通过测试。五区受控验证已记录 US 成功与 JP/MX/BR/HK 待验证限制；在逐区请求形态和条款完成前，不能将未验证来源默认投入生产采集。
+
 **Files:**
 - Create: `docs/decisions/ADR-002-price-provider-validation.md`, `test/fixtures/providers/`
 - Create: `src/worker/providers/types.ts`, `src/worker/providers/provider-chain.ts`, `src/worker/providers/official-nintendo.ts`, `src/worker/providers/third-party.ts`, `src/worker/providers/exchange-rate.ts`
@@ -204,7 +209,7 @@ git commit -m "feat: add administrator setup and authentication"
 - `ProviderChain.fetch(product, enabledProviders): Promise<ProviderResult | null>`.
 - `ExchangeRateProvider.getDailyRates(currencies: string[]): Promise<RateResult[]>`.
 
-- [ ] **Step 1: Write fixtures and failing fallback tests**
+- [x] **Step 1: Write fixtures and failing fallback tests**
 
 ```ts
 it("returns a marked fallback price when official collection fails", async () => {
@@ -217,12 +222,12 @@ it("rejects a result whose title or product type differs from the confirmed prod
 });
 ```
 
-- [ ] **Step 2: Run provider tests and verify failure**
+- [x] **Step 2: Run provider tests and verify failure**
 
 Run: `npm test -- --run test/provider-chain.test.ts`  
 Expected: FAIL because provider interfaces are not implemented.
 
-- [ ] **Step 3: Implement contracts, timeouts, retry and validation**
+- [x] **Step 3: Implement contracts, timeouts, retry and validation**
 
 Implement a 15-second abort timeout, exactly one retry for network errors, sequential source priority, and canonical title/publisher/product-type validation. Create the ADR with five-region evidence for the confirmed official endpoint or documented limitation; record request shape, response fields, terms review date, and the chosen extraction method. Do not hard-code price results or scrape browser pages from the client.
 
@@ -242,6 +247,8 @@ git commit -m "feat: add validated price provider chain"
 
 ## Task 5: Build collection, historical-low, target-price, and health services
 
+实施状态（2026-07-16）：不可变采集核心、日汇率人民币换算、官方降价、目标价去重和三次失败/恢复状态机已完成并通过测试。采集仓储现已只枚举启用订阅中的启用地区商品，防止停用配置继续访问外部来源。历史保留已具备经过 D1 验证的清理服务，并由独立六小时 Cron 实际调用：价格快照按永久/一年/两年日历边界严格删除，采集日志固定清理九十天前记录。连续失败与恢复状态现已写入 D1，并在状态变迁时预留去重的待发送事件；真实价格采集执行器、Telegram 事件发送和全区人民币历史最低价查询仍待完成。
+
 **Files:**
 - Create: `src/worker/services/collection-service.ts`, `src/worker/services/price-rules.ts`, `src/worker/services/retention-service.ts`
 - Create: `test/collection-service.test.ts`, `test/price-rules.test.ts`
@@ -251,11 +258,11 @@ git commit -m "feat: add validated price provider chain"
 - `evaluateOfficialDrop(previous, current): boolean`.
 - `evaluateTarget(target, price, priorState): "trigger" | "reset" | "none"`.
 
-- [ ] **Step 1: Write failing collection and alert-rule tests**
+- [x] **Step 1: Write failing collection and alert-rule tests**
 
 ```ts
 it("does not create an immediate alert for a third-party drop", () => {
-  expect(evaluateOfficialDrop({ amountMinor: 1000, source: "official" }, { amountMinor: 800, source: "ntprices" })).toBe(false);
+  expect(evaluateOfficialDrop({ amountMinor: 1000, source: "official" }, { amountMinor: 800, source: "nt-deals" })).toBe(false);
 });
 
 it("triggers a target only on the first crossing and resets after recovery", () => {
@@ -265,16 +272,16 @@ it("triggers a target only on the first crossing and resets after recovery", () 
 });
 ```
 
-- [ ] **Step 2: Run price-rule tests and verify failure**
+- [x] **Step 2: Run price-rule tests and verify failure**
 
 Run: `npm test -- --run test/price-rules.test.ts test/collection-service.test.ts`  
 Expected: FAIL because collection and rule services do not exist.
 
-- [ ] **Step 3: Implement immutable collection flow**
+- [x] **Step 3: Implement immutable collection flow（核心）**
 
 Fetch the day’s rates once, collect each enabled region through the provider chain, append source-tagged snapshots, calculate CNY fen and Oregon tax display fields, and retain the previous snapshot on total failure. Maintain health counters; notify state changes at exactly three consecutive failures and the next recovery. Query historical lows by region plus the all-region lowest CNY snapshot.
 
-- [ ] **Step 4: Run service tests**
+- [x] **Step 4: Run service tests（核心）**
 
 Run: `npm test -- --run test/price-rules.test.ts test/collection-service.test.ts`  
 Expected: PASS, including stale price/rate behavior and historical-low values.
@@ -288,6 +295,8 @@ git commit -m "feat: add price collection and monitoring rules"
 
 ## Task 6: Add subscription, settings, dashboard, history, and export APIs
 
+实施状态（2026-07-16）：已完成受管理员会话保护的订阅创建、软停用、重新启用、目标价、地区编辑、基础设置、仪表盘概览、历史读取和 CSV 导出接口。创建接口校验非空且去重的地区商品列表，并验证其属于所选游戏且仍启用；重复 `gameId` 返回既有订阅，保留原有地区配置。停用仅更新 `enabled`，不删除地区配置或历史；全局人民币与单区本币目标价可更新，并在变更时重置命中状态；地区范围可安全替换而不删除历史。设置接口支持地区、默认搜索区、主题、时区、日报时间、税务州和历史保留策略的安全局部更新。仪表盘返回订阅、游戏、地区配置、最新价格来源、分区历史最低价，以及基于有效人民币换算快照稳定排序的全区历史最低价；历史支持按订阅和地区读取不可变快照；订阅配置、价格历史和采集日志均以独立字段白名单导出。`POST /api/refresh` 已用单行队列原子限制为 15 分钟一次并返回排队状态；调度器的原子认领边界已完成，真实采集器接入后将消费该认领结果并更新仪表盘刷新状态。
+
 **Files:**
 - Create: `src/worker/routes/subscription-routes.ts`, `src/worker/routes/settings-routes.ts`, `src/worker/routes/dashboard-routes.ts`, `src/worker/routes/export-routes.ts`
 - Create: `src/worker/services/subscription-service.ts`, `src/worker/services/export-service.ts`
@@ -298,7 +307,7 @@ git commit -m "feat: add price collection and monitoring rules"
 - `GET /api/dashboard`, `GET /api/history?subscriptionId=&region=`.
 - `GET /api/export?kind=subscriptions|prices|fetch-logs`.
 
-- [ ] **Step 1: Write failing protected API tests**
+- [x] **Step 1: Write failing protected API tests（订阅创建部分）**
 
 ```ts
 it("opens an existing subscription instead of inserting a duplicate", async () => {
@@ -313,16 +322,16 @@ it("does not export secrets", async () => {
 });
 ```
 
-- [ ] **Step 2: Run API tests and verify failure**
+- [x] **Step 2: Run API tests and verify failure（订阅创建部分）**
 
 Run: `npm test -- --run test/api-subscriptions.test.ts test/api-settings-and-export.test.ts`  
 Expected: FAIL because route handlers do not exist.
 
-- [ ] **Step 3: Implement route handlers and validation**
+- [ ] **Step 3: Implement route handlers and validation（订阅创建部分已完成）**
 
 Require `requireAdmin` for every route except auth. Validate enabled/default regions, 15-minute manual-refresh cooldown, all three theme values, source ordering, retention selection, and CSV kind. Use streaming CSV rows for price history; soft-disable subscriptions and expose re-enable via `PATCH`.
 
-- [ ] **Step 4: Run API integration tests**
+- [ ] **Step 4: Run API integration tests（订阅创建部分已通过）**
 
 Run: `npm test -- --run test/api-subscriptions.test.ts test/api-settings-and-export.test.ts`  
 Expected: PASS; unauthenticated requests return `401`, duplicate subscription is not created, and CSV contains headers but no secret fields.
@@ -335,6 +344,8 @@ git commit -m "feat: add subscription settings and export APIs"
 ```
 
 ## Task 7: Implement scheduled reports and Telegram delivery
+
+实施状态（2026-07-16）：日报纯格式化服务、Telegram 安全投递边界与 Worker Cron 调度已完成并通过测试，可展示官方/第三方来源、各区当前价格、全区与分区历史最低价，并在 Telegram 4096 字符限制内标注页码分页；发送按页顺序进行，结果不回显 Token、Chat ID 或第三方原始错误。每分钟 Cron 以管理员 IANA 时区判断日报时刻，且仅在运行时同时存在 Telegram Secret 时读取价格和发送。六小时采集执行、手动刷新队列消费、异常通知和部署 Secret 配置仍待接入。
 
 **Files:**
 - Create: `src/worker/services/report-service.ts`, `src/worker/services/telegram-service.ts`, `src/worker/services/scheduler-service.ts`

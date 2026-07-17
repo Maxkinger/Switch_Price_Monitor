@@ -1,20 +1,655 @@
 :root {
-  color: #362a22;
+  /* 暖色游戏库主题的基础令牌。组件只引用语义变量，日后切换用户主题时无需散落修改具体色值。 */
+  color: #352720;
   background: #fff7ed;
   font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-synthesis: none;
 }
 
 * {
+  /* 边框盒模型确保三列候选卡在选中时增加边框也不会挤出栅格。 */
   box-sizing: border-box;
 }
 
 body {
+  /* 移除默认外边距，让页面背景和安全留白由应用外壳统一负责。 */
   margin: 0;
+  min-width: 320px;
+}
+
+button,
+input,
+select {
+  /* 表单控件继承中文字体，避免系统默认字体破坏候选卡信息密度。 */
+  font: inherit;
+}
+
+button {
+  /* 可点击元素统一使用手型；禁用态会在具体按钮中降低可见度。 */
+  cursor: pointer;
+}
+
+button:disabled {
+  /* 异步核验中禁止重复提交，避免重复创建相同订阅或并行验证同一官方链接。 */
+  cursor: not-allowed;
+  opacity: 0.56;
 }
 
 .app-shell {
+  /* 页面外壳仅提供可滚动的暖色画布，不在此处承载认证或价格数据。 */
+  min-height: 100vh;
+  padding: 42px 24px 72px;
+}
+
+.subscription-page {
+  /* 阅读宽度受限，保证三列卡片在宽屏保持紧凑而非过分拉伸。 */
+  width: min(1120px, 100%);
+  margin: 0 auto;
+}
+
+.page-header,
+.search-panel,
+.candidate-section,
+.fallback-panel,
+.regional-panel,
+.source-preview,
+.confirmation-result {
+  /* 共享的纸卡容器将搜索、核验与确认步骤分组，避免复杂向导依赖过重的边框装饰。 */
+  border: 1px solid #ead9ca;
+  border-radius: 20px;
+  background: rgb(255 253 249 / 92%);
+  box-shadow: 0 15px 34px rgb(77 48 29 / 7%);
+}
+
+.page-header {
+  /* 标题和官方来源边界在同一行呈现，明确本页面不会直接抓取第三方站。 */
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 30px;
+}
+
+.page-header h1,
+.page-header p,
+.section-heading h2,
+.section-heading p,
+.search-panel h2,
+.fallback-panel h2,
+.regional-panel h3,
+.regional-panel p,
+.source-preview h2,
+.confirmation-result h2 {
+  /* 清除标题和说明的浏览器默认边距，由相邻布局精确管理间距。 */
+  margin: 0;
+}
+
+.page-header h1,
+.search-panel h2,
+.section-heading h2 {
+  color: #2d211c;
+  letter-spacing: -0.035em;
+}
+
+.page-header h1 {
+  font-size: clamp(29px, 4vw, 42px);
+}
+
+.page-header p:not(.eyebrow) {
+  margin-top: 10px;
+  color: #705d52;
+}
+
+.eyebrow {
+  /* 步骤标签采用稳定小写字距，不与游戏名称或商品类型混淆。 */
+  margin: 0 0 7px;
+  color: #aa5e2d;
+  font-size: 12px;
+  font-weight: 760;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.page-header__badge {
+  flex: 0 0 auto;
+  border: 1px solid #e7c89e;
+  border-radius: 999px;
+  padding: 8px 11px;
+  color: #88502a;
+  background: #fff1dc;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.search-panel,
+.candidate-section,
+.fallback-panel,
+.regional-panel,
+.source-preview,
+.confirmation-result {
+  margin-top: 18px;
+  padding: 26px;
+}
+
+.search-panel {
+  /* 搜索标题和输入区分列，窄屏时由媒体查询改为单列。 */
+  display: grid;
+  grid-template-columns: minmax(170px, 0.62fr) minmax(0, 1.38fr);
+  gap: 28px;
+  align-items: end;
+}
+
+.search-form label {
+  display: block;
+  margin-bottom: 8px;
+  color: #645248;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.search-form__controls,
+.fallback-form,
+.regional-option__link,
+.candidate-actions {
+  display: flex;
+  gap: 10px;
+}
+
+input,
+select {
+  min-width: 0;
+  border: 1px solid #d9c6b8;
+  border-radius: 11px;
+  padding: 11px 12px;
+  color: #352720;
+  background: #fffdf9;
+  outline: none;
+}
+
+input:focus,
+select:focus,
+.candidate-card:focus-visible,
+button:focus-visible {
+  /* 键盘焦点与“已选”暖色边框区分，保证多选卡在无鼠标操作时仍可辨识。 */
+  outline: 3px solid rgb(74 124 111 / 36%);
+  outline-offset: 2px;
+}
+
+.search-form input,
+.regional-option__link input {
+  flex: 1;
+}
+
+.primary-button,
+.secondary-button,
+.text-button {
+  border: 0;
+  border-radius: 11px;
+  padding: 11px 15px;
+  font-weight: 750;
+  transition: transform 140ms ease, background 140ms ease;
+}
+
+.primary-button {
+  color: #fffaf5;
+  background: #9e532c;
+}
+
+.secondary-button {
+  color: #744022;
+  background: #fde7cf;
+}
+
+.text-button {
+  color: #864a27;
+  background: #fff1de;
+  font-size: 13px;
+}
+
+.primary-button:not(:disabled):hover,
+.secondary-button:not(:disabled):hover,
+.text-button:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+.fallback-panel p {
+  margin: 8px 0 17px;
+  color: #705d52;
+}
+
+.fallback-form input {
+  flex: 1;
+}
+
+.section-heading,
+.regional-panel__heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: end;
+  margin-bottom: 17px;
+}
+
+.section-heading p:not(.eyebrow),
+.regional-panel__heading > span {
+  margin-top: 7px;
+  color: #765f51;
+  font-size: 14px;
+}
+
+/* 宽屏固定三列，中屏两列，小屏一列，符合已确认的官方候选结果草图。 */
+.candidate-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.candidate-card {
+  /* 3px 透明边框预留选中空间，使多选状态切换时卡片不发生布局跳动。 */
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  gap: 11px;
+  min-height: 102px;
+  width: 100%;
+  border: 3px solid transparent;
+  border-radius: 14px;
+  padding: 10px;
+  color: inherit;
+  text-align: left;
+  background: #fffaf4;
+  box-shadow: inset 0 0 0 1px #eadbce;
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+
+.candidate-card:hover {
+  transform: translateY(-1px);
+  background: #fff6ea;
+}
+
+.candidate-card--selected {
+  /* 选中只依赖边框和浅背景，不再显示“已选择”文字或额外按钮。 */
+  border-color: #b85e2d;
+  background: #fff0df;
+  box-shadow: none;
+}
+
+.candidate-card__cover {
+  overflow: hidden;
+  width: 54px;
+  height: 72px;
+  border-radius: 8px;
+  color: #866e5e;
+  background: linear-gradient(145deg, #e7d1b8, #c8956e);
+  font-size: 10px;
+}
+
+.candidate-card__cover img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.candidate-card__cover span {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+}
+
+.candidate-card__content {
+  /* 以封面上下沿为基准定位：名称上方 2px、底部发行商/价格上方 2px、类型垂直居中。 */
+  position: relative;
+  min-width: 0;
+  height: 72px;
+}
+
+.candidate-card__title,
+.candidate-card__type,
+.candidate-card__publisher {
+  left: 0;
+}
+
+.candidate-card__title {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  overflow: hidden;
+  color: #36261e;
+  font-size: 14px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.candidate-card__type {
+  position: absolute;
+  top: 50%;
+  max-width: 100%;
+  overflow: hidden;
+  transform: translateY(-50%);
+  color: #80695a;
+  font-size: 12px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.candidate-card__footer {
+  position: absolute;
+  right: 0;
+  bottom: 2px;
+  left: 0;
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.candidate-card__publisher {
+  overflow: hidden;
+  color: #6b5548;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.candidate-price {
+  flex: 0 0 auto;
+  color: #3e2a20;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.candidate-price--pending {
+  color: #8a776a;
+}
+
+.candidate-price--sale {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  color: #a84928;
+}
+
+.candidate-price--sale del {
+  color: #907b6d;
+  font-size: 10px;
+}
+
+.candidate-price--sale b {
+  font-size: 12px;
+}
+
+.candidate-price--sale em {
+  border-radius: 999px;
+  padding: 1px 4px;
+  color: #fffaf5;
+  background: #b8512e;
+  font-size: 9px;
+  font-style: normal;
+}
+
+.candidate-actions {
+  justify-content: flex-end;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+
+.regional-panel__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.regional-option {
+  min-width: 0;
+  border: 1px solid #e6d6c9;
+  border-radius: 13px;
+  padding: 14px;
+  background: #fffaf4;
+}
+
+.regional-option__region {
+  color: #62402e;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.regional-option p {
+  margin: 5px 0 10px;
+  color: #765f51;
+  font-size: 13px;
+}
+
+.regional-option__candidates {
+  display: grid;
+  gap: 6px;
+}
+
+.compact-option {
+  overflow: hidden;
+  border: 1px solid #ddc9b9;
+  border-radius: 8px;
+  padding: 7px 8px;
+  color: #5b4336;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: #fffdf9;
+}
+
+.compact-option--selected {
+  border-color: #b85e2d;
+  background: #fff0df;
+}
+
+.regional-option__link {
+  align-items: center;
+}
+
+.regional-option__confirmed {
+  display: block;
+  margin-top: 9px;
+  color: #7a4d31;
+  font-size: 12px;
+}
+
+.source-preview__items,
+.confirmation-result p {
+  color: #695447;
+  font-size: 14px;
+}
+
+.source-preview__items p {
+  margin: 8px 0;
+}
+
+.notice {
+  margin: 18px 0 0;
+  border: 1px solid #e4bb92;
+  border-radius: 12px;
+  padding: 12px 14px;
+  color: #774222;
+  background: #fff0de;
+}
+
+.auth-page {
+  /* 认证入口使用与订阅页一致的暖色画布，但将表单控制在更窄的阅读宽度以减少密码输入误操作。 */
   display: grid;
   min-height: 100vh;
   place-items: center;
-  padding: 24px;
+}
+
+.auth-card {
+  /* 单一认证卡避免把登录、恢复码和地区选择拆成多层嵌套卡片，保证安全提示与主要操作在同一视觉焦点内。 */
+  width: min(520px, 100%);
+  border: 1px solid #ead9ca;
+  border-radius: 20px;
+  padding: 32px;
+  background: rgb(255 253 249 / 94%);
+  box-shadow: 0 15px 34px rgb(77 48 29 / 7%);
+}
+
+.auth-card h1,
+.auth-card p {
+  margin: 0;
+}
+
+.auth-card h1 {
+  color: #2d211c;
+  font-size: clamp(28px, 5vw, 38px);
+  letter-spacing: -0.035em;
+}
+
+.auth-card__lead {
+  margin-top: 10px !important;
+  color: #705d52;
+  line-height: 1.65;
+}
+
+.auth-form {
+  /* 认证输入统一使用纵向节奏，避免密码、地区复选框和默认区下拉在窄屏相互挤压。 */
+  display: grid;
+  gap: 9px;
+  margin-top: 24px;
+}
+
+.auth-form > label,
+.region-checkbox-grid legend {
+  color: #645248;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.region-checkbox-grid {
+  /* 原生复选框保留键盘和读屏器语义；网格只负责让五区信息紧凑且可扫描。 */
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 9px 0 3px;
+  border: 1px solid #e4d4c7;
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.region-checkbox-grid legend {
+  padding: 0 4px;
+}
+
+.region-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 31px;
+  color: #513c30;
+  font-size: 14px;
+}
+
+.region-checkbox input {
+  /* 复选框不继承文本输入的内边距和圆角，维持浏览器原生可访问尺寸。 */
+  min-width: auto;
+  padding: 0;
+}
+
+.auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.auth-notice {
+  /* 服务端错误已经过脱敏；此处以 alert 呈现，不显示请求、Cookie 或任何秘密字段。 */
+  margin: 5px 0 0;
+  border: 1px solid #e4bb92;
+  border-radius: 12px;
+  padding: 11px 12px;
+  color: #774222;
+  background: #fff0de;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.recovery-code {
+  /* 等宽显示仅辅助人工抄录；该输入只读且不触发自动复制，避免恢复码意外流入剪贴板历史。 */
+  width: 100%;
+  margin-top: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  letter-spacing: 0.04em;
+}
+
+.auth-help {
+  margin-top: 8px !important;
+  color: #7b6658;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+@media (max-width: 880px) {
+  /* 中等宽度保留候选卡信息密度，降为两列而非压缩封面和价格。 */
+  .candidate-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .search-panel {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  /* 手机宽度改为一列，避免折扣、发行商和当地货币价格互相遮挡。 */
+  .app-shell {
+    padding: 18px 14px 42px;
+  }
+
+  .page-header,
+  .search-panel,
+  .candidate-section,
+  .fallback-panel,
+  .regional-panel,
+  .source-preview,
+  .confirmation-result {
+    padding: 19px;
+  }
+
+  .page-header,
+  .section-heading,
+  .regional-panel__heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .search-form__controls,
+  .fallback-form,
+  .regional-option__link {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .candidate-grid,
+  .regional-panel__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .candidate-actions {
+    justify-content: stretch;
+  }
+
+  .candidate-actions button {
+    flex: 1 1 100%;
+  }
+
+  .auth-card {
+    padding: 24px 20px;
+  }
+
+  .region-checkbox-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-actions > button {
+    flex: 1 1 100%;
+  }
 }
