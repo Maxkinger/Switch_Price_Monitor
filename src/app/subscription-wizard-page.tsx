@@ -361,7 +361,8 @@ export function SubscriptionWizardPage({ onUnauthorized }: { onUnauthorized: () 
         if (candidate && matchSource) regions.push({ ...candidate, matchSource });
       }
 
-      return { selected, regions };
+      // 旧向导尚未提供跳过控件时必须明确提交空数组，不能省略共享 DTO 字段；后续界面任务会把它替换为管理员可见的逐区跳过状态。
+      return { selected, regions, skippedRegionCodes: [] };
     });
   }
 

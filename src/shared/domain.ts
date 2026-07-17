@@ -58,6 +58,11 @@ export interface ConfirmedRegionalProduct extends OfficialProductCandidate {
 export interface ConfirmedSubscriptionInput {
   selected: OfficialProductCandidate;
   regions: ConfirmedRegionalProduct[];
+  /**
+   * 管理员明确不监控的已启用地区。空数组表示所有启用地区均已有官方确认映射；
+   * 该字段不能替代任意候选，Worker 仍会用保存的设置检查覆盖范围，防止旧页面静默创建仅默认区订阅。
+   */
+  skippedRegionCodes: RegionCode[];
 }
 
 /** 批量确认逐项返回的新建或既有订阅结果，既有订阅绝不隐式替换管理员此前选择的地区范围。 */

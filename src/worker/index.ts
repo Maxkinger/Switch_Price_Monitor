@@ -93,8 +93,9 @@ const worker: ExportedHandler<Env> = {
         createOfficialNintendoSearch(),
         officialPages,
       ),
-      // 最终确认复用同一个官方页面解析器和日区价格 ID 二次验证器，确保发现时与写入前遵守同一地区安全规则。
-      new SubscriptionConfirmationService(new SubscriptionConfirmationRepository(env.DB), officialPages, officialPriceIds),
+      // 最终确认复用同一个官方页面解析器、日区价格 ID 二次验证器和持久化设置，
+      // 确保发现时与写入前使用同一地区安全范围，旧浏览器页面也不能绕过启用地区覆盖校验。
+      new SubscriptionConfirmationService(new SubscriptionConfirmationRepository(env.DB), officialPages, officialPriceIds, new SettingsRepository(env.DB)),
     );
     if (productResponse) return productResponse;
 

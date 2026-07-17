@@ -3,6 +3,7 @@ import type {
   ConfirmedSubscriptionInput,
   OfficialProductCandidate,
   RegionalProductMatchSource,
+  RegionCode,
   SubscriptionConfirmationResult,
 } from "../../shared/domain";
 import type { OfficialNintendoProductPageResolver } from "../providers/official-nintendo-product-page";
@@ -16,6 +17,14 @@ import type { OfficialPriceIdResolution, OfficialPriceIdService } from "./offici
 /** 服务仅需要官方价格 ID 的只读解析能力，窄接口使测试不必创建真实官方网络适配器。 */
 type OfficialPriceIdResolver = Pick<OfficialPriceIdService, "resolve">;
 
+/**
+ * 最终确认只读取启用地区，不读取默认搜索区或展示偏好。确认时重新读取设置，
+ * 才能阻止浏览器旧缓存将未处理地区静默遗漏或伪造额外地区映射。
+ */
+export interface EnabledRegionSettingsReader {
+  get(): Promise<{ enabledRegions: RegionCode[] } | null>;
+}
+
 /** 最终确认的可预期表单/官方身份错误；路由会将其安全映射为 422，不暴露外部页面或 D1 细节。 */
 export class SubscriptionConfirmationError extends Error {}
 
@@ -28,6 +37,7 @@ export class SubscriptionConfirmationService {
     private readonly repository: SubscriptionConfirmationRepository,
     private readonly pages: OfficialNintendoProductPageResolver,
     private readonly officialPriceIds: OfficialPriceIdResolver,
+    private readonly settings: EnabledRegionSettingsReader,
     private readonly createId: () => string = () => crypto.randomUUID(),
   ) {}
 
@@ -63,10 +73,13 @@ export class SubscriptionConfirmationService {
 
   /**
    * 验证一个逻辑游戏的所有地区映射。默认区候选必须恰好出现在地区列表一次，且所有已验证地区都要与默认区身份相同；
-   * 否则同名 DLC、本体或升级包可能被混入同一订阅，污染后续价格历史和日报。
+   * 重新读取的启用地区必须被确认或显式跳过，否则同名 DLC、本体或升级包可能被混入或被静默遗漏。
    */
   private async validate(input: ConfirmedSubscriptionInput): Promise<UnidentifiedValidatedSubscription> {
     if (!Array.isArray(input.regions) || input.regions.length === 0) throw new SubscriptionConfirmationError("每个游戏至少确认一个地区商品。");
+    if (!Array.isArray(input.skippedRegionCodes)) throw new SubscriptionConfirmationError("跳过地区设置无效。");
+    const settings = await this.settings.get();
+    if (!settings) throw new SubscriptionConfirmationError("应用尚未完成初始化。");
     const selected = await this.resolveOfficialCandidate(input.selected);
     const regions = await Promise.all(input.regions.map((region) => this.validateRegion(region, selected)));
     if (new Set(regions.map((region) => region.regionCode)).size !== regions.length) {
@@ -74,6 +87,7 @@ export class SubscriptionConfirmationService {
     }
     const selectedRegions = regions.filter((region) => region.regionCode === selected.regionCode && region.productUrl === selected.productUrl);
     if (selectedRegions.length !== 1) throw new SubscriptionConfirmationError("默认区商品必须在确认地区中保留一次。");
+    this.validateConfiguredRegionCoverage(settings.enabledRegions, selected.regionCode, regions, input.skippedRegionCodes);
 
     return {
       game: {
@@ -87,6 +101,29 @@ export class SubscriptionConfirmationService {
       },
       regions,
     };
+  }
+
+  /**
+   * 设置覆盖校验同时在服务层执行，不能只依赖页面禁用按钮。确认与跳过必须互斥且都属于当前启用地区，
+   * 这样设置变更、旧缓存或手工 API 请求均无法创建未说明原因的默认区单区订阅。
+   */
+  private validateConfiguredRegionCoverage(
+    enabledRegions: RegionCode[],
+    defaultRegion: RegionCode,
+    regions: UnidentifiedValidatedRegion[],
+    skippedRegionCodes: RegionCode[],
+  ): void {
+    const confirmedCodes = regions.map((region) => region.regionCode);
+    if (new Set(skippedRegionCodes).size !== skippedRegionCodes.length || skippedRegionCodes.includes(defaultRegion)) {
+      throw new SubscriptionConfirmationError("跳过地区设置无效。");
+    }
+    if (confirmedCodes.some((regionCode) => !enabledRegions.includes(regionCode)) || skippedRegionCodes.some((regionCode) => !enabledRegions.includes(regionCode))) {
+      throw new SubscriptionConfirmationError("地区不在当前启用范围内。");
+    }
+    const covered = new Set([...confirmedCodes, ...skippedRegionCodes]);
+    if (confirmedCodes.some((regionCode) => skippedRegionCodes.includes(regionCode)) || enabledRegions.some((regionCode) => !covered.has(regionCode))) {
+      throw new SubscriptionConfirmationError("请确认或跳过所有已启用地区。");
+    }
   }
 
   /** 重新请求官方链接并只采用其返回字段；浏览器提交的价格、封面和发行商均被刻意忽略。 */

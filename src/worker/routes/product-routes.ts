@@ -50,9 +50,9 @@ export async function handleProductRoute(
       return Response.json({ candidate: await discovery.resolveOfficialLink(regionCode, productUrl) });
     }
     if (isResolveRegions && discovery) {
-      // 先收窄每张已选候选和启用地区，再由服务依据官方公开搜索能力返回自动或人工确认状态；此过程不写 D1。
-      const { candidates, enabledRegions } = readRegionResolutionRequest(await request.json<unknown>());
-      return Response.json({ regions: await discovery.resolveRegions(candidates, enabledRegions) });
+      // 只收窄已选默认区候选；启用地区由发现服务从持久化设置读取，浏览器不能借请求体扩大或缩小官方检索范围。
+      const { candidates } = readRegionResolutionRequest(await request.json<unknown>());
+      return Response.json({ regions: await discovery.resolveRegions(candidates) });
     }
     if (isConfirmSubscriptions && confirmation) {
       // 仅把运行时收窄后的完整候选交给确认服务；服务会再次请求每个官方链接，路由绝不直接拼写游戏或订阅 SQL。
@@ -96,8 +96,9 @@ function readOfficialLinkRequest(value: unknown): { regionCode: RegionCode; prod
  * 跨区解析只消费由默认区官方搜索或官方链接解析得到的完整瞬时候选。所有字段在路由边界收窄，
  * 因为这些值虽来自浏览器提交，却会影响后续的官方检索关键词与界面匹配状态，不能信任客户端对象形状。
  */
-function readRegionResolutionRequest(value: unknown): { candidates: OfficialProductCandidate[]; enabledRegions: RegionCode[] } {
+function readRegionResolutionRequest(value: unknown): { candidates: OfficialProductCandidate[] } {
   if (!isRecord(value)) throw new ProductPreviewRequestError("请求内容必须是对象。");
+  if ("enabledRegions" in value) throw new ProductPreviewRequestError("跨区范围由已保存设置决定。");
   if (!Array.isArray(value.candidates) || value.candidates.length === 0) {
     throw new ProductPreviewRequestError("请至少选择一个官方商品。");
   }
@@ -105,7 +106,7 @@ function readRegionResolutionRequest(value: unknown): { candidates: OfficialProd
   // 一个候选键只能表示一个已验证默认区商品；重复提交会制造重复地区确认卡，故在写入前的只读阶段即拒绝。
   const candidateKeys = candidates.map((candidate) => `${candidate.regionCode}:${candidate.productUrl}`);
   if (new Set(candidateKeys).size !== candidateKeys.length) throw new ProductPreviewRequestError("不能重复选择同一官方商品。");
-  return { candidates, enabledRegions: readRegionCodes(value.enabledRegions) };
+  return { candidates };
 }
 
 /**
@@ -129,7 +130,19 @@ function readConfirmedSubscription(value: unknown): ConfirmedSubscriptionInput {
   if (new Set(regions.map((region) => region.regionCode)).size !== regions.length) {
     throw new ProductPreviewRequestError("每个游戏在每区只能确认一个商品。");
   }
-  return { selected, regions };
+  const skippedRegionCodes = readSkippedRegionCodes(value.skippedRegionCodes);
+  return { selected, regions, skippedRegionCodes };
+}
+
+/**
+ * 跳过地区必须显式提交数组，即使为空也不能省略。路由先做枚举和去重检查，
+ * 服务层随后以当前设置验证其与已确认地区的覆盖和互斥关系，避免把浏览器输入当作地区事实来源。
+ */
+function readSkippedRegionCodes(value: unknown): RegionCode[] {
+  if (!Array.isArray(value)) throw new ProductPreviewRequestError("跳过地区设置无效。");
+  const regionCodes = value.map((regionCode) => readRegionCode(regionCode));
+  if (new Set(regionCodes).size !== regionCodes.length) throw new ProductPreviewRequestError("跳过地区不能重复。");
+  return regionCodes;
 }
 
 /** 路由输入错误使用独立类型，避免把管理员表单问题误记为来源适配器或数据库故障。 */

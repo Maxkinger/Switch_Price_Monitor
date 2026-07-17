@@ -1,9 +1,12 @@
 import type { OfficialProductCandidate, OfficialProductSearch, OfficialSearchResult, RegionCode } from "../../shared/domain";
 import type { OfficialNintendoProductPageResolver } from "../providers/official-nintendo-product-page";
 
-/** 发现服务只需要读取默认搜索区；保持窄接口使离线测试不必连接 D1，同时避免把设置中的无关偏好传入外部请求。 */
-export interface DefaultSearchRegionReader {
-  get(): Promise<{ defaultSearchRegion: RegionCode } | null>;
+/**
+ * 发现服务只读取默认搜索区和启用地区。两者均由服务端设置保存，
+ * 可防止浏览器缓存、篡改请求或旧前端把任天堂检索扩展到管理员未启用的地区。
+ */
+export interface DiscoverySettingsReader {
+  get(): Promise<{ defaultSearchRegion: RegionCode; enabledRegions: RegionCode[] } | null>;
 }
 
 /** 每个已选默认区商品在另一启用地区的确认状态；候选永远绑定 `candidateKey`，不会在多选时串给其他游戏。 */
@@ -21,7 +24,7 @@ export class ProductDiscoveryError extends Error {}
  */
 export class OfficialProductDiscoveryService {
   public constructor(
-    private readonly settings: DefaultSearchRegionReader,
+    private readonly settings: DiscoverySettingsReader,
     private readonly search: OfficialProductSearch,
     private readonly pages: OfficialNintendoProductPageResolver,
   ) {}
@@ -44,11 +47,13 @@ export class OfficialProductDiscoveryService {
   }
 
   /**
-   * 每个已选游戏独立检查其他启用地区。自动匹配必须同时吻合规范化标题、受控类型和双方均有的发行商；
-   * 没有可用地区搜索时只提供官方链接入口，有候选但无法唯一确认时交由管理员从官方候选中选择。
+   * 每个已选游戏独立检查保存设置中的其他启用地区。浏览器没有地区参数，避免旧页面或篡改请求扩大官方检索范围；
+   * 自动匹配必须同时吻合规范化标题、受控类型和双方均有的发行商，没有唯一候选时才交由管理员人工确认。
    */
-  public async resolveRegions(selected: OfficialProductCandidate[], enabledRegions: RegionCode[]): Promise<RegionResolution[]> {
-    return Promise.all(selected.flatMap((candidate) => enabledRegions
+  public async resolveRegions(selected: OfficialProductCandidate[]): Promise<RegionResolution[]> {
+    const settings = await this.settings.get();
+    if (!settings) throw new ProductDiscoveryError("应用尚未完成初始化。");
+    return Promise.all(selected.flatMap((candidate) => settings.enabledRegions
       .filter((regionCode) => regionCode !== candidate.regionCode)
       .map(async (regionCode) => this.matchRegion(candidate, regionCode))));
   }

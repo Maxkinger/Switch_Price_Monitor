@@ -27,6 +27,8 @@
 - Modify: `src/worker/services/official-product-discovery-service.ts`
 - Modify: `src/worker/services/subscription-confirmation-service.ts`
 - Modify: `src/worker/routes/product-routes.ts`
+- Modify: `src/worker/index.ts`
+- Modify: `src/app/subscription-wizard-page.tsx`（仅同步确认 DTO 的空跳过字段；真正自动确认与跳过界面仍在 Task 3）
 - Modify: `test/official-product-discovery-service.test.ts`
 - Modify: `test/api-product-discovery.test.ts`
 - Modify: `test/subscription-confirmation-service.test.ts`
@@ -36,7 +38,7 @@
 - Changes `OfficialProductDiscoveryService.resolveRegions(selected)` to read both `defaultSearchRegion` and `enabledRegions` from its settings reader.
 - Changes `SubscriptionConfirmationService.confirm(inputs, now)` to reject each input whose current enabled-region set is not exactly partitioned into confirmed regions and `skippedRegionCodes`.
 
-- [ ] **Step 1: 写入失败测试**
+- [x] **Step 1: 写入失败测试**
 
 在发现服务测试中让设置返回 `enabledRegions: ["US", "JP"]`，调用时不提供地区数组，并断言只向 JP 搜索：
 
@@ -54,13 +56,13 @@ expect(repository.createAtomically).not.toHaveBeenCalled();
 
 再加入 JP 至 `skippedRegionCodes`，断言验证继续执行且只写入 US。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/official-product-discovery-service.test.ts test/subscription-confirmation-service.test.ts test/api-product-discovery.test.ts`
 
 Expected: FAIL，因为发现服务仍接收浏览器地区数组，确认服务尚未理解跳过地区或读取设置。
 
-- [ ] **Step 3: 最小服务端实现**
+- [x] **Step 3: 最小服务端实现**
 
 将设置读取端口收窄为：
 
@@ -86,7 +88,7 @@ if (input.skippedRegionCodes.some((region) => !settings.enabledRegions.includes(
 
 `readConfirmedSubscription` 必须读取、去重并验证 `skippedRegionCodes`，且默认区不能被跳过。所有新增/修改注释说明设置是安全边界，不能由浏览器扩大来源请求范围。
 
-- [ ] **Step 4: 运行服务端回归**
+- [x] **Step 4: 运行服务端回归**
 
 Run: `npm test -- --run test/official-product-discovery-service.test.ts test/subscription-confirmation-service.test.ts test/api-product-discovery.test.ts && npx tsc --noEmit`
 
@@ -97,7 +99,7 @@ Expected: PASS；服务端只处理设置地区，未处理地区无法绕过确
 拟提交范围：共享确认 DTO、设置驱动发现、确认覆盖校验、产品路由和相关测试。
 
 ```bash
-git add src/shared/domain.ts src/worker/services/official-product-discovery-service.ts src/worker/services/subscription-confirmation-service.ts src/worker/routes/product-routes.ts test/official-product-discovery-service.test.ts test/subscription-confirmation-service.test.ts test/api-product-discovery.test.ts
+git add src/shared/domain.ts src/worker/services/official-product-discovery-service.ts src/worker/services/subscription-confirmation-service.ts src/worker/routes/product-routes.ts src/worker/index.ts src/app/subscription-wizard-page.tsx test/official-product-discovery-service.test.ts test/subscription-confirmation-service.test.ts test/api-product-discovery.test.ts docs/superpowers/plans/2026-07-17-settings-driven-region-completion.md
 git commit -m "feat: validate configured subscription regions"
 git push origin main
 ```

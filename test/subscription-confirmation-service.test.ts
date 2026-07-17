@@ -48,10 +48,28 @@ describe("subscription confirmation service", () => {
     // 已有订阅可能只监控美区；后续批量确认不能趁机新增日区或修改用户既有地区范围。
     await expect(existingRegionIds()).resolves.toEqual(["product-overcooked-us"]);
   });
+
+  it("rejects a configured region that is neither confirmed nor explicitly skipped", async () => {
+    // Worker 必须在写入前以保存的 US/JP 设置检查覆盖范围；仅默认区的旧页面提交不能静默形成美区单区订阅。
+    const input = { ...overcookedSubscription(), regions: [{ ...overcookedUs(), matchSource: "manual_selection" as const }], skippedRegionCodes: [] };
+    const service = createService(allFixtureCandidates(), ["US", "JP"]);
+
+    await expect(service.confirm([input], now)).rejects.toThrow("请确认或跳过所有已启用地区。");
+    await expect(counts()).resolves.toEqual({ games: 0, products: 0, subscriptions: 0, regions: 0 });
+  });
+
+  it("accepts an explicitly skipped configured region without creating an unverified mapping", async () => {
+    // 跳过是管理员可审计的明确决定，而非把 JP 价格或链接猜测为 US 商品；因此只写入已确认的默认区映射。
+    const input = { ...overcookedSubscription(), regions: [{ ...overcookedUs(), matchSource: "manual_selection" as const }], skippedRegionCodes: ["JP" as const] };
+    const service = createService(allFixtureCandidates(), ["US", "JP"]);
+
+    await expect(service.confirm([input], now)).resolves.toEqual([expect.objectContaining({ status: "created" })]);
+    await expect(counts()).resolves.toEqual({ games: 1, products: 1, subscriptions: 1, regions: 1 });
+  });
 });
 
 /** 用真实仓储连接 D1；官方页面与日区价格 ID 使用固定验证结果，使测试只覆盖最终确认业务规则。 */
-function createService(candidates: OfficialProductCandidate[]): SubscriptionConfirmationService {
+function createService(candidates: OfficialProductCandidate[], enabledRegions: Array<"US" | "JP"> = ["US", "JP"]): SubscriptionConfirmationService {
   return new SubscriptionConfirmationService(
     new SubscriptionConfirmationRepository(env.DB),
     {
@@ -62,6 +80,8 @@ function createService(candidates: OfficialProductCandidate[]): SubscriptionConf
         ? { status: "official-available" as const, officialPriceId: "70050000064985" }
         : { status: "official-id-unavailable" as const, officialPriceId: null, reason: "unsupported-region" as const },
     },
+    // 设置替身让确认服务按已保存地区校验覆盖范围，不依赖浏览器候选所携带的地区集合。
+    { get: async () => ({ enabledRegions }) },
   );
 }
 
@@ -73,6 +93,7 @@ function overcookedSubscription() {
       { ...overcookedUs(), matchSource: "manual_selection" as const },
       { ...overcookedJp(), matchSource: "automatic" as const },
     ],
+    skippedRegionCodes: [],
   };
 }
 
@@ -84,6 +105,7 @@ function kirbySubscription() {
       { ...kirbyUs(), matchSource: "manual_selection" as const },
       { ...kirbyJp(), matchSource: "manual_link" as const },
     ],
+    skippedRegionCodes: [],
   };
 }
 

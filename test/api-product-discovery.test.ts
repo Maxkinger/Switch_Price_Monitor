@@ -53,8 +53,8 @@ describe("product discovery HTTP routes", () => {
     expect(resolveOfficialLink).toHaveBeenCalledWith("HK", hongKongCandidate().productUrl);
   });
 
-  it("returns a per-region manual-link state for each enabled region selected from the default-region results", async () => {
-    // 多选候选先由默认区搜索产生；此桩件证明路由不会自行猜测香港商品，而是原样交给服务层完成跨区处理。
+  it("returns a per-region manual-link state using the server-configured enabled regions", async () => {
+    // 多选候选先由默认区搜索产生；路由不能把浏览器提交的地区范围传给服务，否则旧页面可绕过当前设置。
     const resolveRegions = vi.fn(async () => [{
       candidateKey: `US:${candidate().productUrl}`,
       regionCode: "HK" as const,
@@ -68,7 +68,7 @@ describe("product discovery HTTP routes", () => {
     const cookie = await initializeAndLogin();
 
     const response = await handleProductRoute(
-      request("/api/products/resolve-regions", { candidates: [candidate()], enabledRegions: ["US", "HK"] }, cookie),
+      request("/api/products/resolve-regions", { candidates: [candidate()] }, cookie),
       env.DB,
       fixedPreview(),
       discovery,
@@ -80,7 +80,7 @@ describe("product discovery HTTP routes", () => {
       regionCode: "HK",
       status: "needs-manual-link",
     }] });
-    expect(resolveRegions).toHaveBeenCalledWith([candidate()], ["US", "HK"]);
+    expect(resolveRegions).toHaveBeenCalledWith([candidate()]);
   });
 
   it("confirms a validated batch only for an administrator and returns each created subscription", async () => {
@@ -125,7 +125,7 @@ function hongKongCandidate() {
 
 /** 最终确认必须保留默认区的官方候选及其匹配来源；即使只有一个地区也不允许跳过该映射。 */
 function confirmedSubscription() {
-  return { selected: candidate(), regions: [{ ...candidate(), matchSource: "manual_selection" as const }] };
+  return { selected: candidate(), regions: [{ ...candidate(), matchSource: "manual_selection" as const }], skippedRegionCodes: [] };
 }
 
 /** 只构造本系统 JSON API 请求；Cookie 来自真实登录端点，避免测试伪造管理员会话。 */
