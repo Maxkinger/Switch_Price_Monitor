@@ -15,7 +15,7 @@
 | 商品发现 | 默认区搜索、商品详情、跨区候选匹配、手动官方链接校验 |
 | 订阅管理 | 创建、读取、编辑、软停用、重新启用、目标价和地区配置 |
 | 历史 | 按商品、地区、时间范围读取价格快照和汇率信息 |
-| 设置 | 地区、默认搜索区、主题、时区、日报时间、税务州、来源排序、保留策略、Telegram 测试 |
+| 设置 | 已实现：地区、默认搜索区、主题、时区、日报时间、税务州、保留策略；延期：来源排序、第三方来源与 Telegram 测试 |
 | 操作 | 15 分钟冷却的手动刷新、导出 CSV |
 | 诊断 | 采集日志、地区健康状态、通知发送记录 |
 
@@ -44,8 +44,8 @@
 | `POST /api/subscriptions` | 已登录管理员 | 接受已确认的 `id`、`gameId` 和非空、去重的 `regionalProductIds`；每个地区商品必须属于该游戏且处于启用状态。同一 `gameId` 已存在订阅时返回既有 `subscriptionId` 与 `created: false`，不会覆盖原地区选择。匿名请求返回 `401`。 |
 | `POST /api/subscriptions/:id/disable` | 已登录管理员 | 软停用订阅并返回 `204`；不删除地区配置、价格历史或目标价状态，后续采集器据此停止创建新记录和通知。不存在的订阅返回 `404`。 |
 | `PATCH /api/subscriptions/:id` | 已登录管理员 | 接受启用状态、完整目标价配置，或非空且去重的 `regionalProductIds` 地区范围；地区商品必须属于订阅的同一游戏且启用，替换地区不删除既有历史。 |
-| `GET /api/settings` | 已登录管理员 | 返回可公开的单例设置，不含 Telegram 或认证秘密字段。 |
-| `PATCH /api/settings` | 已登录管理员 | 局部更新启用地区、默认搜索区、主题、时区、日报时间、税务州与历史保留策略；默认搜索区必须属于启用地区，更新不会改写既有订阅。 |
+| `GET /api/settings` | 已登录管理员 | 由 `/settings` 同源页面读取单例公开设置，仅返回 `enabledRegions`、`defaultSearchRegion`、`theme`、`timezone`、`dailyReportTime`、`taxState`、`priceHistoryRetention` 和服务端创建时间；不含 Telegram、第三方来源、认证或会话秘密字段。 |
+| `PATCH /api/settings` | 已登录管理员 | `/settings` 仅提交现有公开字段 `enabledRegions`、`defaultSearchRegion`、`theme`、`timezone`、`dailyReportTime`、`taxState`、`priceHistoryRetention`；默认搜索区必须属于启用地区，更新不会改写既有订阅。浏览器没有 Telegram、第三方来源或认证秘密字段的请求入口。 |
 | `POST /api/refresh` | 已登录管理员 | 原子写入单行手动刷新队列并返回 `202`、请求时间与下次允许时间；15 分钟内重复请求返回 `429 REFRESH_COOLDOWN`。该接口只排队，定时执行器将在后续接入时消费请求并执行统一采集链。 |
 | `GET /api/dashboard` | 已登录管理员 | 返回按创建顺序排列的订阅概览，包括游戏名称、启用状态、已确认地区商品、各区最新快照及当地货币历史最低价，并提供仅由已完成汇率换算快照计算的全区人民币历史最低价；最新快照保留原始来源标记，首次尚未订阅时稳定返回空数组。刷新状态将在后续读取模型中追加。 |
 | `GET /api/history?subscriptionId=&region=` | 已登录管理员 | 按采集时间升序返回指定订阅的不可变价格快照；可选 `region` 在服务端筛选地区，响应保留原始货币、人民币金额、来源与采集时间。 |

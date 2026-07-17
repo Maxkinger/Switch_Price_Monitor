@@ -20,6 +20,8 @@
 | [官方订阅发现与批量确认设计](superpowers/specs/2026-07-17-official-subscription-discovery-design.md) | 官方默认区搜索、批量候选选择、跨区确认与候选卡布局 | 已确认（草图暂定） |
 | [官方订阅发现与批量确认实施计划](superpowers/plans/2026-07-17-official-subscription-discovery.md) | 默认区官方检索、官方链接确认、跨区处理、原子批量订阅与候选卡界面的实施步骤 | 已完成 |
 | [认证入口实施计划](superpowers/plans/2026-07-17-authentication-entry.md) | 首次设置、恢复码确认自动登录、登录、密码恢复、认证失效回退与暖色响应式表单 | 已完成 |
+| [公开偏好设置页设计规格](superpowers/specs/2026-07-17-public-settings-page-design.md) | 已登录管理员的公开偏好边界、三组表单、一次保存与秘密配置延期原则 | 已实施 |
+| [公开偏好设置页实施计划](superpowers/plans/2026-07-17-public-settings-page.md) | 同源设置客户端、`/settings` 路由、响应式页面、文档追踪与质量门禁 | 已完成 |
 | [仪表盘与订阅详情设计规格](superpowers/specs/2026-07-17-dashboard-subscription-detail-design.md) | 概览优先仪表盘、单页订阅详情、趋势与安全编辑边界 | 已确认，待实施 |
 | [五区真实价格采集设计规格](superpowers/specs/2026-07-17-five-region-live-collection-design.md) | 五区独立官方适配器、第三方回退、真实采集执行与验收边界 | 已确认，已实施；第三方实际回退待来源许可 |
 | [五区真实价格采集实施计划](superpowers/plans/2026-07-17-five-region-live-collection.md) | 官方五区采集、汇率、Cron 与未获准第三方禁用边界的测试先行实施顺序 | 已完成 |
