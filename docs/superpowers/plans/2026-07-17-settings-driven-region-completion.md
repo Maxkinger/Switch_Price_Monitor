@@ -94,7 +94,7 @@ Run: `npm test -- --run test/official-product-discovery-service.test.ts test/sub
 
 Expected: PASS；服务端只处理设置地区，未处理地区无法绕过确认服务。
 
-- [ ] **Step 5: 等待用户确认后提交并推送 Task 1**
+- [x] **Step 5: 等待用户确认后提交并推送 Task 1**
 
 拟提交范围：共享确认 DTO、设置驱动发现、确认覆盖校验、产品路由和相关测试。
 
@@ -108,7 +108,7 @@ git push origin main
 
 **Files:**
 - Modify: `src/worker/repositories/subscription-confirmation-repository.ts`
-- Modify: `src/worker/services/subscription-confirmation-service.ts`
+- Create: `src/worker/services/subscription-region-completion-service.ts`
 - Modify: `src/worker/routes/subscription-routes.ts`
 - Modify: `src/worker/index.ts`
 - Modify: `test/api-subscription-detail.test.ts`
@@ -117,9 +117,9 @@ git push origin main
 **Interfaces:**
 - Produces `POST /api/subscriptions/:id/resolve-regions` and `POST /api/subscriptions/:id/complete-regions`.
 - Produces repository read model `{ subscriptionId, gameId, anchor: OfficialProductCandidate, existingRegionCodes: RegionCode[] }`.
-- Produces `SubscriptionConfirmationService.resolveExisting(subscriptionId)` and `completeExisting(subscriptionId, regions, skippedRegionCodes, now)`.
+- Produces `SubscriptionRegionCompletionService.resolveExisting(subscriptionId)` and `completeExisting(subscriptionId, input, now)`；独立服务复用确认仓储，避免新建订阅确认流程承担已有订阅的锚点读取职责。
 
-- [ ] **Step 1: 写入失败测试**
+- [x] **Step 1: 写入失败测试**
 
 使用 D1 夹具创建包含 US 地区商品、价格快照和目标价的订阅；调用补全服务添加 JP，断言：
 
@@ -131,15 +131,15 @@ expect(await targetFor(subscriptionId)).toEqual(existingTarget);
 
 再令 JP 官方页面验证失败，断言 `regional_products` 和 `subscription_regions` 的行数均不变。路由测试覆盖 401、404、422 与成功响应，并确认解析端点不会接受浏览器地区范围。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/api-subscription-detail.test.ts test/subscription-region-completion.test.ts`
 
 Expected: FAIL，因为当前订阅路由没有补全动作，确认仓储也不能读取锚点或只追加缺失地区。
 
-- [ ] **Step 3: 最小原子补全实现**
+- [x] **Step 3: 最小原子补全实现**
 
-在确认仓储增加参数化查询，读取订阅、游戏和一个既有地区商品作为锚点，并读取现有地区代码。`completeAtomically` 只能插入不在现有集合中的验证地区：
+在确认仓储增加参数化查询，读取订阅、游戏和一个既有地区商品作为锚点，并读取现有地区代码。独立补全服务重新验证锚点后调用设置驱动的发现服务；`completeAtomically` 只能插入不在现有集合中的验证地区：
 
 ```ts
 await this.database.batch(regions.flatMap((region) => [
@@ -150,13 +150,13 @@ await this.database.batch(regions.flatMap((region) => [
 
 服务先读取锚点，通过 Task 1 的设置范围和官方重验证逻辑解析/验证全部新增候选，再一次性调用 `completeAtomically`。已存在的地区从待写入集合排除；既有地区在覆盖校验中仍视为已确认。路由在 `requireAdmin` 后识别两个新路径，使用安全中文 404/422/500 响应，且由 `index.ts` 注入现有官方页面解析器与价格 ID 服务。
 
-- [ ] **Step 4: 运行补全回归**
+- [x] **Step 4: 运行补全回归**
 
 Run: `npm test -- --run test/api-subscription-detail.test.ts test/subscription-region-completion.test.ts test/api-product-discovery.test.ts && npx tsc --noEmit`
 
 Expected: PASS；补全只增加缺失地区，任一错误不产生部分写入。
 
-- [ ] **Step 5: 等待用户确认后提交并推送 Task 2**
+- [x] **Step 5: 等待用户确认后提交并推送 Task 2**
 
 拟提交范围：补全仓储、确认服务、订阅路由/Worker 接线和补全 API 测试。
 

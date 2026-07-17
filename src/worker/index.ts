@@ -35,6 +35,7 @@ import { ProductHealthService } from "./services/product-health-service";
 import { runPendingNotificationDelivery, runScheduled, runSixHourCollection } from "./services/scheduler-service";
 import { defaultFallbackSources, SubscriptionPreviewService } from "./services/subscription-preview-service";
 import { SubscriptionConfirmationService } from "./services/subscription-confirmation-service";
+import { SubscriptionRegionCompletionService } from "./services/subscription-region-completion-service";
 import { TelegramService } from "./services/telegram-service";
 
 export interface Env {
@@ -100,7 +101,18 @@ const worker: ExportedHandler<Env> = {
     if (productResponse) return productResponse;
 
     // 订阅写入会改变后续采集与通知范围，因此必须在静态资源回退之前进入带会话校验的管理 API。
-    const subscriptionResponse = await handleSubscriptionRoute(request, env.DB);
+    const subscriptionResponse = await handleSubscriptionRoute(
+      request,
+      env.DB,
+      // 已有订阅补全复用同一官方页面、价格 ID、设置与跨区发现服务；这样新建和补全遵守相同的地区安全边界。
+      new SubscriptionRegionCompletionService(
+        new SubscriptionConfirmationRepository(env.DB),
+        officialPages,
+        officialPriceIds,
+        new SettingsRepository(env.DB),
+        new OfficialProductDiscoveryService(new SettingsRepository(env.DB), createOfficialNintendoSearch(), officialPages),
+      ),
+    );
     if (subscriptionResponse) return subscriptionResponse;
 
     // 非 API 请求交给静态资源层，避免把 React 文件路由与业务 API 混在一起。

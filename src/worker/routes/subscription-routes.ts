@@ -1,6 +1,14 @@
+import { initialRegionCodes, regionalProductMatchSources, type ConfirmedRegionalProduct, type RegionCode } from "../../shared/domain";
+import type { ProductType } from "../providers/types";
 import { SubscriptionRepository } from "../repositories/subscription-repository";
 import { SubscriptionDetailRepository } from "../repositories/subscription-detail-repository";
 import { SubscriptionDetailService } from "../services/subscription-detail-service";
+import {
+  SubscriptionRegionCompletionError,
+  SubscriptionRegionCompletionNotFoundError,
+  type CompletionRegionsInput,
+  type SubscriptionRegionCompletionService,
+} from "../services/subscription-region-completion-service";
 import {
   RegionalProductMismatchError,
   SubscriptionNotFoundError,
@@ -9,10 +17,14 @@ import {
 import { requireAdmin } from "./auth-guard";
 
 /**
- * 管理订阅创建入口。所有写入均在会话守卫之后执行，防止第三方仅凭公开商品 ID 改变采集和通知范围。
- * 商品搜索、跨区匹配和地区编辑将在各自的 API 中实现；本路由只消费管理员已确认的 ID 列表。
+ * 管理订阅读取、编辑与已有地区补全入口。所有写入均在会话守卫之后执行，防止第三方仅凭公开商品 ID 改变采集和通知范围。
+ * 已有地区补全只把受控 JSON 交给服务；游戏归属、跨区范围和任天堂官方复核均保持在 Worker 内，不由浏览器决定。
  */
-export async function handleSubscriptionRoute(request: Request, database: D1Database): Promise<Response | null> {
+export async function handleSubscriptionRoute(
+  request: Request,
+  database: D1Database,
+  completion?: Pick<SubscriptionRegionCompletionService, "resolveExisting" | "completeExisting">,
+): Promise<Response | null> {
   const path = new URL(request.url).pathname;
   const action = readSubscriptionAction(request.method, path);
   // 未匹配的请求交还给主路由，避免此模块意外截获未来的商品发现、历史或静态资源端点。
@@ -28,6 +40,18 @@ export async function handleSubscriptionRoute(request: Request, database: D1Data
       // 详情只经受保护服务返回脱敏读取模型，不能把路由层的数据库行、会话或来源原始响应直接序列化给浏览器。
       const detail = await new SubscriptionDetailService(new SubscriptionDetailRepository(database)).get(action.subscriptionId);
       return Response.json(detail);
+    }
+
+    if (action.kind === "resolve-regions") {
+      if (!completion) throw new SubscriptionRequestError("订阅地区补全暂不可用。");
+      // 请求体被有意忽略：补全范围由服务内的保存设置和订阅锚点决定，浏览器不能以地区数组扩大或缩小它。
+      return Response.json(await completion.resolveExisting(action.subscriptionId));
+    }
+
+    if (action.kind === "complete-regions") {
+      if (!completion) throw new SubscriptionRequestError("订阅地区补全暂不可用。");
+      const input = readCompletionRegionsInput(await request.json<unknown>());
+      return Response.json(await completion.completeExisting(action.subscriptionId, input, new Date().toISOString()));
     }
 
     const service = new SubscriptionService(new SubscriptionRepository(database));
@@ -51,8 +75,8 @@ export async function handleSubscriptionRoute(request: Request, database: D1Data
     return Response.json({ subscriptionId: action.subscriptionId, globalTargetCnyFen: update.globalTargetCnyFen, regionTargets: update.regionTargets });
   } catch (error) {
     // 可预期的表单或商品归属错误使用 422；数据库故障则使用通用 500，任何路径都不回显 JSON、SQL 或堆栈。
-    const isValidationError = error instanceof SubscriptionRequestError || error instanceof RegionalProductMismatchError;
-    const isNotFound = error instanceof SubscriptionNotFoundError;
+    const isValidationError = error instanceof SubscriptionRequestError || error instanceof RegionalProductMismatchError || error instanceof SubscriptionRegionCompletionError;
+    const isNotFound = error instanceof SubscriptionNotFoundError || error instanceof SubscriptionRegionCompletionNotFoundError;
     return Response.json(
       {
         code: isNotFound ? "NOT_FOUND" : isValidationError ? "VALIDATION_ERROR" : "INTERNAL_ERROR",
@@ -70,6 +94,8 @@ class SubscriptionRequestError extends Error {}
 type SubscriptionAction =
   | { kind: "create" }
   | { kind: "read"; subscriptionId: string }
+  | { kind: "resolve-regions"; subscriptionId: string }
+  | { kind: "complete-regions"; subscriptionId: string }
   | { kind: "disable"; subscriptionId: string }
   | { kind: "set-enabled"; subscriptionId: string };
 
@@ -81,6 +107,10 @@ function readSubscriptionAction(method: string, path: string): SubscriptionActio
   if (method === "POST" && path === "/api/subscriptions") return { kind: "create" };
   const readMatch = method === "GET" ? path.match(/^\/api\/subscriptions\/([^/]+)$/) : null;
   if (readMatch) return { kind: "read", subscriptionId: decodeURIComponent(readMatch[1]) };
+  const resolveRegionsMatch = method === "POST" ? path.match(/^\/api\/subscriptions\/([^/]+)\/resolve-regions$/) : null;
+  if (resolveRegionsMatch) return { kind: "resolve-regions", subscriptionId: decodeURIComponent(resolveRegionsMatch[1]) };
+  const completeRegionsMatch = method === "POST" ? path.match(/^\/api\/subscriptions\/([^/]+)\/complete-regions$/) : null;
+  if (completeRegionsMatch) return { kind: "complete-regions", subscriptionId: decodeURIComponent(completeRegionsMatch[1]) };
   const disableMatch = method === "POST" ? path.match(/^\/api\/subscriptions\/([^/]+)\/disable$/) : null;
   if (disableMatch) return { kind: "disable", subscriptionId: decodeURIComponent(disableMatch[1]) };
   const updateMatch = method === "PATCH" ? path.match(/^\/api\/subscriptions\/([^/]+)$/) : null;
@@ -104,6 +134,87 @@ function readCreateSubscriptionInput(value: unknown): { id: string; gameId: stri
     throw new SubscriptionRequestError("地区商品不能重复选择。");
   }
   return { id, gameId, regionalProductIds };
+}
+
+/**
+ * 补全请求不接受游戏 ID、现有商品 ID 或自定义地区范围；这些身份与范围均由服务从 D1/设置读取。
+ * 新候选只做严格 JSON 和受控枚举收窄，服务仍会重新解析每个任天堂官方链接后才可能进入原子写入。
+ */
+function readCompletionRegionsInput(value: unknown): CompletionRegionsInput {
+  if (!isRecord(value) || !Array.isArray(value.regions) || !Array.isArray(value.skippedRegionCodes)) {
+    throw new SubscriptionRequestError("补全地区设置无效。");
+  }
+  if ("enabledRegions" in value) throw new SubscriptionRequestError("跨区范围由已保存设置决定。");
+  const regions = value.regions.map((region) => readConfirmedRegionalProduct(region));
+  const skippedRegionCodes = value.skippedRegionCodes.map((regionCode) => readRegionCode(regionCode));
+  if (new Set(regions.map((region) => region.regionCode)).size !== regions.length || new Set(skippedRegionCodes).size !== skippedRegionCodes.length) {
+    throw new SubscriptionRequestError("补全地区不能重复。");
+  }
+  return { regions, skippedRegionCodes };
+}
+
+/** 区域候选的公开字段会影响官方页面复核与身份比较，因此路由拒绝缺失、负数和非 HTTPS 的浏览器载荷。 */
+function readConfirmedRegionalProduct(value: unknown): ConfirmedRegionalProduct {
+  if (!isRecord(value)) throw new SubscriptionRequestError("地区商品信息无效。");
+  if (typeof value.matchSource !== "string" || !regionalProductMatchSources.includes(value.matchSource as ConfirmedRegionalProduct["matchSource"])) {
+    throw new SubscriptionRequestError("地区商品匹配来源无效。");
+  }
+  const currentPriceMinor = readNullableMinorPrice(value.currentPriceMinor, "当前价格无效。");
+  const regularPriceMinor = readNullableMinorPrice(value.regularPriceMinor, "原价无效。");
+  if (currentPriceMinor !== null && regularPriceMinor !== null && regularPriceMinor < currentPriceMinor) {
+    throw new SubscriptionRequestError("原价不能低于当前价格。");
+  }
+  return {
+    regionCode: readRegionCode(value.regionCode),
+    productUrl: readHttpsUrl(value.productUrl),
+    canonicalTitle: readNonEmptyString(value.canonicalTitle, "商品标题无效。"),
+    publisher: value.publisher === null ? null : readNonEmptyString(value.publisher, "发行商信息无效。"),
+    productType: readProductType(value.productType),
+    currency: readCurrency(value.currency),
+    coverUrl: value.coverUrl === null ? null : readHttpsUrl(value.coverUrl),
+    currentPriceMinor,
+    regularPriceMinor,
+    matchSource: value.matchSource as ConfirmedRegionalProduct["matchSource"],
+  };
+}
+
+/** 首版地区枚举同时约束设置和官方适配器，拒绝未知代码避免将其转交给没有安全白名单的来源实现。 */
+function readRegionCode(value: unknown): RegionCode {
+  if (typeof value !== "string" || !initialRegionCodes.includes(value as RegionCode)) throw new SubscriptionRequestError("地区代码无效。");
+  return value as RegionCode;
+}
+
+/** 货币仅采用三位大写 ISO 字符串；实际地区货币仍由官方页面解析器在服务层二次验证。 */
+function readCurrency(value: unknown): string {
+  if (typeof value !== "string" || !/^[A-Z]{3}$/.test(value)) throw new SubscriptionRequestError("货币代码无效。");
+  return value;
+}
+
+/** 公开价格使用最小货币单位；null 表示本次候选没有可靠公开报价，不能被转换为免费商品。 */
+function readNullableMinorPrice(value: unknown, message: string): number | null {
+  if (value === null) return null;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new SubscriptionRequestError(message);
+  return value;
+}
+
+/** 仅允许 HTTPS URL 进入下一层官方白名单验证，拒绝脚本、本地和明文链接作为 Worker 外部请求目标。 */
+function readHttpsUrl(value: unknown): string {
+  if (typeof value !== "string" || value.trim().length === 0) throw new SubscriptionRequestError("商品链接无效。");
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:") throw new SubscriptionRequestError("商品链接必须使用 HTTPS。");
+    return url.toString();
+  } catch (error) {
+    if (error instanceof SubscriptionRequestError) throw error;
+    throw new SubscriptionRequestError("商品链接无效。");
+  }
+}
+
+/** 商品类型必须来自持久化和官方解析共同认可的稳定枚举，避免同名本体、DLC 与升级包被混写。 */
+function readProductType(value: unknown): ProductType {
+  const supported: readonly ProductType[] = ["game", "upgrade-pack", "dlc", "season-pass", "bundle", "other"];
+  if (typeof value !== "string" || !supported.includes(value as ProductType)) throw new SubscriptionRequestError("商品类型无效。");
+  return value as ProductType;
 }
 
 /** PATCH 只接受启用状态或完整目标价配置，禁止把地区商品编辑等尚未实现的字段静默忽略。 */

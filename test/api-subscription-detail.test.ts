@@ -2,6 +2,9 @@ import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import worker, { type Env } from "../src/worker";
+import { handleSubscriptionRoute } from "../src/worker/routes/subscription-routes";
+import type { RegionResolution } from "../src/worker/services/official-product-discovery-service";
+import type { CompletionRegionsInput, CompletionRegionsResult } from "../src/worker/services/subscription-region-completion-service";
 
 /**
  * 订阅详情读取接口测试覆盖三项管理员可见的业务事实：详情仅对已登录会话开放、
@@ -78,6 +81,31 @@ describe("subscription detail HTTP route", () => {
     expect(missing.status).toBe(404);
     await expect(missing.json()).resolves.toEqual({ code: "NOT_FOUND", error: "订阅不存在。" });
   });
+
+  it("routes region completion through the authenticated server service without accepting a browser region scope", async () => {
+    const cookie = await initializeAndLogin();
+    const calls: string[] = [];
+    const completion = {
+      resolveExisting: async (subscriptionId: string) => {
+        calls.push(`resolve:${subscriptionId}`);
+        return [{ candidateKey: "US:official", regionCode: "JP" as const, status: "needs-manual-link" as const }];
+      },
+      completeExisting: async (subscriptionId: string, input: { regions: unknown[]; skippedRegionCodes: string[] }) => {
+        calls.push(`complete:${subscriptionId}:${input.regions.length}:${input.skippedRegionCodes.join(",")}`);
+        return { subscriptionId, addedRegionCodes: [] };
+      },
+    };
+
+    // 解析请求故意附带旧版浏览器地区数组；新端点不读取该字段，范围必须由 Worker 内的保存设置决定。
+    const resolved = await callCompletionRoute("/api/subscriptions/subscription-overcooked-2/resolve-regions", { enabledRegions: ["HK"] }, cookie, completion);
+    expect(resolved.status).toBe(200);
+    await expect(resolved.json()).resolves.toEqual([{ candidateKey: "US:official", regionCode: "JP", status: "needs-manual-link" }]);
+
+    const completed = await callCompletionRoute("/api/subscriptions/subscription-overcooked-2/complete-regions", { regions: [], skippedRegionCodes: ["JP"] }, cookie, completion);
+    expect(completed.status).toBe(200);
+    await expect(completed.json()).resolves.toEqual({ subscriptionId: "subscription-overcooked-2", addedRegionCodes: [] });
+    expect(calls).toEqual(["resolve:subscription-overcooked-2", "complete:subscription-overcooked-2:0:JP"]);
+  });
 });
 
 async function seedSubscriptionDetail(): Promise<void> {
@@ -131,4 +159,28 @@ async function call(path: string, body?: unknown, cookie?: string, method = "POS
     { DB: env.DB, ASSETS: assets } as Env,
     {} as ExecutionContext,
   );
+}
+
+/**
+ * 直接调用订阅路由以替换真实任天堂网络依赖，同时保留真实会话守卫和 D1。该夹具验证路由仅传递受控补全载荷，
+ * 而跨区范围的决定权仍在注入的 Worker 服务中，浏览器字段不得影响它。
+ */
+async function callCompletionRoute(
+  path: string,
+  body: unknown,
+  cookie: string,
+  completion: {
+    resolveExisting(subscriptionId: string): Promise<RegionResolution[]>;
+    completeExisting(subscriptionId: string, input: CompletionRegionsInput, now: string): Promise<CompletionRegionsResult>;
+  },
+): Promise<Response> {
+  return (await handleSubscriptionRoute(
+    new Request(`https://example.test${path}`, {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "content-type": "application/json", cookie },
+    }),
+    env.DB,
+    completion,
+  ))!;
 }
