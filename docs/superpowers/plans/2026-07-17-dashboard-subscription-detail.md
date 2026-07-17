@@ -177,7 +177,7 @@ git commit -m "feat: enrich dashboard overview"
 - Consumes: `GET /api/dashboard`、`GET /api/subscriptions/:id`、`GET /api/history`、`POST /api/refresh`、`PATCH /api/subscriptions/:id`。
 - Produces: `createDashboardApiClient(request?)`、`DashboardApiError`、`readAppRoute(pathname)`、`dashboardPath()`、`subscriptionDetailPath(id)`、`formatLocalPrice()`、`formatCnyFen()` 和 `trendPointsFor()`。
 
-- [ ] **Step 1: 写入同源请求、路由解析、格式化和趋势筛选的失败测试**
+- [x] **Step 1: 写入同源请求、路由解析、格式化和趋势筛选的失败测试**
 
 ```ts
 it("uses same-origin credentials for dashboard detail and subscription writes", async () => {
@@ -196,13 +196,13 @@ it("keeps only CNY-comparable snapshots for an all-region trend", () => {
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/dashboard-api-client.test.ts test/app-navigation.test.ts test/dashboard-view-model.test.ts`
 
 Expected: FAIL，因为仪表盘客户端、路由和展示纯函数尚不存在。
 
-- [ ] **Step 3: 实现最小同源边界和可测试的纯函数**
+- [x] **Step 3: 实现最小同源边界和可测试的纯函数**
 
 ```ts
 export function readAppRoute(pathname: string): AppRoute {
@@ -221,7 +221,7 @@ export function trendPointsFor(snapshots: HistorySnapshot[], regionCode: string 
 
 客户端内部使用一个 `requestJson`，固定 `credentials: "same-origin"`，只读取 Worker 承诺的 JSON 字段。非 2xx 响应转换为 `DashboardApiError(message, status, nextAllowedAt?)`；不得保留 Cookie、请求体、HTML 或外部响应。`queueRefresh()` 只接受 `202` 的排队 DTO，并把 `429` 的冷却时间保留给 UI。格式化函数根据币种决定小数位，人民币分转换为元但不改变原始金额。
 
-- [ ] **Step 4: 运行客户端与现有商品客户端回归测试**
+- [x] **Step 4: 运行客户端与现有商品客户端回归测试**
 
 Run: `npm test -- --run test/dashboard-api-client.test.ts test/app-navigation.test.ts test/dashboard-view-model.test.ts test/api-client.test.ts`
 
