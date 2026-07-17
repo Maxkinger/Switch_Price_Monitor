@@ -257,7 +257,7 @@ git commit -m "feat: schedule live price collection"
 - Consumes: 已声明的 `PriceSource` 和管理员来源排序。
 - Produces: `createThirdPartyProviderRegistry(): { providersFor(sources): PriceProvider[]; unavailableSources: PriceSource[] }`，在本阶段永远返回空 `providersFor` 与明确不可用来源。
 
-- [ ] **Step 1: 写入不发起未获准第三方网络请求的失败测试**
+- [x] **Step 1: 写入不发起未获准第三方网络请求的失败测试**
 
 ```ts
 it("does not create a network provider for configured but unadmitted third-party sources", async () => {
@@ -267,23 +267,23 @@ it("does not create a network provider for configured but unadmitted third-party
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/third-party-provider-registry.test.ts`
 
 Expected: FAIL，因为第三方注册表不存在。
 
-- [ ] **Step 3: 实现禁用第三方边界与更新证据文档**
+- [x] **Step 3: 实现禁用第三方边界与更新证据文档**
 
 注册表只能返回空提供方数组，严禁 `fetch`、HTML 选择器或站点 URL。ADR-002 必须逐区记录官方 JSON-LD 或 JP API 的实测结果、测试日期、失败场景及“第三方未获授权，未接入”的状态；追踪表注明真实官方采集已实现、第三方实际回退仍待来源许可。
 
-- [ ] **Step 4: 运行全量质量门禁与本地五区受控验收**
+- [x] **Step 4: 运行全量质量门禁与本地五区受控验收**
 
 Run: `npm test -- --run && npx tsc --noEmit && npm run build && git diff --check`
 
 Expected: 全部通过；测试使用模拟任天堂与汇率响应，绝不写入真实 Telegram 凭据或生产 D1。
 
-- [ ] **Step 5: 标注计划完成并提交文档与来源边界**
+- [x] **Step 5: 标注计划完成并提交文档与来源边界**
 
 ```bash
 git add src/worker/providers/third-party-provider-registry.ts test/third-party-provider-registry.test.ts docs/decisions/ADR-002-price-provider-validation.md docs/requirements/traceability.md docs/quality/quality-and-acceptance.md docs/README.md docs/superpowers/plans/2026-07-17-five-region-live-collection.md
