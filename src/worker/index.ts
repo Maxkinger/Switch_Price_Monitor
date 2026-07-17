@@ -16,6 +16,7 @@ import { createOfficialNintendoSearch } from "./providers/official-nintendo-sear
 import { RetentionRepository } from "./repositories/retention-repository";
 import { NotificationEventRepository } from "./repositories/notification-event-repository";
 import { SettingsRepository } from "./repositories/settings-repository";
+import { SubscriptionConfirmationRepository } from "./repositories/subscription-confirmation-repository";
 import { DashboardService } from "./services/dashboard-service";
 import { OfficialPriceIdService } from "./services/official-price-id-service";
 import { OfficialProductDiscoveryService } from "./services/official-product-discovery-service";
@@ -23,6 +24,7 @@ import type { DailyReportSubscription } from "./services/report-service";
 import { RetentionService } from "./services/retention-service";
 import { runPendingNotificationDelivery, runScheduled, runScheduledMaintenance } from "./services/scheduler-service";
 import { defaultFallbackSources, SubscriptionPreviewService } from "./services/subscription-preview-service";
+import { SubscriptionConfirmationService } from "./services/subscription-confirmation-service";
 import { TelegramService } from "./services/telegram-service";
 
 export interface Env {
@@ -68,17 +70,21 @@ const worker: ExportedHandler<Env> = {
     const exportResponse = await handleExportRoute(request, env.DB);
     if (exportResponse) return exportResponse;
 
-    // 订阅前预览只读且必须先经管理员会话验证；每个请求构造无状态服务，避免在 Worker 实例间缓存候选 URL 或外部响应。
+    // 商品发现与最终确认必须在会话守卫前由路由统一保护；每个请求构造无状态服务，避免在 Worker 实例间缓存候选 URL 或外部响应。
+    const officialPages = createOfficialNintendoProductPageResolver();
+    const officialPriceIds = new OfficialPriceIdService(createNintendoPriceApiProvider());
     const productResponse = await handleProductRoute(
       request,
       env.DB,
-      new SubscriptionPreviewService(new OfficialPriceIdService(createNintendoPriceApiProvider()), defaultFallbackSources),
+      new SubscriptionPreviewService(officialPriceIds, defaultFallbackSources),
       // 商品发现只在管理员会话通过后由路由触发；服务端构造可确保官网搜索配置、商品页请求和用户浏览器完全隔离。
       new OfficialProductDiscoveryService(
         new SettingsRepository(env.DB),
         createOfficialNintendoSearch(),
-        createOfficialNintendoProductPageResolver(),
+        officialPages,
       ),
+      // 最终确认复用同一个官方页面解析器和日区价格 ID 二次验证器，确保发现时与写入前遵守同一地区安全规则。
+      new SubscriptionConfirmationService(new SubscriptionConfirmationRepository(env.DB), officialPages, officialPriceIds),
     );
     if (productResponse) return productResponse;
 

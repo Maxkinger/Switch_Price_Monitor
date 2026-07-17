@@ -37,7 +37,7 @@ regional_products 1 ── 1 regional_product_health
 subscriptions / regional_products ── * notification_events
 ```
 
-- 新建订阅以前端确认的规范化商品标识执行重复检测；重复时返回既有订阅而不新增。
+- 新建订阅以标题、可空发行商和商品类型构成的规范化商品身份执行重复检测；`games.normalized_name` 的非空值由唯一索引约束，避免并发确认创建重复游戏。最终确认先重新验证全部官方链接，再在一个 D1 批次写入游戏、地区商品、订阅及关联；任一验证或 SQL 失败均不保留半成品。
 - 取消订阅为软停用，不删除 `price_snapshots`。
 - 目标价事件仅在“未命中”转换为“已命中”时记录并发送；回升后恢复“未命中”。
 - 只有来源为官方的连续快照可构成即时降价判定。

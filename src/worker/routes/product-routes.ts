@@ -1,19 +1,28 @@
-import { initialRegionCodes, type OfficialProductCandidate, type RegionCode } from "../../shared/domain";
+import {
+  initialRegionCodes,
+  regionalProductMatchSources,
+  type ConfirmedRegionalProduct,
+  type ConfirmedSubscriptionInput,
+  type OfficialProductCandidate,
+  type RegionCode,
+} from "../../shared/domain";
 import type { ProductType } from "../providers/types";
 import type { OfficialPriceIdCandidate } from "../services/official-price-id-service";
 import { ProductDiscoveryError, type OfficialProductDiscoveryService } from "../services/official-product-discovery-service";
+import { SubscriptionConfirmationError, type SubscriptionConfirmationService } from "../services/subscription-confirmation-service";
 import { SubscriptionPreviewService } from "../services/subscription-preview-service";
 import { requireAdmin } from "./auth-guard";
 
 /**
- * 管理员在创建订阅前确认各区商品后调用的只读来源预览入口。该路由只校验公开候选信息并显示官方/第三方决策，
- * 刻意不写入游戏、地区商品或订阅记录；这样管理员取消或修改选择时不会留下会被采集器误用的半成品映射。
+ * 管理员商品发现、来源预览与最终确认的统一入口。搜索、链接解析、跨区匹配和来源预览保持只读；
+ * 只有最终确认端点会交给服务层执行一个已完整验证的 D1 原子批次，避免向导中途取消时留下半成品映射。
  */
 export async function handleProductRoute(
   request: Request,
   database: D1Database,
   preview: SubscriptionPreviewService,
   discovery?: Pick<OfficialProductDiscoveryService, "searchDefaultRegion" | "resolveOfficialLink" | "resolveRegions">,
+  confirmation?: Pick<SubscriptionConfirmationService, "confirm">,
 ): Promise<Response | null> {
   const path = new URL(request.url).pathname;
   // 精确白名单避免商品路由截获静态资源或未来端点；发现服务未注入时保留旧预览路由的可测试性。
@@ -21,7 +30,8 @@ export async function handleProductRoute(
   const isSearch = request.method === "POST" && path === "/api/products/search" && discovery !== undefined;
   const isResolveLink = request.method === "POST" && path === "/api/products/resolve-link" && discovery !== undefined;
   const isResolveRegions = request.method === "POST" && path === "/api/products/resolve-regions" && discovery !== undefined;
-  if (!isPreview && !isSearch && !isResolveLink && !isResolveRegions) return null;
+  const isConfirmSubscriptions = request.method === "POST" && path === "/api/products/confirm-subscriptions" && confirmation !== undefined;
+  if (!isPreview && !isSearch && !isResolveLink && !isResolveRegions && !isConfirmSubscriptions) return null;
 
   // 必须先验证管理员会话才解析请求体或访问官方接口，避免匿名调用借预览端点放大任天堂请求负载。
   if (!(await requireAdmin(request, database))) {
@@ -44,12 +54,19 @@ export async function handleProductRoute(
       const { candidates, enabledRegions } = readRegionResolutionRequest(await request.json<unknown>());
       return Response.json({ regions: await discovery.resolveRegions(candidates, enabledRegions) });
     }
+    if (isConfirmSubscriptions && confirmation) {
+      // 仅把运行时收窄后的完整候选交给确认服务；服务会再次请求每个官方链接，路由绝不直接拼写游戏或订阅 SQL。
+      const subscriptions = readSubscriptionConfirmationRequest(await request.json<unknown>());
+      const results = await confirmation.confirm(subscriptions, new Date().toISOString());
+      // 批量中含任一新建项才使用 201；全部为既有订阅时返回 200，前端可安全跳转既有编辑页而非误报失败。
+      return Response.json({ subscriptions: results }, { status: results.some((result) => result.status === "created") ? 201 : 200 });
+    }
     const candidates = readConfirmationCandidates(await request.json<unknown>());
     // 服务只产生瞬时 DTO；即使官方验证失败，异常也不会把用户 URL、外部响应或秘密写入 D1。
     return Response.json({ regions: await preview.create(candidates) });
   } catch (error) {
     // 表单问题可以安全反馈给管理员；其他错误统一隐藏网络、解析和数据库内部细节。
-    const isValidationError = error instanceof ProductPreviewRequestError || error instanceof ProductDiscoveryError;
+    const isValidationError = error instanceof ProductPreviewRequestError || error instanceof ProductDiscoveryError || error instanceof SubscriptionConfirmationError;
     return Response.json(
       {
         code: isValidationError ? "VALIDATION_ERROR" : "INTERNAL_ERROR",
@@ -91,6 +108,30 @@ function readRegionResolutionRequest(value: unknown): { candidates: OfficialProd
   return { candidates, enabledRegions: readRegionCodes(value.enabledRegions) };
 }
 
+/**
+ * 最终确认请求必须包含至少一个游戏；每项由默认区候选和非空地区映射构成。这里仅做 JSON 形态与受控枚举校验，
+ * 真实官方链接、身份与价格 ID 验证仍由服务层重做，防止管理员旧页面或篡改请求绕过外部来源安全边界。
+ */
+function readSubscriptionConfirmationRequest(value: unknown): ConfirmedSubscriptionInput[] {
+  if (!isRecord(value) || !Array.isArray(value.subscriptions) || value.subscriptions.length === 0) {
+    throw new ProductPreviewRequestError("请至少确认一个商品订阅。");
+  }
+  return value.subscriptions.map((subscription) => readConfirmedSubscription(subscription));
+}
+
+/** 每个游戏至少保留一个地区，且同一区不能重复；区域身份最终由确认服务在官方页面重读后再次比较。 */
+function readConfirmedSubscription(value: unknown): ConfirmedSubscriptionInput {
+  if (!isRecord(value) || !Array.isArray(value.regions) || value.regions.length === 0) {
+    throw new ProductPreviewRequestError("每个游戏至少确认一个地区商品。");
+  }
+  const selected = readOfficialProductCandidate(value.selected);
+  const regions = value.regions.map((region) => readConfirmedRegionalProduct(region));
+  if (new Set(regions.map((region) => region.regionCode)).size !== regions.length) {
+    throw new ProductPreviewRequestError("每个游戏在每区只能确认一个商品。");
+  }
+  return { selected, regions };
+}
+
 /** 路由输入错误使用独立类型，避免把管理员表单问题误记为来源适配器或数据库故障。 */
 class ProductPreviewRequestError extends Error {}
 
@@ -128,6 +169,16 @@ function readOfficialProductCandidate(value: unknown): OfficialProductCandidate 
     throw new ProductPreviewRequestError("原价不能低于当前价格。");
   }
   return { ...identity, coverUrl, currentPriceMinor, regularPriceMinor };
+}
+
+/** 匹配来源为审计字段，必须使用稳定枚举；不能让浏览器自由填写后被误当成系统自动匹配。 */
+function readConfirmedRegionalProduct(value: unknown): ConfirmedRegionalProduct {
+  if (!isRecord(value)) throw new ProductPreviewRequestError("地区商品信息无效。");
+  const candidate = readOfficialProductCandidate(value);
+  if (typeof value.matchSource !== "string" || !regionalProductMatchSources.includes(value.matchSource as ConfirmedRegionalProduct["matchSource"])) {
+    throw new ProductPreviewRequestError("地区商品匹配来源无效。");
+  }
+  return { ...candidate, matchSource: value.matchSource as ConfirmedRegionalProduct["matchSource"] };
 }
 
 /**

@@ -37,6 +37,36 @@ export interface OfficialProductCandidate {
   regularPriceMinor: number | null;
 }
 
+/** 最终确认时可持久化的地区映射来源；使用稳定枚举可让审计、前端与后续修正流程区分系统匹配和管理员决策。 */
+export const regionalProductMatchSources = ["automatic", "manual_selection", "manual_link"] as const;
+
+/** 地区商品只能由官方自动匹配、管理员从官方候选选择或管理员粘贴官方链接三种方式确认。 */
+export type RegionalProductMatchSource = (typeof regionalProductMatchSources)[number];
+
+/**
+ * 最终确认的一个地区商品。候选的身份、封面与价格仍是瞬时公开数据，`matchSource` 只记录映射形成方式，
+ * 不能携带浏览器自行填写的官方价格 ID；价格 ID 必须由 Worker 在写入前重新验证。
+ */
+export interface ConfirmedRegionalProduct extends OfficialProductCandidate {
+  matchSource: RegionalProductMatchSource;
+}
+
+/**
+ * 一次批量提交中的一个逻辑游戏及其全部已选地区。`selected` 是默认区的起点，`regions` 必须包含各自已验证的映射，
+ * Worker 会重新读取每个官方链接而不是信任浏览器的标题、发行商、币种或价格。
+ */
+export interface ConfirmedSubscriptionInput {
+  selected: OfficialProductCandidate;
+  regions: ConfirmedRegionalProduct[];
+}
+
+/** 批量确认逐项返回的新建或既有订阅结果，既有订阅绝不隐式替换管理员此前选择的地区范围。 */
+export interface SubscriptionConfirmationResult {
+  gameId: string;
+  subscriptionId: string;
+  status: "created" | "existing";
+}
+
 /**
  * 官方搜索不可用时必须明确指导管理员改用本区任天堂官方链接，不能返回空候选来伪装“没有搜索结果”。
  * 固定文案也让前端与测试无需根据不稳定的外部错误信息判断是否显示链接输入框。

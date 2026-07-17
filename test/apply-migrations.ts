@@ -5,11 +5,12 @@ import coreSchema from "../migrations/0001_core.sql?raw";
 import priceTrackingSchema from "../migrations/0002_price_tracking.sql?raw";
 import authSchema from "../migrations/0003_auth.sql?raw";
 import manualRefreshSchema from "../migrations/0004_manual_refresh.sql?raw";
+import subscriptionConfirmationSchema from "../migrations/0005_subscription_confirmation.sql?raw";
 
 beforeAll(async () => {
   // Cloudflare 测试 D1 对整段多语句 exec 的兼容性有限；逐条 prepare/run 更接近生产迁移的原子语句执行方式。
-  // 测试必须按生产编号顺序执行所有迁移；手动刷新冷却依赖新表，遗漏它会把路由问题误报为 D1 结构问题。
-  for (const statement of [...splitStatements(coreSchema), ...splitStatements(priceTrackingSchema), ...splitStatements(authSchema), ...splitStatements(manualRefreshSchema)]) {
+  // 测试必须按生产编号顺序执行所有迁移；最终确认依赖规范化身份唯一索引，遗漏它会把并发去重问题误报为服务逻辑问题。
+  for (const statement of [...splitStatements(coreSchema), ...splitStatements(priceTrackingSchema), ...splitStatements(authSchema), ...splitStatements(manualRefreshSchema), ...splitStatements(subscriptionConfirmationSchema)]) {
     await env.DB.prepare(statement).run();
   }
 });

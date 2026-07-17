@@ -82,6 +82,30 @@ describe("product discovery HTTP routes", () => {
     }] });
     expect(resolveRegions).toHaveBeenCalledWith([candidate()], ["US", "HK"]);
   });
+
+  it("confirms a validated batch only for an administrator and returns each created subscription", async () => {
+    // 最终确认桩件不写 D1；该用例专门锁定路由的认证、受控请求装配和响应边界，真实原子写入由服务层测试覆盖。
+    const confirm = vi.fn(async () => [{ gameId: "game-overcooked", subscriptionId: "subscription-overcooked", status: "created" as const }]);
+    const discovery = {
+      searchDefaultRegion: async () => ({ status: "available" as const, candidates: [candidate()] }),
+      resolveOfficialLink: async () => candidate(),
+      resolveRegions: async () => [],
+    };
+    const cookie = await initializeAndLogin();
+    const input = confirmedSubscription();
+
+    const response = await handleProductRoute(
+      request("/api/products/confirm-subscriptions", { subscriptions: [input] }, cookie),
+      env.DB,
+      fixedPreview(),
+      discovery,
+      { confirm },
+    );
+
+    expect(response?.status).toBe(201);
+    await expect(response?.json()).resolves.toEqual({ subscriptions: [{ gameId: "game-overcooked", subscriptionId: "subscription-overcooked", status: "created" }] });
+    expect(confirm).toHaveBeenCalledWith([input], expect.any(String));
+  });
 });
 
 /** 发现测试不需要价格 ID 网络验证，固定预览让路由的旧端点依然可被隔离地构造。 */
@@ -97,6 +121,11 @@ function candidate() {
 /** 香港候选必须携带本区官方 URL 与港币；测试刻意不复用美区链接，防止跨区商品错误通过路由边界。 */
 function hongKongCandidate() {
   return { regionCode: "HK" as const, productUrl: "https://www.nintendo.com/hk/soft/overcooked-2/", canonicalTitle: "Overcooked! 2", publisher: "Team17", productType: "game" as const, currency: "HKD", coverUrl: "https://assets.nintendo.com/overcooked-2.jpg", currentPriceMinor: 7800, regularPriceMinor: null };
+}
+
+/** 最终确认必须保留默认区的官方候选及其匹配来源；即使只有一个地区也不允许跳过该映射。 */
+function confirmedSubscription() {
+  return { selected: candidate(), regions: [{ ...candidate(), matchSource: "manual_selection" as const }] };
 }
 
 /** 只构造本系统 JSON API 请求；Cookie 来自真实登录端点，避免测试伪造管理员会话。 */

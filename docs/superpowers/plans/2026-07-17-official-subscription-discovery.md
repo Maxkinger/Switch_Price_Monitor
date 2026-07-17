@@ -38,7 +38,7 @@
 - `src/app/api-client.ts`：集中封装带 Cookie 的本系统商品 API，禁止组件直接访问任天堂或第三方站点。
 - `src/app/App.tsx`、`src/app/styles.css`：实现管理员“添加订阅”向导和已确认的三列候选卡草图。
 - `test/official-nintendo-search.test.ts`、`test/official-nintendo-product-page.test.ts`、`test/official-product-discovery-service.test.ts`：离线验证官方检索、官方链接解析与跨区降级。
-- `test/subscription-confirmation-service.test.ts`、`test/api-product-discovery.test.ts`、`test/api-subscription-confirmation.test.ts`：验证受保护 API、全批失败不写入、批量新建与既有订阅返回。
+- `test/subscription-confirmation-service.test.ts`、`test/api-product-discovery.test.ts`：验证受保护 API、全批失败不写入、批量新建与既有订阅返回。
 - `test/subscription-wizard.test.ts`：验证前端多选、地区隔离、候选卡价格显示模型与请求装配。
 - `docs/architecture/api-design.md`、`docs/architecture/data-model.md`、`docs/requirements/traceability.md`、`docs/quality/quality-and-acceptance.md`：记录实现后的接口、原子写入边界、验收与需求状态。
 
@@ -240,7 +240,7 @@ git commit -m "feat: add official product discovery routes"
 - Modify: `src/worker/routes/product-routes.ts`
 - Modify: `src/worker/index.ts`
 - Test: `test/subscription-confirmation-service.test.ts`
-- Test: `test/api-subscription-confirmation.test.ts`
+- Test: `test/api-product-discovery.test.ts`
 
 **Interfaces:**
 - Produces: `ConfirmedSubscriptionInput = { selected: OfficialProductCandidate; regions: ConfirmedRegionalProduct[] }`，其中 `ConfirmedRegionalProduct` 额外含 `matchSource: "automatic" | "manual_selection" | "manual_link"`。
@@ -248,7 +248,7 @@ git commit -m "feat: add official product discovery routes"
 - Produces: `SubscriptionConfirmationService.confirm(inputs: ConfirmedSubscriptionInput[], now: string): Promise<SubscriptionConfirmationResult[]>`。
 - Produces: `POST /api/products/confirm-subscriptions`，请求 `{ subscriptions: ConfirmedSubscriptionInput[] }`，响应 `{ subscriptions: SubscriptionConfirmationResult[] }`。
 
-- [ ] **Step 1: 先写失败测试，锁定全批失败、批量新建与既有订阅不变**
+- [x] **Step 1: 先写失败测试，锁定全批失败、批量新建与既有订阅不变**
 
 ```ts
 it("writes no game, regional product, or subscription when one item has a duplicate regional mapping", async () => {
@@ -273,13 +273,13 @@ it("returns an existing subscription and never replaces its regions", async () =
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
-Run: `npm test -- --run test/subscription-confirmation-service.test.ts test/api-subscription-confirmation.test.ts`
+Run: `npm test -- --run test/subscription-confirmation-service.test.ts test/api-product-discovery.test.ts`
 
 Expected: FAIL，因为确认服务、原子仓储与最终确认路由尚不存在。
 
-- [ ] **Step 3: 实现重新验证与 D1 批量写入**
+- [x] **Step 3: 实现重新验证与 D1 批量写入**
 
 ```ts
 public async confirm(inputs: ConfirmedSubscriptionInput[], now: string): Promise<SubscriptionConfirmationResult[]> {
@@ -309,16 +309,16 @@ public async confirmAtomically(inputs: ValidatedSubscriptionInput[], now: string
 
 路由只接受非空 `subscriptions` 数组、每项至少一个地区、受控 `matchSource`、HTTPS 官方链接与受控商品类型；验证错误返回 422。路由构造服务时复用任务 2 的页面解析器和既有 `OfficialPriceIdService`，确保日区 ID 在写入前二次验证；其他区仅保留 `null`，由既有来源预览规则决定是否监控。
 
-- [ ] **Step 4: 运行确认、订阅和来源预览回归测试**
+- [x] **Step 4: 运行确认、订阅和来源预览回归测试**
 
-Run: `npm test -- --run test/subscription-confirmation-service.test.ts test/api-subscription-confirmation.test.ts test/api-subscriptions.test.ts test/api-product-preview.test.ts`
+Run: `npm test -- --run test/subscription-confirmation-service.test.ts test/api-product-discovery.test.ts test/api-subscriptions.test.ts test/api-product-preview.test.ts`
 
 Expected: PASS，整批无效时四张业务表计数保持不变；既有订阅的地区关联不被修改。
 
-- [ ] **Step 5: 提交原子批量确认**
+- [x] **Step 5: 提交原子批量确认**
 
 ```bash
-git add src/worker/repositories/subscription-confirmation-repository.ts src/worker/services/subscription-confirmation-service.ts src/worker/routes/product-routes.ts src/worker/index.ts test/subscription-confirmation-service.test.ts test/api-subscription-confirmation.test.ts
+git add src/shared/domain.ts src/worker/repositories/subscription-confirmation-repository.ts src/worker/services/subscription-confirmation-service.ts src/worker/routes/product-routes.ts src/worker/index.ts migrations/0005_subscription_confirmation.sql test/subscription-confirmation-service.test.ts test/api-product-discovery.test.ts test/apply-migrations.ts
 git commit -m "feat: confirm subscriptions atomically"
 ```
 
