@@ -6,11 +6,12 @@ import priceTrackingSchema from "../migrations/0002_price_tracking.sql?raw";
 import authSchema from "../migrations/0003_auth.sql?raw";
 import manualRefreshSchema from "../migrations/0004_manual_refresh.sql?raw";
 import subscriptionConfirmationSchema from "../migrations/0005_subscription_confirmation.sql?raw";
+import immediateManualRefreshSchema from "../migrations/0006_immediate_manual_refresh.sql?raw";
 
 beforeAll(async () => {
   // Cloudflare 测试 D1 对整段多语句 exec 的兼容性有限；逐条 prepare/run 更接近生产迁移的原子语句执行方式。
-  // 测试必须按生产编号顺序执行所有迁移；最终确认依赖规范化身份唯一索引，遗漏它会把并发去重问题误报为服务逻辑问题。
-  for (const statement of [...splitStatements(coreSchema), ...splitStatements(priceTrackingSchema), ...splitStatements(authSchema), ...splitStatements(manualRefreshSchema), ...splitStatements(subscriptionConfirmationSchema)]) {
+  // 测试必须按生产编号顺序执行所有迁移；0006 会重建旧刷新队列表以取消待执行记录，遗漏它会让测试错误地依赖 Cron 队列状态。
+  for (const statement of [...splitStatements(coreSchema), ...splitStatements(priceTrackingSchema), ...splitStatements(authSchema), ...splitStatements(manualRefreshSchema), ...splitStatements(subscriptionConfirmationSchema), ...splitStatements(immediateManualRefreshSchema)]) {
     await env.DB.prepare(statement).run();
   }
 });

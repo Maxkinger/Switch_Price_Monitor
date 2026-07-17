@@ -19,7 +19,6 @@ import { createOfficialNintendoSearch } from "./providers/official-nintendo-sear
 import { RetentionRepository } from "./repositories/retention-repository";
 import { CollectionRepository } from "./repositories/collection-repository";
 import { ExchangeRateRepository } from "./repositories/exchange-rate-repository";
-import { ManualRefreshRepository } from "./repositories/manual-refresh-repository";
 import { PriceRepository } from "./repositories/price-repository";
 import { NotificationEventRepository } from "./repositories/notification-event-repository";
 import { SettingsRepository } from "./repositories/settings-repository";
@@ -69,7 +68,7 @@ const worker: ExportedHandler<Env> = {
     const dashboardResponse = await handleDashboardRoute(request, env.DB);
     if (dashboardResponse) return dashboardResponse;
 
-    // 手动刷新只接受管理员写入队列；不能让静态层或匿名访问绕过十五分钟冷却并放大外部来源负载。
+    // 手动刷新只允许管理员在请求内立即执行一次采集；冷却状态限制频率，防止匿名访问或重复点击放大外部来源负载。
     const manualRefreshResponse = await handleManualRefreshRoute(request, env.DB);
     if (manualRefreshResponse) return manualRefreshResponse;
 
@@ -109,7 +108,8 @@ const worker: ExportedHandler<Env> = {
 
   async scheduled(event, env, ctx) {
     const scheduledAt = new Date(event.scheduledTime).toISOString();
-    // 六小时任务将历史维护、原子手动刷新认领和一次真实采集放入同一 Promise，避免两条路径对同一地区重复请求来源。
+    // 六小时任务只执行历史维护与一次真实采集；手动刷新已由 HTTP 请求同步完成，
+    // 因此不能读取其冷却记录，避免把状态记录误当成待执行队列并破坏固定采集频率。
     if (event.cron === "0 */6 * * *") {
       const prices = new PriceRepository(env.DB);
       const collection = new LiveCollectionRunner({
@@ -124,7 +124,6 @@ const worker: ExportedHandler<Env> = {
       ctx.waitUntil(runSixHourCollection(scheduledAt, {
         settings: new SettingsRepository(env.DB),
         retention: new RetentionService(new RetentionRepository(env.DB)),
-        manualRefresh: new ManualRefreshRepository(env.DB),
         collection,
       }));
       return;

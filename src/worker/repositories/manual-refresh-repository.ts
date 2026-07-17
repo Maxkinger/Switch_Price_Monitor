@@ -13,14 +13,9 @@ export interface ManualRefreshRequestResult {
   nextAllowedAt: string;
 }
 
-/** 被调度器认领的刷新请求只携带服务器写入的时间；不携带管理员会话或浏览器数据，供后续采集任务安全复用。 */
-export interface ManualRefreshClaim {
-  requestedAt: string;
-}
-
 /**
- * 手动刷新队列的 D1 边界。表只保留一条最新请求，后续定时执行器消费 queued 状态，
- * 从而避免每个浏览器点击都直接并发访问任天堂和第三方价格站。
+ * 手动刷新冷却的 D1 边界。表只保留一条最近执行时间，服务在获得名额后立即采集，
+ * 因而不能再保存 queued/running 任务状态，以免管理员误以为点击仍需等待 Cron。
  */
 export class ManualRefreshRepository {
   public constructor(private readonly database: D1Database) {}
@@ -34,9 +29,9 @@ export class ManualRefreshRepository {
     const cutoff = new Date(nowMillis - manualRefreshCooldownMs).toISOString();
     const result = await this.database
       .prepare(
-        `INSERT INTO manual_refresh_requests (id, requested_at, status)
-         VALUES (1, ?, 'queued')
-         ON CONFLICT(id) DO UPDATE SET requested_at = excluded.requested_at, status = 'queued'
+        `INSERT INTO manual_refresh_requests (id, requested_at)
+         VALUES (1, ?)
+         ON CONFLICT(id) DO UPDATE SET requested_at = excluded.requested_at
          WHERE manual_refresh_requests.requested_at <= ?`,
       )
       .bind(now, cutoff)
@@ -50,7 +45,7 @@ export class ManualRefreshRepository {
     const existing = await this.database
       .prepare("SELECT requested_at AS requestedAt FROM manual_refresh_requests WHERE id = 1")
       .first<ManualRefreshRequestRow>();
-    if (!existing) throw new Error("手动刷新队列状态异常。");
+    if (!existing) throw new Error("手动刷新冷却状态异常。");
     return {
       accepted: false,
       requestedAt: existing.requestedAt,
@@ -58,19 +53,4 @@ export class ManualRefreshRepository {
     };
   }
 
-  /**
-   * 原子认领一条待执行请求。条件 UPDATE 与 RETURNING 必须在同一条 SQLite 语句中完成，
-   * 否则重叠的 Cron 可能都先读到 queued 并对同一批商品发起两次价格采集；已经 running 或不存在时返回 null。
-   */
-  public async claimQueued(): Promise<ManualRefreshClaim | null> {
-    const result = await this.database
-      .prepare(
-        `UPDATE manual_refresh_requests
-         SET status = 'running'
-         WHERE id = 1 AND status = 'queued'
-         RETURNING requested_at AS requestedAt`,
-      )
-      .all<ManualRefreshClaim>();
-    return result.results[0] ?? null;
-  }
 }

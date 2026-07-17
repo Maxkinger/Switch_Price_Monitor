@@ -42,13 +42,16 @@
 - Create: `migrations/0006_immediate_manual_refresh.sql`
 - Modify: `test/apply-migrations.ts`
 - Modify: `src/worker/repositories/manual-refresh-repository.ts`
+- Modify: `src/worker/services/scheduler-service.ts`
+- Modify: `src/worker/index.ts`
 - Modify: `test/manual-refresh-repository.test.ts`
+- Modify: `test/six-hour-collection.test.ts`
 
 **Interfaces:**
 - Produces `ManualRefreshRepository.request(now): Promise<ManualRefreshRequestResult>`，其中 `accepted`、`requestedAt`、`nextAllowedAt` 均由 D1/服务端时间决定。
-- Removes `ManualRefreshRepository.claimQueued()` 与所有 `queued/running` 类型和列假设。
+- Removes `ManualRefreshRepository.claimQueued()` 与所有 `queued/running` 类型和列假设；六小时 Cron 同一任务移除对该 API 的依赖，确保迁移后类型检查和定时采集均可运行。
 
-- [ ] **Step 1: 写入失败测试**
+- [x] **Step 1: 写入失败测试**
 
 将 `test/manual-refresh-repository.test.ts` 改成冷却行为测试：
 
@@ -71,13 +74,13 @@ it("accepts one timestamp and rejects a concurrent request until the fifteen-min
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/manual-refresh-repository.test.ts`
 
 Expected: FAIL，因为旧仓储仍写入 `status`、暴露 `claimQueued`，而 `0006` 尚未创建仅含时间戳的表结构。
 
-- [ ] **Step 3: 实现迁移和最小仓储**
+- [x] **Step 3: 实现迁移和最小仓储**
 
 创建迁移：
 
@@ -103,20 +106,31 @@ const result = await this.database.prepare(
 ).bind(now, cutoff).run();
 ```
 
-删除 `claimQueued()`、状态行模型及描述队列认领的注释；保留 `request()` 返回真实 `nextAllowedAt` 的安全行为。
+删除 `claimQueued()`、状态行模型及描述队列认领的注释；保留 `request()` 返回真实 `nextAllowedAt` 的安全行为。同步在 `scheduler-service.ts` 移除 `ManualRefreshClaimReader`、`manualRefresh` 依赖和 `manualRefreshConsumed` 字段；在 `index.ts` 的六小时依赖对象中移除 `manualRefresh: new ManualRefreshRepository(env.DB)`。
 
-- [ ] **Step 4: 运行仓储与迁移回归**
+将 `test/six-hour-collection.test.ts` 改为不传入手动刷新端口的独立 Cron 测试：
 
-Run: `npm test -- --run test/manual-refresh-repository.test.ts test/api-refresh.test.ts && npx tsc --noEmit`
+```ts
+await expect(runSixHourCollection("2026-07-17T00:00:00.000Z", {
+  settings: { get: async () => ({ priceHistoryRetention: "forever" as const }) },
+  retention,
+  collection,
+})).resolves.toEqual({ kind: "collection-completed" });
+expect(collection.run).toHaveBeenCalledExactlyOnceWith("2026-07-17T00:00:00.000Z");
+```
+
+- [x] **Step 4: 运行仓储与迁移回归**
+
+Run: `npm test -- --run test/manual-refresh-repository.test.ts test/api-refresh.test.ts test/six-hour-collection.test.ts && npx tsc --noEmit`
 
 Expected: PASS；测试 D1 含 `0006` 后的新表结构，冷却原子且不含状态队列 API。
 
 - [ ] **Step 5: 等待用户确认后提交并推送 Task 1**
 
-拟提交范围：`0006` 迁移、迁移测试装配、刷新仓储和仓储测试。确认后执行：
+拟提交范围：`0006` 迁移、迁移测试装配、刷新仓储、六小时 Cron 解耦及相关测试。确认后执行：
 
 ```bash
-git add migrations/0006_immediate_manual_refresh.sql test/apply-migrations.ts src/worker/repositories/manual-refresh-repository.ts test/manual-refresh-repository.test.ts
+git add migrations/0006_immediate_manual_refresh.sql test/apply-migrations.ts src/worker/repositories/manual-refresh-repository.ts src/worker/services/scheduler-service.ts src/worker/index.ts test/manual-refresh-repository.test.ts test/six-hour-collection.test.ts
 git commit -m "feat: simplify manual refresh cooldown"
 git push origin main
 ```
@@ -126,16 +140,13 @@ git push origin main
 **Files:**
 - Modify: `src/worker/services/manual-refresh-service.ts`
 - Modify: `src/worker/routes/manual-refresh-routes.ts`
-- Modify: `src/worker/services/scheduler-service.ts`
 - Modify: `src/worker/index.ts`
 - Modify: `test/api-refresh.test.ts`
-- Modify: `test/six-hour-collection.test.ts`
 
 **Interfaces:**
 - Produces `ImmediateRefreshRunner`：`run(now: string): Promise<{ attempted: number; collected: number; stale: number }>`。
 - Produces `ManualRefreshService.refresh(now): Promise<{ executedAt: string; attempted: number; collected: number; stale: number }>`。
 - `handleManualRefreshRoute(request, database, runner)` consumes the runner and returns `200` after a completed collection or existing safe error response.
-- `runSixHourCollection` consumes `{ settings, retention, collection }` and returns `{ kind: "collection-completed" }` without manual-refresh state.
 
 - [ ] **Step 1: 写入失败测试**
 
@@ -160,25 +171,11 @@ it("runs one collection immediately after accepting the administrator cooldown s
 });
 ```
 
-将 `test/six-hour-collection.test.ts` 改为：
-
-```ts
-it("runs retention and one collection without reading manual refresh state", async () => {
-  const retention = { cleanup: vi.fn().mockResolvedValue({ priceSnapshotsDeleted: 0, fetchLogsDeleted: 0 }) };
-  const collection = { run: vi.fn().mockResolvedValue({ attempted: 2, collected: 2, stale: 0 }) };
-
-  await expect(runSixHourCollection("2026-07-17T00:00:00.000Z", {
-    settings: { get: async () => ({ priceHistoryRetention: "forever" as const }) }, retention, collection,
-  })).resolves.toEqual({ kind: "collection-completed" });
-  expect(collection.run).toHaveBeenCalledExactlyOnceWith("2026-07-17T00:00:00.000Z");
-});
-```
-
 - [ ] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/api-refresh.test.ts test/six-hour-collection.test.ts`
 
-Expected: FAIL，因为路由仍返回 `202 queued`，而 Cron 仍依赖 `claimQueued()` 与 `manualRefreshConsumed`。
+Expected: FAIL，因为路由仍返回 `202 queued`，尚未接收并等待即时采集运行器。
 
 - [ ] **Step 3: 实现即时服务和受控路由**
 
@@ -206,20 +203,18 @@ return Response.json({ status: "completed", ...result });
 
 在 `index.ts` 提取 `createLiveCollectionRunner(env)`，其中保留当前的 `CollectionRepository`、汇率服务、官方提供方注册表、`CollectionService`、健康服务和通知事件接线。`fetch` 路由与六小时 `scheduled` 都调用此工厂，保证路径复用而不共享浏览器状态。
 
-在 `scheduler-service.ts` 移除 `ManualRefreshClaimReader`、`manualRefresh` 依赖和 `manualRefreshConsumed` 结果字段；六小时任务固定执行保留清理后的一次 `collection.run(now)`。
-
 - [ ] **Step 4: 运行后端回归**
 
-Run: `npm test -- --run test/api-refresh.test.ts test/six-hour-collection.test.ts test/worker-maintenance.test.ts test/live-collection-runner.test.ts && npx tsc --noEmit`
+Run: `npm test -- --run test/api-refresh.test.ts test/worker-maintenance.test.ts test/live-collection-runner.test.ts && npx tsc --noEmit`
 
-Expected: PASS；立即请求只执行一次、Cron 不读取手动状态、保留清理和采集均继续执行。
+Expected: PASS；立即请求只执行一次，复用既有采集规则且不会在路由层展开来源、汇率或通知细节。
 
 - [ ] **Step 5: 等待用户确认后提交并推送 Task 2**
 
-拟提交范围：立即刷新服务/路由、Worker 运行器装配、六小时调度器及相关后端测试。确认后执行：
+拟提交范围：立即刷新服务/路由、Worker 运行器装配及相关后端测试。确认后执行：
 
 ```bash
-git add src/worker/services/manual-refresh-service.ts src/worker/routes/manual-refresh-routes.ts src/worker/services/scheduler-service.ts src/worker/index.ts test/api-refresh.test.ts test/six-hour-collection.test.ts
+git add src/worker/services/manual-refresh-service.ts src/worker/routes/manual-refresh-routes.ts src/worker/index.ts test/api-refresh.test.ts
 git commit -m "feat: run manual refresh immediately"
 git push origin main
 ```
