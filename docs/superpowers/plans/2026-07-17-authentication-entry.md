@@ -1,4 +1,6 @@
-# 初始化与登录入口 Implementation Plan
+# 初始化与登录入口 Implementation Plan（已完成：2026-07-17）
+
+> **执行结果：**已完成测试先行实现；全量 Vitest 为 38 组、98 项通过，`tsc --noEmit` 与生产构建通过。已在本机临时 D1 验证首次设置、恢复码确认自动登录、恢复密码回到登录、重设后重新登录、撤销会话后的 401 安全回退，以及桌面与 390px 移动端表单；临时认证材料未写入仓库。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -50,7 +52,7 @@
 - Produces `AuthFlowState`：`screen`、`enabledRegions`、`defaultSearchRegion`、`recoveryCode`、`setupPassword`、`notice`。
 - Produces `initializeAuthFlow()`、`toggleEnabledRegion()`、`setDefaultSearchRegion()`、`showRecoveryCode()`、`completeRecoveryCode()`、`completeAuthentication()`、`requireLogin()`。
 
-- [ ] **Step 1: 先写认证客户端与状态机的失败测试**
+- [x] **Step 1: 先写认证客户端与状态机的失败测试**
 
 ```ts
 it("sends initialization only to the same-origin API with administrator cookie policy", async () => {
@@ -76,12 +78,12 @@ it("drops recovery code, setup password and prior UI notice when a protected req
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/auth-api-client.test.ts test/auth-flow.test.ts`  
 Expected: FAIL，因为认证客户端与认证状态机尚不存在。
 
-- [ ] **Step 3: 实现同源认证客户端和受控状态转换**
+- [x] **Step 3: 实现同源认证客户端和受控状态转换**
 
 ```ts
 export type AuthScreen = "loading" | "setup" | "recovery-code" | "login" | "recover" | "authenticated";
@@ -117,12 +119,12 @@ export function completeAuthentication(state: AuthFlowState): AuthFlowState {
 
 `createAuthApiClient` 必须有一个私有 `requestJson`，对 `GET /api/auth/status` 和各 POST 端点固定 `credentials: "same-origin"`。仅在 `initialize` 返回的 201 JSON 中读取恢复码；`login` 只确认成功状态，永远不解析或暴露 Cookie；`recover` 和 `logout` 接收 204。任何非成功响应只读取 `{ error?: string }` 并抛出 `AuthApiError(message, response.status)`，不回显请求正文或响应原文。
 
-- [ ] **Step 4: 运行认证前端逻辑回归测试**
+- [x] **Step 4: 运行认证前端逻辑回归测试**
 
 Run: `npm test -- --run test/auth-api-client.test.ts test/auth-flow.test.ts test/api-client.test.ts test/subscription-wizard.test.ts`  
 Expected: PASS；认证和商品客户端都只访问同源受保护接口，地区默认值与敏感状态转换稳定。
 
-- [ ] **Step 5: 提交认证边界与状态机**
+- [x] **Step 5: 提交认证边界与状态机**
 
 ```bash
 git add src/app/auth-api-client.ts src/app/auth-flow.ts test/auth-api-client.test.ts test/auth-flow.test.ts
@@ -143,7 +145,7 @@ git push origin agent/d1-price-history
 - Produces `AuthScreens` 回调：`onInitialize`、`onAcknowledgeRecoveryCode`、`onLogin`、`onRecover`、`onShowRecovery`、`onReturnToLogin`。
 - Produces `SubscriptionWizardPage`，在收到 `onUnauthorized` 后不渲染此前向导状态。
 
-- [ ] **Step 1: 先为根组件认证编排写失败测试**
+- [x] **Step 1: 先为根组件认证编排写失败测试**
 
 ```ts
 it("returns to login and drops the existing wizard state when a protected product request returns 401", () => {
@@ -167,12 +169,12 @@ it("enters the protected page only after login and clears the setup password", (
 
 将上述案例追加至 `test/auth-flow.test.ts`，并让 `completeRecoveryCode` 返回仅含内存 `setupPassword` 的短暂加载状态；登录成功或失败后必须清除该密码。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/auth-flow.test.ts`  
 Expected: FAIL，因为恢复码确认后的自动登录转换尚未定义。
 
-- [ ] **Step 3: 实现认证屏幕与根组件编排**
+- [x] **Step 3: 实现认证屏幕与根组件编排**
 
 ```tsx
 export function App() {
@@ -202,17 +204,17 @@ export function App() {
 
 `styles.css` 新增 `.auth-page`、`.auth-card`、`.region-checkbox-grid`、`.recovery-code`、`.auth-actions`，并在 `max-width: 560px` 下单列化。继续使用现有暖色变量、输入焦点样式和按钮类，恢复码采用可复制但不自动复制的等宽文本框，避免无意写入剪贴板。
 
-- [ ] **Step 4: 运行逻辑、类型与生产构建验证**
+- [x] **Step 4: 运行逻辑、类型与生产构建验证**
 
 Run: `npm test -- --run test/auth-flow.test.ts test/auth-api-client.test.ts test/api-client.test.ts test/subscription-wizard.test.ts && npx tsc --noEmit && npm run build`  
 Expected: PASS；根组件可编译，认证后的订阅向导仍使用现有候选卡实现。
 
-- [ ] **Step 5: 浏览器验证登录前渲染与窄屏布局**
+- [x] **Step 5: 浏览器验证登录前渲染与窄屏布局**
 
 Run: 使用 Browser 插件打开本地 Vite 页面。  
 Expected: 页面不白屏；未初始化时显示地区和默认搜索区控件；已初始化但未认证时显示登录页；手机宽度下表单单列，控制台无应用错误。需要真实 D1 初始化的交互用本地 Worker 测试环境验证，不能把测试密码或恢复码提交到仓库。
 
-- [ ] **Step 6: 提交认证界面**
+- [x] **Step 6: 提交认证界面**
 
 ```bash
 git add src/app/App.tsx src/app/auth-screens.tsx src/app/subscription-wizard-page.tsx src/app/styles.css src/app/api-client.ts test/auth-flow.test.ts
@@ -231,16 +233,16 @@ git push origin agent/d1-price-history
 **Interfaces:**
 - Documents the one-time recovery-code display, post-initialization auto-login, recovery-to-login return, and `401` state clearing rules.
 
-- [ ] **Step 1: 更新需求状态与认证 UI 验收规则**
+- [x] **Step 1: 更新需求状态与认证 UI 验收规则**
 
 在 `traceability.md` 的 `FR-006` 中记录首次设置、登录和恢复密码前端入口已实现；在质量文档列出密码不持久化、恢复码仅一次展示、初始化后进入订阅、`401` 清空向导状态和手机表单单列等验收项；在文档中心加入本计划并标注实施状态。
 
-- [ ] **Step 2: 运行完整验证和敏感信息检查**
+- [x] **Step 2: 运行完整验证和敏感信息检查**
 
 Run: `npm test -- --run && npx tsc --noEmit && npm run build && rg -n "TODO|TBD|localStorage|sessionStorage|recoveryCode|password" src/app test docs/superpowers/specs/2026-07-17-authentication-entry-design.md && git diff --check`  
 Expected: 全部测试通过、生产构建完成；出现 `password` 或 `recoveryCode` 的位置只限受控内存状态、接口字段、测试夹具或安全设计说明，不存在浏览器持久化写入、真实凭据或待办占位。
 
-- [ ] **Step 3: 标记计划完成并提交文档**
+- [x] **Step 3: 标记计划完成并提交文档**
 
 将本计划全部复选框更新为 `[x]`，在标题后写明最终测试、构建和浏览器验证结果。随后执行：
 
