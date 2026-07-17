@@ -9,12 +9,12 @@
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*"]
   },
-  // 本地测试使用占位 D1 ID；实际部署必须在本机 Wrangler 配置或部署流程中替换，不得写入生产数据或秘密。
+  // 生产 Worker 只通过此 DB 绑定访问项目专用 D1；数据库 ID 不是秘密，但必须与 Cloudflare 中的 switch-price-monitor 对应，避免误连其他项目数据。
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "switch-price-monitor",
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      "database_id": "dac9dcc7-b406-4984-a8c1-2bd6c74b2ed1"
     }
   ],
   // 每分钟 Cron 只判断管理员本地日报时刻；独立的 UTC 六小时 Cron 执行 D1 保留维护，并预留给后续已验证的价格采集。
