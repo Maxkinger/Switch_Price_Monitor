@@ -204,7 +204,7 @@ git commit -m "feat: run live regional price collection"
 - Consumes: `ManualRefreshRepository.claimQueued()`、`LiveCollectionRunner.run()`、`runScheduledMaintenance()`。
 - Produces: `runSixHourCollection(now, dependencies): Promise<{ kind: "collection-completed" | "setup-not-complete"; manualRefreshConsumed: boolean }>`。
 
-- [ ] **Step 1: 写入六小时 Cron 与手动刷新只运行一次的失败测试**
+- [x] **Step 1: 写入六小时 Cron 与手动刷新只运行一次的失败测试**
 
 ```ts
 it("runs collection with maintenance for the six-hour Cron and consumes one queued refresh", async () => {
@@ -219,23 +219,23 @@ it("does not run collection for an unknown Cron expression", async () => {
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/worker-live-collection.test.ts test/worker-maintenance.test.ts`
 
 Expected: FAIL，因为六小时入口仅执行保留清理。
 
-- [ ] **Step 3: 实现调度接线**
+- [x] **Step 3: 实现调度接线**
 
 在 `0 */6 * * *` 分支内创建一个单独 `waitUntil` Promise：先验证设置已初始化，再运行保留清理，原子认领一个手动刷新请求，并无论是否存在手动请求都只运行一次采集。保留每分钟日报与 pending 通知路径，不把价格请求放入每分钟 Cron。保留现有 Cron 表达式，修改注释说明其同时承担六小时采集和维护。
 
-- [ ] **Step 4: 运行 Worker 调度回归测试**
+- [x] **Step 4: 运行 Worker 调度回归测试**
 
 Run: `npm test -- --run test/worker-live-collection.test.ts test/worker-maintenance.test.ts test/scheduler-service.test.ts`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交定时与手动刷新接线**
+- [x] **Step 5: 提交定时与手动刷新接线**
 
 ```bash
 git add src/worker/index.ts src/worker/services/scheduler-service.ts test/worker-maintenance.test.ts test/worker-live-collection.test.ts wrangler.jsonc

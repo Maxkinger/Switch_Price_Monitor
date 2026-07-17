@@ -52,6 +52,22 @@ export interface MaintenanceDependencies {
   retention: RetentionMaintenanceRunner;
 }
 
+/** 手动刷新队列只暴露原子认领，调度器不能读取管理员会话或让多个 Cron 重复消费同一请求。 */
+export interface ManualRefreshClaimReader {
+  claimQueued(): Promise<{ requestedAt: string } | null>;
+}
+
+/** 真实采集端口只返回聚合结果；调度层不记录外部页面、价格正文或内部商品标识。 */
+export interface LiveCollectionRunnerPort {
+  run(now: string): Promise<unknown>;
+}
+
+/** 六小时任务复用保留策略、手动队列和同一采集器，确保手动刷新不会形成第二套来源规则。 */
+export interface SixHourCollectionDependencies extends MaintenanceDependencies {
+  manualRefresh: ManualRefreshClaimReader;
+  collection: LiveCollectionRunnerPort;
+}
+
 /**
  * 即时通知与日报共用 Telegram 发送边界，但不依赖设置或完整仪表盘读取。
  * Secret 缺失时必须在读取 pending 前返回，避免未配置 Telegram 的部署反复扫描私有事件表。
@@ -73,6 +89,11 @@ export type ScheduledResult =
 export type ScheduledMaintenanceResult =
   | { kind: "setup-not-complete" }
   | { kind: "maintenance-completed"; cleanup: RetentionCleanupResult };
+
+/** 六小时执行结果不暴露采集内容，仅提示部署诊断是否消费了一条排队的手动刷新请求。 */
+export type SixHourCollectionResult =
+  | { kind: "setup-not-complete"; manualRefreshConsumed: false }
+  | { kind: "collection-completed"; manualRefreshConsumed: boolean };
 
 /** 即时通知结果只含聚合数量；不将游戏名、正文、HTTP 状态或 Telegram 凭据带入 Worker 诊断结果。 */
 export type PendingNotificationDeliveryResult =
@@ -102,6 +123,19 @@ export async function runScheduledMaintenance(now: string, dependencies: Mainten
   const settings = await dependencies.settings.get();
   if (!settings) return { kind: "setup-not-complete" };
   return { kind: "maintenance-completed", cleanup: await dependencies.retention.cleanup(now, settings.priceHistoryRetention) };
+}
+
+/**
+ * 六小时任务先确认已初始化，再执行历史清理、原子认领手动请求和一次统一采集。
+ * 即使队列中存在手动请求也绝不额外运行第二次采集，因为本轮定时结果已经满足该请求且可避免重复外部访问。
+ */
+export async function runSixHourCollection(now: string, dependencies: SixHourCollectionDependencies): Promise<SixHourCollectionResult> {
+  const settings = await dependencies.settings.get();
+  if (!settings) return { kind: "setup-not-complete", manualRefreshConsumed: false };
+  await dependencies.retention.cleanup(now, settings.priceHistoryRetention);
+  const claim = await dependencies.manualRefresh.claimQueued();
+  await dependencies.collection.run(now);
+  return { kind: "collection-completed", manualRefreshConsumed: claim !== null };
 }
 
 /**

@@ -11,9 +11,16 @@ import { handleProductRoute } from "./routes/product-routes";
 import { handleSettingsRoute } from "./routes/settings-routes";
 import { handleSubscriptionRoute } from "./routes/subscription-routes";
 import { createNintendoPriceApiProvider } from "./providers/official-nintendo-price-api";
+import { createOfficialProviderRegistry } from "./providers/official-provider-registry";
+import { ProviderChain } from "./providers/provider-chain";
+import { createFrankfurterExchangeRateProvider } from "./providers/frankfurter-exchange-rate";
 import { createOfficialNintendoProductPageResolver } from "./providers/official-nintendo-product-page";
 import { createOfficialNintendoSearch } from "./providers/official-nintendo-search";
 import { RetentionRepository } from "./repositories/retention-repository";
+import { CollectionRepository } from "./repositories/collection-repository";
+import { ExchangeRateRepository } from "./repositories/exchange-rate-repository";
+import { ManualRefreshRepository } from "./repositories/manual-refresh-repository";
+import { PriceRepository } from "./repositories/price-repository";
 import { NotificationEventRepository } from "./repositories/notification-event-repository";
 import { SettingsRepository } from "./repositories/settings-repository";
 import { SubscriptionConfirmationRepository } from "./repositories/subscription-confirmation-repository";
@@ -22,7 +29,11 @@ import { OfficialPriceIdService } from "./services/official-price-id-service";
 import { OfficialProductDiscoveryService } from "./services/official-product-discovery-service";
 import type { DailyReportSubscription } from "./services/report-service";
 import { RetentionService } from "./services/retention-service";
-import { runPendingNotificationDelivery, runScheduled, runScheduledMaintenance } from "./services/scheduler-service";
+import { CollectionService } from "./services/collection-service";
+import { DailyCnyRateService } from "./services/daily-cny-rate-service";
+import { LiveCollectionRunner } from "./services/live-collection-runner";
+import { ProductHealthService } from "./services/product-health-service";
+import { runPendingNotificationDelivery, runScheduled, runSixHourCollection } from "./services/scheduler-service";
 import { defaultFallbackSources, SubscriptionPreviewService } from "./services/subscription-preview-service";
 import { SubscriptionConfirmationService } from "./services/subscription-confirmation-service";
 import { TelegramService } from "./services/telegram-service";
@@ -98,11 +109,23 @@ const worker: ExportedHandler<Env> = {
 
   async scheduled(event, env, ctx) {
     const scheduledAt = new Date(event.scheduledTime).toISOString();
-    // 六小时任务仅执行 D1 保留维护，避免每分钟日报检查重复扫描长期历史；价格采集会在其来源验证完成后接入同一频率。
+    // 六小时任务将历史维护、原子手动刷新认领和一次真实采集放入同一 Promise，避免两条路径对同一地区重复请求来源。
     if (event.cron === "0 */6 * * *") {
-      ctx.waitUntil(runScheduledMaintenance(scheduledAt, {
+      const prices = new PriceRepository(env.DB);
+      const collection = new LiveCollectionRunner({
+        products: new CollectionRepository(env.DB),
+        rates: new DailyCnyRateService(createFrankfurterExchangeRateProvider(), new ExchangeRateRepository(env.DB)),
+        officialProviders: createOfficialProviderRegistry(),
+        collection: new CollectionService(new ProviderChain(), prices),
+        health: new ProductHealthService(env.DB),
+        previousOfficial: prices,
+        events: new NotificationEventRepository(env.DB),
+      });
+      ctx.waitUntil(runSixHourCollection(scheduledAt, {
         settings: new SettingsRepository(env.DB),
         retention: new RetentionService(new RetentionRepository(env.DB)),
+        manualRefresh: new ManualRefreshRepository(env.DB),
+        collection,
       }));
       return;
     }
