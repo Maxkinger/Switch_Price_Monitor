@@ -20,6 +20,7 @@
 | [官方订阅发现与批量确认设计](superpowers/specs/2026-07-17-official-subscription-discovery-design.md) | 官方默认区搜索、批量候选选择、跨区确认与候选卡布局 | 已确认（草图暂定） |
 | [官方订阅发现与批量确认实施计划](superpowers/plans/2026-07-17-official-subscription-discovery.md) | 默认区官方检索、官方链接确认、跨区处理、原子批量订阅与候选卡界面的实施步骤 | 已完成 |
 | [设置驱动的地区补全设计规格](superpowers/specs/2026-07-17-settings-driven-region-completion-design.md) | 设置决定跨区范围、自动安全匹配、显式跳过与既有订阅地区补全 | 已确认，待实施 |
+| [设置驱动的地区补全实施计划](superpowers/plans/2026-07-17-settings-driven-region-completion.md) | 服务端地区范围、新建覆盖校验、已有订阅补全、页面和生产验收步骤 | 已批准，待执行 |
 | [认证入口实施计划](superpowers/plans/2026-07-17-authentication-entry.md) | 首次设置、恢复码确认自动登录、登录、密码恢复、认证失效回退与暖色响应式表单 | 已完成 |
 | [公开偏好设置页设计规格](superpowers/specs/2026-07-17-public-settings-page-design.md) | 已登录管理员的公开偏好边界、三组表单、一次保存与秘密配置延期原则 | 已实施 |
 | [公开偏好设置页实施计划](superpowers/plans/2026-07-17-public-settings-page.md) | 同源设置客户端、`/settings` 路由、响应式页面、文档追踪与质量门禁 | 已完成 |
