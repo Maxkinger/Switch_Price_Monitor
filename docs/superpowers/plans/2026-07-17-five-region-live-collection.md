@@ -94,7 +94,7 @@ git commit -m "feat: register regional official price providers"
 - Consumes: `ExchangeRateProvider`、`exchange_rates`、五区币种。
 - Produces: `DailyCnyRateService.get(currencies: string[], now: string): Promise<Map<string, DailyCnyRate>>`。
 
-- [ ] **Step 1: 写入汇率成功、部分缺失与旧值回退失败测试**
+- [x] **Step 1: 写入汇率成功、部分缺失与旧值回退失败测试**
 
 ```ts
 it("writes one current CNY rate for each returned foreign currency", async () => {
@@ -108,23 +108,23 @@ it("uses the most recent stored rate and marks it stale when the provider fails"
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/daily-cny-rate-service.test.ts`
 
 Expected: FAIL，因为汇率仓储、Frankfurter 提供方和服务不存在。
 
-- [ ] **Step 3: 实现汇率提供方、D1 读取写入与回退服务**
+- [x] **Step 3: 实现汇率提供方、D1 读取写入与回退服务**
 
 Frankfurter 提供方使用 `GET https://api.frankfurter.dev/v2/rates?base=CNY&quotes=USD,JPY,MXN,BRL,HKD`，将“每 1 CNY 可换外币”的响应取倒数，转为每 1 外币对应的 CNY。仅接受正的有限数字和请求币种；网络错误包装为 `ProviderNetworkError`。仓储追加成功汇率并按币种读取最新值；服务只对缺失或请求失败币种复用最新值并写入 `isStale: true` 的读取结果，不伪造当日来源时间。
 
-- [ ] **Step 4: 运行汇率与采集服务回归测试**
+- [x] **Step 4: 运行汇率与采集服务回归测试**
 
 Run: `npm test -- --run test/daily-cny-rate-service.test.ts test/collection-service.test.ts`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交每日人民币汇率服务**
+- [x] **Step 5: 提交每日人民币汇率服务**
 
 ```bash
 git add src/worker/providers/frankfurter-exchange-rate.ts src/worker/repositories/exchange-rate-repository.ts src/worker/services/daily-cny-rate-service.ts test/daily-cny-rate-service.test.ts
