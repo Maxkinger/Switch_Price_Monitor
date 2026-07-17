@@ -55,7 +55,7 @@
 - Produces: `OfficialProductSearch.search(regionCode: RegionCode, query: string, signal: AbortSignal): Promise<OfficialSearchResult>`。
 - Consumes: 仅由 Worker 注入的 `fetch`；候选链接必须以所属地区已批准的 Nintendo 官方主机为准。
 
-- [ ] **Step 1: 先写失败测试，固定美区官方搜索成功、非美区降级和结构异常行为**
+- [x] **Step 1: 先写失败测试，固定美区官方搜索成功、非美区降级和结构异常行为**
 
 ```ts
 it("returns only normalized US Nintendo candidates from the official search response", async () => {
@@ -90,13 +90,13 @@ it("does not query a non-admitted regional search adapter and reports a safe off
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/official-nintendo-search.test.ts`
 
 Expected: FAIL，因为 `OfficialProductCandidate` 与 `createOfficialNintendoSearch` 尚未定义。
 
-- [ ] **Step 3: 实现受控候选 DTO 与仅服务端的官方搜索适配器**
+- [x] **Step 3: 实现受控候选 DTO 与仅服务端的官方搜索适配器**
 
 ```ts
 export interface OfficialProductCandidate {
@@ -130,13 +130,13 @@ export function createOfficialNintendoSearch(fetchOfficialSearch: typeof fetch =
 
 `createUsOfficialSearchRequest` 必须构造任天堂美区官网当前公开搜索页使用的只读请求，并把请求地址、客户端公开配置和索引名收敛在该私有函数中；它们不得进入浏览器包、D1、日志或 API 响应。`parseUsOfficialSearch` 只接受普通对象、绝对或 `/us/` 相对的 Nintendo HTTPS 商品链接、非空标题、`USD`、非负安全整数金额和受控 `ProductType`；无效命中逐条跳过而非抛出。网络异常包装为 `ProviderNetworkError`，路由再转为安全的不可用响应；不读取 Cookie 或重定向至非 Nintendo 主机。
 
-- [ ] **Step 4: 运行适配器与现有提供方回归测试**
+- [x] **Step 4: 运行适配器与现有提供方回归测试**
 
 Run: `npm test -- --run test/official-nintendo-search.test.ts test/official-nintendo.test.ts test/provider-chain.test.ts`
 
 Expected: PASS，测试只使用注入响应；非美区不会产生外部请求。
 
-- [ ] **Step 5: 提交官方搜索适配器**
+- [x] **Step 5: 提交官方搜索适配器**
 
 ```bash
 git add src/shared/domain.ts src/worker/providers/official-nintendo-search.ts test/official-nintendo-search.test.ts

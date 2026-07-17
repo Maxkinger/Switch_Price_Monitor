@@ -1,3 +1,5 @@
+import type { ProductType } from "../worker/providers/types";
+
 /**
  * 前后端共用的核心业务类型。这里集中枚举可持久化的受控值，
  * 避免不同 API、采集器和页面各自拼写字符串而造成历史数据不可查询。
@@ -18,6 +20,37 @@ export const initialRegionCodes = ["US", "JP", "MX", "BR", "HK"] as const;
 
 /** 地区代码限定为受支持集合，防止把任意字符串写入地区商品或设置记录。 */
 export type RegionCode = (typeof initialRegionCodes)[number];
+
+/**
+ * 任天堂官方商品发现阶段的瞬时候选。该模型不含数据库 ID、账号状态或外部原始响应，
+ * 仅保存管理员选择商品和确认跨区映射所必需的公开身份、封面与已验证价格字段。
+ */
+export interface OfficialProductCandidate {
+  regionCode: RegionCode;
+  productUrl: string;
+  canonicalTitle: string;
+  publisher: string | null;
+  productType: ProductType;
+  currency: string;
+  coverUrl: string | null;
+  currentPriceMinor: number | null;
+  regularPriceMinor: number | null;
+}
+
+/**
+ * 官方搜索不可用时必须明确指导管理员改用本区任天堂官方链接，不能返回空候选来伪装“没有搜索结果”。
+ * 固定文案也让前端与测试无需根据不稳定的外部错误信息判断是否显示链接输入框。
+ */
+export type OfficialSearchResult =
+  | { status: "available"; candidates: OfficialProductCandidate[] }
+  | { status: "unavailable"; message: "该区官方搜索暂不可用，请粘贴任天堂官方商品链接。" };
+
+/**
+ * 官方名称检索的最小可注入契约。调用方必须传入地区和取消信号，适配器不能自行扩区或让悬挂外部请求耗尽 Worker 运行时间。
+ */
+export interface OfficialProductSearch {
+  search(regionCode: RegionCode, query: string, signal: AbortSignal): Promise<OfficialSearchResult>;
+}
 
 /** 订阅创建前对某地区官方来源的确认结果；前端据此显示官方、第三方回退或不可监控状态。 */
 export type SubscriptionPreviewOfficialStatus = "official-available" | "official-id-unavailable";
