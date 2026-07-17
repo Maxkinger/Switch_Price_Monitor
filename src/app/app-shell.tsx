@@ -1,13 +1,17 @@
 import { useEffect, useState } from "react";
 
-import { dashboardPath, readAppRoute, subscriptionNewPath, type AppRoute } from "./app-navigation";
+import { dashboardPath, readAppRoute, settingsPath, subscriptionNewPath, type AppRoute } from "./app-navigation";
 import { createDashboardApiClient } from "./dashboard-api-client";
 import { DashboardPage } from "./dashboard-page";
+import { createSettingsApiClient } from "./settings-api-client";
+import { SettingsPage } from "./settings-page";
 import { SubscriptionDetailPage } from "./subscription-detail-page";
 import { SubscriptionWizardPage } from "./subscription-wizard-page";
 
 /** 同源客户端不保存 Cookie，应用壳层可在页面切换间安全复用。 */
 const dashboardApi = createDashboardApiClient();
+/** 设置客户端只访问同源公开偏好接口，和仪表盘客户端分离以缩小页面可调用的 API 面。 */
+const settingsApi = createSettingsApiClient();
 
 /**
  * 已认证应用外壳统一管理 History API 和左侧导航。切换路由只改变当前页面组件，
@@ -36,12 +40,13 @@ export function AppShell({ onUnauthorized }: { onUnauthorized: () => void }) {
         <button type="button" className={route.kind === "dashboard" ? "monitor-nav__active" : ""} onClick={() => navigate(dashboardPath())}>仪表盘</button>
         <button type="button" className={route.kind === "subscription-new" ? "monitor-nav__active" : ""} onClick={() => navigate(subscriptionNewPath())}>添加订阅</button>
         <span>价格历史（即将提供）</span>
-        <span>设置（即将提供）</span>
+        <button type="button" className={route.kind === "settings" ? "monitor-nav__active" : ""} onClick={() => navigate(settingsPath())}>设置</button>
       </aside>
       <main className="monitor-main">
         {route.kind === "dashboard" ? <DashboardPage api={dashboardApi} onNavigate={navigate} onUnauthorized={onUnauthorized} /> : null}
         {route.kind === "subscription-new" ? <SubscriptionWizardPage onUnauthorized={onUnauthorized} /> : null}
         {route.kind === "subscription-detail" ? <SubscriptionDetailPage api={dashboardApi} subscriptionId={route.subscriptionId} onBack={() => navigate(dashboardPath())} onUnauthorized={onUnauthorized} /> : null}
+        {route.kind === "settings" ? <SettingsPage api={settingsApi} onUnauthorized={onUnauthorized} /> : null}
       </main>
     </div>
   );

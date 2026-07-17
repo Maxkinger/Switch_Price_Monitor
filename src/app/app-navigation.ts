@@ -5,7 +5,8 @@
 export type AppRoute =
   | { kind: "dashboard" }
   | { kind: "subscription-new" }
-  | { kind: "subscription-detail"; subscriptionId: string };
+  | { kind: "subscription-detail"; subscriptionId: string }
+  | { kind: "settings" };
 
 /** 仪表盘为认证后的稳定首页；保留单独函数避免组件散落字符串路径。 */
 export function dashboardPath(): string {
@@ -15,6 +16,11 @@ export function dashboardPath(): string {
 /** 添加订阅继续复用已存在的官方确认向导，不能绕过它直接创建未核验地区商品。 */
 export function subscriptionNewPath(): string {
   return "/subscriptions/new";
+}
+
+/** 设置页只管理公开偏好；使用固定路径避免未来秘密配置被误作为地址参数或独立子路由暴露。 */
+export function settingsPath(): string {
+  return "/settings";
 }
 
 /**
@@ -32,6 +38,7 @@ export function subscriptionDetailPath(subscriptionId: string): string {
 export function readAppRoute(pathname: string): AppRoute {
   if (pathname === "/" || pathname === "/dashboard") return { kind: "dashboard" };
   if (pathname === "/subscriptions/new") return { kind: "subscription-new" };
+  if (pathname === "/settings") return { kind: "settings" };
   const match = pathname.match(/^\/subscriptions\/([^/]+)$/);
   if (!match) return { kind: "dashboard" };
   try {
