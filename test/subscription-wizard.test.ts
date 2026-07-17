@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import type { OfficialProductCandidate } from "../src/shared/domain";
 import {
+  applyAutomaticRegionResolutions,
   candidatePriceLabel,
+  canConfirmConfiguredRegions,
   createSubscriptionWizardState,
   hasNoOfficialCandidates,
   setRegionalCandidate,
+  skipRegionalConfirmation,
   toggleCandidate,
 } from "../src/app/subscription-wizard";
 
@@ -49,6 +52,25 @@ describe("subscription wizard state", () => {
     expect(hasNoOfficialCandidates({ status: "available", candidates: [overcooked()] }, "Overcooked! 2")).toBe(false);
     expect(hasNoOfficialCandidates({ status: "unavailable", message: "该区官方搜索暂不可用，请粘贴任天堂官方商品链接。" }, "Overcooked! 2")).toBe(false);
   });
+
+  it("automatically adopts a safe regional match and requires an explicit skip for an unresolved region", () => {
+    const initial = createSubscriptionWizardState({ status: "available", candidates: [overcooked()] });
+    const selected = [overcooked()];
+    const selectedKey = `US:${overcooked().productUrl}`;
+    const resolutions = [
+      { candidateKey: selectedKey, regionCode: "JP" as const, status: "automatic" as const, candidate: overcookedJp() },
+      { candidateKey: selectedKey, regionCode: "HK" as const, status: "needs-manual-link" as const, message: "该区官方搜索暂不可用，请粘贴任天堂官方商品链接。" },
+    ];
+    const automatic = applyAutomaticRegionResolutions(initial, resolutions);
+
+    // 自动匹配仅在 Worker 已返回唯一安全候选时写入；香港仍必须由管理员核验链接或明确跳过，不能静默遗漏。
+    expect(automatic.regionalConfirmations[`${selectedKey}:JP`]).toEqual(overcookedJp());
+    expect(canConfirmConfiguredRegions(automatic, selected, resolutions)).toBe(false);
+
+    const skipped = skipRegionalConfirmation(automatic, selectedKey, "HK");
+    expect(skipped.skippedRegionalKeys).toEqual([`${selectedKey}:HK`]);
+    expect(canConfirmConfiguredRegions(skipped, selected, resolutions)).toBe(true);
+  });
 });
 
 /** 美区《胡闹厨房 2》含常规价，作为促销和当前价显示规则的稳定基线。 */
@@ -64,4 +86,9 @@ function kirby(): OfficialProductCandidate {
 /** 香港候选具有独立地区、币种和官方链接，避免状态机依赖美区候选的 URL 或价格。 */
 function hongKongKirby(): OfficialProductCandidate {
   return { regionCode: "HK", productUrl: "https://www.nintendo.com/hk/soft/kirby-and-the-forgotten-land/", canonicalTitle: "Kirby and the Forgotten Land", publisher: "Nintendo", productType: "game", currency: "HKD", coverUrl: null, currentPriceMinor: 46800, regularPriceMinor: null };
+}
+
+/** 日区候选与美区标题/类型/发行商一致，代表 Worker 可以安全自动采用的跨区官方映射。 */
+function overcookedJp(): OfficialProductCandidate {
+  return { regionCode: "JP", productUrl: "https://store-jp.nintendo.com/item/software/D70050000064985/", canonicalTitle: "Overcooked! 2", publisher: "Team17", productType: "game", currency: "JPY", coverUrl: null, currentPriceMinor: 1000, regularPriceMinor: null };
 }

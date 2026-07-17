@@ -70,11 +70,29 @@ export interface CompletedRefreshResult {
   stale: number;
 }
 
+import type { ConfirmedRegionalProduct, RegionCode } from "../shared/domain";
+import type { RegionResolutionResponse } from "./api-client";
+
 /** PATCH 的三个互斥更新形状严格对应 Worker 现有校验，避免前端拼接未支持的自由字段。 */
 export type SubscriptionUpdate =
   | { enabled: boolean }
   | { regionalProductIds: string[] }
   | { globalTargetCnyFen: number | null; regionTargets: Array<{ regionCode: string; targetAmountMinor: number }> };
+
+/**
+ * 已有订阅补全只提交本次新确认的官方候选与明确跳过地区；游戏 ID、已有商品 ID 和启用地区范围不在浏览器载荷中，
+ * Worker 会从受认证订阅与保存设置重新读取这些安全边界并在写入前重新验证每个官方链接。
+ */
+export interface MissingRegionCompletionInput {
+  regions: ConfirmedRegionalProduct[];
+  skippedRegionCodes: RegionCode[];
+}
+
+/** 补全成功只返回订阅与新增地区代码，页面必须重新读取详情，不能在本地拼接价格、历史或监控状态。 */
+export interface MissingRegionCompletionResult {
+  subscriptionId: string;
+  addedRegionCodes: RegionCode[];
+}
 
 /**
  * 可展示的站内 API 错误。只保留 Worker 已脱敏的中文摘要、状态和刷新冷却时刻，
@@ -139,6 +157,16 @@ export function createDashboardApiClient(request: typeof fetch = fetch) {
     /** 保存一类订阅配置后由页面重新读取详情，避免本地合并覆盖 Worker 的校验结果或并发变更。 */
     async updateSubscription(subscriptionId: string, update: SubscriptionUpdate): Promise<unknown> {
       return requestJson<unknown>(`/api/subscriptions/${encodeURIComponent(subscriptionId)}`, "PATCH", update);
+    },
+
+    /** 让 Worker 从当前订阅官方锚点和保存设置解析缺失地区；请求体为空，不能由浏览器附带地区范围。 */
+    async resolveMissingRegions(subscriptionId: string): Promise<RegionResolutionResponse[]> {
+      return requestJson<RegionResolutionResponse[]>(`/api/subscriptions/${encodeURIComponent(subscriptionId)}/resolve-regions`, "POST", {});
+    },
+
+    /** 提交人工确认或明确跳过的缺失地区；服务端会原子追加并由详情重新读取结果。 */
+    async completeMissingRegions(subscriptionId: string, input: MissingRegionCompletionInput): Promise<MissingRegionCompletionResult> {
+      return requestJson<MissingRegionCompletionResult>(`/api/subscriptions/${encodeURIComponent(subscriptionId)}/complete-regions`, "POST", input);
     },
   };
 }

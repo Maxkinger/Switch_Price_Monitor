@@ -3,6 +3,7 @@ import type {
   OfficialSearchResult,
   SubscriptionRegionPreview,
 } from "../shared/domain";
+import type { RegionResolutionResponse } from "./api-client";
 
 /** 候选价格的纯显示模型；组件只根据此受控结果排版，不自行猜测原价、促销或折扣。 */
 export type CandidatePriceLabel =
@@ -19,6 +20,11 @@ export interface SubscriptionWizardState {
   searchResult: OfficialSearchResult;
   selectedCandidateKeys: string[];
   regionalConfirmations: Record<string, OfficialProductCandidate>;
+  /**
+   * 已明确跳过的“默认区候选:地区”键。跳过只在本次确认请求中表达管理员决定，
+   * 不会伪造地区商品、价格快照或监控关联；Worker 仍以保存设置执行最终覆盖校验。
+   */
+  skippedRegionalKeys: string[];
   sourcePreviews: Record<string, SubscriptionRegionPreview[]>;
   submitState: "idle" | "submitting" | "succeeded" | "failed";
 }
@@ -30,9 +36,69 @@ export function createSubscriptionWizardState(searchResult: OfficialSearchResult
     searchResult,
     selectedCandidateKeys: [],
     regionalConfirmations: {},
+    skippedRegionalKeys: [],
     sourcePreviews: {},
     submitState: "idle",
   };
+}
+
+/**
+ * 将服务端唯一匹配的跨区官方候选立即写入确认集合。只有 `automatic` 状态才能自动采用，
+ * 人工选择/官方链接状态必须继续等待管理员处理；自动采用同时撤销此前同地区的跳过，避免两个决定并存。
+ */
+export function applyAutomaticRegionResolutions(
+  state: SubscriptionWizardState,
+  resolutions: RegionResolutionResponse[],
+): SubscriptionWizardState {
+  const automatic = resolutions.filter((resolution): resolution is Extract<RegionResolutionResponse, { status: "automatic" }> => resolution.status === "automatic");
+  if (automatic.length === 0) return state;
+  const confirmationKeys = new Set(automatic.map((resolution) => regionalConfirmationKey(resolution.candidateKey, resolution.regionCode)));
+  return {
+    ...state,
+    regionalConfirmations: {
+      ...state.regionalConfirmations,
+      ...Object.fromEntries(automatic.map((resolution) => [regionalConfirmationKey(resolution.candidateKey, resolution.regionCode), resolution.candidate])),
+    },
+    skippedRegionalKeys: state.skippedRegionalKeys.filter((key) => !confirmationKeys.has(key)),
+  };
+}
+
+/**
+ * 切换一个尚未确认地区的显式跳过状态。管理员再次点击会撤销跳过；若该地区已有官方确认，
+ * 跳过操作会先移除该确认，保证最终载荷中同一区不会同时作为确认商品和跳过地区出现。
+ */
+export function skipRegionalConfirmation(
+  state: SubscriptionWizardState,
+  selectedCandidateKey: string,
+  regionCode: OfficialProductCandidate["regionCode"],
+): SubscriptionWizardState {
+  const key = regionalConfirmationKey(selectedCandidateKey, regionCode);
+  const nextSkipped = state.skippedRegionalKeys.includes(key)
+    ? state.skippedRegionalKeys.filter((entry) => entry !== key)
+    : [...state.skippedRegionalKeys, key];
+  const { [key]: _removed, ...regionalConfirmations } = state.regionalConfirmations;
+  return { ...state, regionalConfirmations, skippedRegionalKeys: nextSkipped };
+}
+
+/**
+ * 仅当每个服务端要求处理的跨区状态都已有官方确认或显式跳过时，页面才允许提交。
+ * 默认区候选本身由最终确认服务保留；无跨区结果的情况可能是仅启用默认区，页面另行保证已完成解析请求。
+ */
+export function canConfirmConfiguredRegions(
+  state: SubscriptionWizardState,
+  selectedCandidates: OfficialProductCandidate[],
+  resolutions: RegionResolutionResponse[],
+): boolean {
+  if (selectedCandidates.length === 0) return false;
+  return selectedCandidates.every((selected) => {
+    const selectedKey = `${selected.regionCode}:${selected.productUrl}`;
+    return resolutions
+      .filter((resolution) => resolution.candidateKey === selectedKey)
+      .every((resolution) => {
+        const key = regionalConfirmationKey(selectedKey, resolution.regionCode);
+        return state.regionalConfirmations[key] !== undefined || state.skippedRegionalKeys.includes(key);
+      });
+  });
 }
 
 /**

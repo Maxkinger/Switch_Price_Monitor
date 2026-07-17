@@ -46,4 +46,16 @@ describe("dashboard API client", () => {
       new DashboardApiError("刷新过于频繁。", 429, "2026-07-17T01:15:00.000Z"),
     );
   });
+
+  it("uses same-origin requests for resolving and atomically completing missing subscription regions", async () => {
+    const request = vi.fn(async () => Response.json([])) as unknown as typeof fetch;
+    const client = createDashboardApiClient(request);
+
+    await client.resolveMissingRegions("subscription-overcooked-2");
+    await client.completeMissingRegions("subscription-overcooked-2", { regions: [], skippedRegionCodes: ["JP"] });
+
+    // 补全端点只能由同源 Cookie 授权；请求不包含游戏 ID、既有商品 ID 或地区范围，避免浏览器篡改订阅身份。
+    expect(request).toHaveBeenNthCalledWith(1, "/api/subscriptions/subscription-overcooked-2/resolve-regions", expect.objectContaining({ method: "POST", credentials: "same-origin" }));
+    expect(request).toHaveBeenNthCalledWith(2, "/api/subscriptions/subscription-overcooked-2/complete-regions", expect.objectContaining({ method: "POST", credentials: "same-origin", body: JSON.stringify({ regions: [], skippedRegionCodes: ["JP"] }) }));
+  });
 });

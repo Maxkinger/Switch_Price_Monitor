@@ -27,4 +27,22 @@ describe("product API client", () => {
       .rejects.toEqual(expect.objectContaining({ name: "ProductApiError", message: "请先登录。", status: 401 }));
     await expect(createProductApiClient(request).searchProducts("Overcooked")).rejects.toBeInstanceOf(ProductApiError);
   });
+
+  it("resolves configured regions without sending a browser-owned region list", async () => {
+    const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ regions: [] }));
+    const client = createProductApiClient(request);
+
+    await client.resolveRegions([candidate()]);
+
+    // 启用地区是 Worker 设置的安全边界；客户端只能发送已经选定的默认区官方候选，不能携带 enabledRegions 覆盖范围。
+    expect(request).toHaveBeenCalledWith("/api/products/resolve-regions", expect.objectContaining({
+      body: JSON.stringify({ candidates: [candidate()] }),
+      credentials: "same-origin",
+    }));
+  });
 });
+
+/** 默认区候选只用于验证客户端请求形状；测试不访问外站，也不包含任何会话或实际价格来源数据。 */
+function candidate() {
+  return { regionCode: "US" as const, productUrl: "https://www.nintendo.com/us/store/products/overcooked-2-switch/", canonicalTitle: "Overcooked! 2", publisher: "Team17", productType: "game" as const, currency: "USD", coverUrl: null, currentPriceMinor: 2499, regularPriceMinor: null };
+}

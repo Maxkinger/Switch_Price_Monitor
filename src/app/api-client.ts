@@ -93,13 +93,9 @@ export function createProductApiClient(request: typeof fetch = fetch) {
     },
 
     /** 为已选默认区商品匹配其他启用地区的官方候选结果。 */
-    async resolveRegions(
-      candidates: OfficialProductCandidate[],
-      enabledRegions: RegionCode[]
-    ): Promise<RegionResolutionResponse[]> {
+    async resolveRegions(candidates: OfficialProductCandidate[]): Promise<RegionResolutionResponse[]> {
       const payload = await postJson<{ regions: RegionResolutionResponse[] }>("/api/products/resolve-regions", {
         candidates,
-        enabledRegions
       });
 
       return payload.regions;

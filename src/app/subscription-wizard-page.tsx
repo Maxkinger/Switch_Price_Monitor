@@ -2,10 +2,13 @@ import { useMemo, useState, type FormEvent } from "react";
 import { createProductApiClient, ProductApiError, type RegionResolutionResponse } from "./api-client";
 import {
   candidatePriceLabel,
+  applyAutomaticRegionResolutions,
+  canConfirmConfiguredRegions,
   createSubscriptionWizardState,
   hasNoOfficialCandidates,
   regionalConfirmationKey,
   setRegionalCandidate,
+  skipRegionalConfirmation,
   toggleCandidate,
   type CandidatePriceLabel,
   type SubscriptionWizardState,
@@ -23,7 +26,10 @@ import type {
 /** 前端只访问同源 Worker；所有任天堂官方页解析与价格来源校验均由服务端执行。 */
 const productApi = createProductApiClient();
 
-/** MVP 已支持的五个地区。后续设置页接入后，此常量会替换为管理员保存的启用地区集合。 */
+/**
+ * 地区标签仅用于 UI 文案与官方链接回退选择，绝不代表跨区业务范围。
+ * 实际启用地区由 Worker 设置决定，向导不会把此展示常量发送给跨区解析接口。
+ */
 const regionChoices: ReadonlyArray<{ code: RegionCode; name: string }> = [
   { code: "US", name: "美区" },
   { code: "JP", name: "日区" },
@@ -127,6 +133,7 @@ function RegionalConfirmationPanel({
   onSelectCandidate,
   onManualLinkChange,
   onResolveLink,
+  onToggleSkip,
 }: {
   selected: OfficialProductCandidate;
   resolutions: RegionResolutionResponse[];
@@ -136,6 +143,7 @@ function RegionalConfirmationPanel({
   onSelectCandidate: (regionCode: RegionCode, candidate: OfficialProductCandidate, source: RegionalProductMatchSource) => void;
   onManualLinkChange: (key: string, value: string) => void;
   onResolveLink: (regionCode: RegionCode) => void;
+  onToggleSkip: (regionCode: RegionCode) => void;
 }) {
   const selectedKey = candidateKey(selected);
   const otherRegions = resolutions.filter((resolution) => resolution.candidateKey === selectedKey);
@@ -199,6 +207,9 @@ function RegionalConfirmationPanel({
                 </div>
               ) : null}
               {confirmed ? <small className="regional-option__confirmed">已确认：{confirmed.canonicalTitle}</small> : null}
+              <button type="button" className="text-button" onClick={() => onToggleSkip(resolution.regionCode)}>
+                {confirmed ? "取消该区确认并跳过" : "跳过此区"}
+              </button>
             </article>
           );
         })}
@@ -219,6 +230,8 @@ export function SubscriptionWizardPage({ onUnauthorized }: { onUnauthorized: () 
   const [isSearching, setIsSearching] = useState(false);
   const [isResolvingRegions, setIsResolvingRegions] = useState(false);
   const [resolutions, setResolutions] = useState<RegionResolutionResponse[]>([]);
+  // 解析响应可能为空（例如仅启用默认区），因此单独记录已完成核验的默认区候选，不能以结果数组长度判断是否允许提交。
+  const [resolvedCandidateKeys, setResolvedCandidateKeys] = useState<string[]>([]);
   const [manualLinks, setManualLinks] = useState<Record<string, string>>({});
   const [confirmationSources, setConfirmationSources] = useState<Record<string, RegionalProductMatchSource>>({});
   const [pendingLinkKey, setPendingLinkKey] = useState<string | null>(null);
@@ -259,6 +272,7 @@ export function SubscriptionWizardPage({ onUnauthorized }: { onUnauthorized: () 
       const searchResult = await productApi.searchProducts(trimmedQuery);
       setWizard({ ...createSubscriptionWizardState(searchResult), query: trimmedQuery });
       setResolutions([]);
+      setResolvedCandidateKeys([]);
       setManualLinks({});
       setConfirmationSources({});
     } catch (error) {
@@ -282,6 +296,7 @@ export function SubscriptionWizardPage({ onUnauthorized }: { onUnauthorized: () 
       const candidate = await productApi.resolveOfficialLink(fallbackRegion, fallbackLink.trim());
       setWizard({ ...createSubscriptionWizardState({ status: "available", candidates: [candidate] }), query: candidate.canonicalTitle });
       setResolutions([]);
+      setResolvedCandidateKeys([]);
       setManualLinks({});
       setConfirmationSources({});
     } catch (error) {
@@ -301,8 +316,11 @@ export function SubscriptionWizardPage({ onUnauthorized }: { onUnauthorized: () 
     setIsResolvingRegions(true);
     setNotice(null);
     try {
-      const resolved = await productApi.resolveRegions(selectedCandidates, regionChoices.map((region) => region.code));
+      const resolved = await productApi.resolveRegions(selectedCandidates);
       setResolutions(resolved);
+      setResolvedCandidateKeys(selectedCandidates.map((candidate) => candidateKey(candidate)));
+      // 自动结果仅来自 Worker 对保存设置和官方身份的唯一匹配；页面不会自行按名称或价格猜测跨区商品。
+      setWizard((current) => applyAutomaticRegionResolutions(current, resolved));
     } catch (error) {
       handleProductError(error, "跨区匹配未完成，请稍后重试。");
     } finally {
@@ -361,8 +379,10 @@ export function SubscriptionWizardPage({ onUnauthorized }: { onUnauthorized: () 
         if (candidate && matchSource) regions.push({ ...candidate, matchSource });
       }
 
-      // 旧向导尚未提供跳过控件时必须明确提交空数组，不能省略共享 DTO 字段；后续界面任务会把它替换为管理员可见的逐区跳过状态。
-      return { selected, regions, skippedRegionCodes: [] };
+      const skippedRegionCodes = resolutions
+        .filter((resolution) => resolution.candidateKey === selectedKey)
+        .flatMap((resolution) => wizard.skippedRegionalKeys.includes(regionalConfirmationKey(selectedKey, resolution.regionCode)) ? [resolution.regionCode] : []);
+      return { selected, regions, skippedRegionCodes };
     });
   }
 
@@ -466,7 +486,7 @@ export function SubscriptionWizardPage({ onUnauthorized }: { onUnauthorized: () 
                 {isResolvingRegions ? "匹配中…" : "核验其他地区"}
               </button>
               <button className="secondary-button" type="button" onClick={handlePreviewSources} disabled={selectedCandidates.length === 0}>预览价格来源</button>
-              <button className="primary-button" type="button" onClick={handleConfirmSubscriptions} disabled={wizard.submitState === "submitting" || selectedCandidates.length === 0}>
+              <button className="primary-button" type="button" onClick={handleConfirmSubscriptions} disabled={wizard.submitState === "submitting" || selectedCandidates.some((candidate) => !resolvedCandidateKeys.includes(candidateKey(candidate))) || !canConfirmConfiguredRegions(wizard, selectedCandidates, resolutions)}>
                 {wizard.submitState === "submitting" ? "确认中…" : "确认订阅"}
               </button>
             </div>
@@ -495,6 +515,7 @@ export function SubscriptionWizardPage({ onUnauthorized }: { onUnauthorized: () 
             onSelectCandidate={(regionCode, candidate, source) => handleRegionalCandidate(selected, regionCode, candidate, source)}
             onManualLinkChange={(key, value) => setManualLinks((current) => ({ ...current, [key]: value }))}
             onResolveLink={(regionCode) => handleResolveRegionalLink(selected, regionCode)}
+            onToggleSkip={(regionCode) => setWizard((current) => skipRegionalConfirmation(current, candidateKey(selected), regionCode))}
           />
         ))}
 

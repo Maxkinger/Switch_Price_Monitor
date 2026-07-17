@@ -183,7 +183,7 @@ git push origin main
 - `resolveRegions(candidates)` no longer accepts a caller-owned region list.
 - Produces detail-client `resolveMissingRegions(subscriptionId)` and `completeMissingRegions(subscriptionId, input)`.
 
-- [ ] **Step 1: 写入失败测试**
+- [x] **Step 1: 写入失败测试**
 
 在向导状态测试中传入一个 automatic JP 解析结果，断言自动确认键存在；再传入 HK 的手动链接状态，断言未跳过时：
 
@@ -195,13 +195,13 @@ expect(canConfirmConfiguredRegions(state, selected, resolutions)).toBe(false);
 
 客户端测试断言 `/api/products/resolve-regions` 请求体只有 `candidates`；详情客户端测试断言两个新端点使用 `same-origin` Cookie。组件测试/状态测试断言详情页面补全成功后重新读取详情并显示安全结果提示。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/subscription-wizard.test.ts test/dashboard-api-client.test.ts test/dashboard-page-state.test.ts`
 
 Expected: FAIL，因为当前向导有硬编码地区、不会自动确认，且确认按钮未检查未处理地区。
 
-- [ ] **Step 3: 最小前端实现**
+- [x] **Step 3: 最小前端实现**
 
 移除 `SubscriptionWizardPage` 中作为业务范围的 `regionChoices`，仅保留独立 `regionLabel` 显示映射。选中候选后调用：
 
@@ -214,7 +214,7 @@ setWizard((current) => applyAutomaticRegionResolutions(current, resolutions));
 
 在详情页加入“补全已启用地区”面板，复用候选卡/链接核验显示逻辑但不暴露游戏 ID 或已有商品 URL。成功调用 `completeMissingRegions` 后调用既有 `reload()`；401 使用 `onUnauthorized`，422 保留人工选择和跳过状态。
 
-- [ ] **Step 4: 运行前端回归与构建**
+- [x] **Step 4: 运行前端回归与构建**
 
 Run: `npm test -- --run test/subscription-wizard.test.ts test/dashboard-api-client.test.ts test/dashboard-page-state.test.ts && npx tsc --noEmit && npm run build`
 
