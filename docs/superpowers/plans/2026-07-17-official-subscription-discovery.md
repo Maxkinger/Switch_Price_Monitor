@@ -8,6 +8,8 @@
 
 **Tech Stack:** TypeScript、Cloudflare Workers、Cloudflare D1、React 19、Vite、Vitest、任天堂公开商品页与其公开搜索结果。
 
+**实施状态（2026-07-17）：**本计划已完成：默认区官方发现、官方链接核验、跨区人工确认、原子批量订阅，以及同源 React 订阅向导均已落地。候选发现从不使用第三方价格站；美区以任天堂公开名称搜索接入，未获地区搜索准入时仅提供本区官方链接入口。全量测试、类型检查、生产构建、差异检查与本地渲染核对均已执行。
+
 ## Global Constraints
 
 - 每次代码、测试、SQL、配置或文档改动前，完整阅读 `AGENTS.md` 与 `docs/README.md`。
@@ -337,7 +339,7 @@ git commit -m "feat: confirm subscriptions atomically"
 - Produces: `candidatePriceLabel(candidate: OfficialProductCandidate): CandidatePriceLabel`，返回 `kind: "sale" | "current" | "pending"` 与显示所需金额/折扣。
 - Consumes: `searchProducts`、`resolveOfficialLink`、`resolveRegions`、`previewSources`、`confirmSubscriptions`，均来自 `api-client.ts` 的同源 API 调用。
 
-- [ ] **Step 1: 先写失败测试，覆盖多选、价格文案与单游戏单区隔离**
+- [x] **Step 1: 先写失败测试，覆盖多选、价格文案与单游戏单区隔离**
 
 ```ts
 it("toggles whole cards independently so two selected games remain selected", () => {
@@ -361,13 +363,13 @@ it("stores a Hong Kong confirmation under its own selected-game key", () => {
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/subscription-wizard.test.ts`
 
 Expected: FAIL，因为状态机与价格显示模型尚不存在。
 
-- [ ] **Step 3: 实现纯状态机、受保护 API 客户端和无直接外链的 React 界面**
+- [x] **Step 3: 实现纯状态机、受保护 API 客户端和无直接外链的 React 界面**
 
 ```ts
 export function candidatePriceLabel(candidate: OfficialProductCandidate): CandidatePriceLabel {
@@ -395,13 +397,13 @@ export function toggleCandidate(state: SubscriptionWizardState, key: string): Su
 
 样式必须精确实现：`.candidate-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }`，`@media (max-width: 880px)` 改为两列，`@media (max-width: 560px)` 改为一列；整张 `button` 卡片可点击，选中时 `border: 3px solid var(--accent-warm)`。封面为 `54px × 72px`；文字列相对封面上缘 `2px` 放置标题、中间位置放置左对齐商品类型、下缘 `2px` 放置发行商。底行用 `display: flex; justify-content: space-between` 使发行商在左、价格在右；促销常规价使用 `text-decoration: line-through`，促销价和折扣使用强调色，价格未知只显示“价格待确认”。封面加载失败时用 CSS 占位元素替换图片，不影响按钮可点击性或文字可读性。
 
-- [ ] **Step 4: 运行前端纯逻辑、类型检查与生产构建**
+- [x] **Step 4: 运行前端纯逻辑、类型检查与生产构建**
 
 Run: `npm test -- --run test/subscription-wizard.test.ts && npx tsc --noEmit && npm run build`
 
 Expected: PASS，两个商品可同时选择，折扣仅在真实促销时出现，生产构建不含任天堂直接请求代码。
 
-- [ ] **Step 5: 提交订阅向导与候选卡**
+- [x] **Step 5: 提交订阅向导与候选卡**
 
 ```bash
 git add src/app/api-client.ts src/app/subscription-wizard.ts src/app/App.tsx src/app/styles.css test/subscription-wizard.test.ts
@@ -423,7 +425,7 @@ git commit -m "feat: add subscription discovery wizard"
 - Documents: `normalized_name` 的订阅去重用途、确认前无写入与批量原子性。
 - Documents: 需求 `FR-001` 的实现状态与可验证验收用例。
 
-- [ ] **Step 1: 写入失败验收清单并补齐 API 文档的精确合同**
+- [x] **Step 1: 写入失败验收清单并补齐 API 文档的精确合同**
 
 ```markdown
 | `POST /api/products/search` | 已登录管理员 | 只读取服务端设置的默认搜索区；返回任天堂官方候选或官方链接输入提示；不写 D1。 |
@@ -434,13 +436,13 @@ git commit -m "feat: add subscription discovery wizard"
 
 将下列验收步骤加入质量文档：匿名调用四端点均为 401；空查询、伪造主机、重复地区与身份冲突均为 422；搜索/解析/预览前后四张业务表的行数不变；两游戏批量创建后两个订阅都可在仪表盘查询；一项无效时两个订阅均不创建；香港区只能以本区官方候选或官方链接加入；候选卡在 1280px 三列、768px 两列、480px 一列且文字对比度可读。
 
-- [ ] **Step 2: 运行文档引用与全量质量门禁**
+- [x] **Step 2: 运行文档引用与全量质量门禁**
 
 Run: `rg -n "POST /api/products/(search|resolve-link|resolve-regions|confirm-subscriptions)" docs src test && npm test -- --run && npx tsc --noEmit && npm run build && git diff --check`
 
 Expected: 所有四个端点在文档、Worker 与测试中均有对应记录；全量测试、类型检查、构建和差异检查全部通过。
 
-- [ ] **Step 3: 人工检查注释与无秘密边界**
+- [x] **Step 3: 人工检查注释与无秘密边界**
 
 ```bash
 rg -n "TODO|TBD|telegram.*token|bot[_-]?token|api[_-]?key|password|recovery" src test migrations docs
@@ -450,7 +452,7 @@ git status --short
 
 Expected: 不新增 `TODO`/`TBD`、真实凭据或恢复码；新增外部请求、认证、原子写入和价格来源代码均含中文详细注释，且工作区只包含预期改动。
 
-- [ ] **Step 4: 标注实施计划完成并提交文档**
+- [x] **Step 4: 标注实施计划完成并提交文档**
 
 将本计划的所有任务复选框改为 `[x]`，在顶部增加“实施状态”段落，说明美区官方名称搜索已接入、其他地区按验证状态回退官方链接，且候选发现从不使用第三方价格站。随后执行：
 
