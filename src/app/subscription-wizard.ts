@@ -36,6 +36,14 @@ export function createSubscriptionWizardState(searchResult: OfficialSearchResult
 }
 
 /**
+ * 区分“官方搜索不可用”和“官方搜索成功但没有命中”。后者常见于缺少空格、标点或使用简称，
+ * 仍是正常响应；但初次进入页面同样使用空候选模型，所以必须同时确认已提交非空查询，避免误报“未找到”。
+ */
+export function hasNoOfficialCandidates(searchResult: OfficialSearchResult, submittedQuery: string): boolean {
+  return submittedQuery.trim().length > 0 && searchResult.status === "available" && searchResult.candidates.length === 0;
+}
+
+/**
  * 点击整张候选卡时只切换该候选键。数组保留用户点击顺序，既便于批量确认按可预期顺序展示，
  * 也避免单选逻辑在用户选择第二款游戏时意外清掉第一款游戏。
  */

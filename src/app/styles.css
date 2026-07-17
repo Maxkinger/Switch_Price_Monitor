@@ -50,6 +50,7 @@ button:disabled {
 .page-header,
 .search-panel,
 .candidate-section,
+.empty-search-result,
 .fallback-panel,
 .regional-panel,
 .source-preview,
@@ -123,6 +124,7 @@ button:disabled {
 
 .search-panel,
 .candidate-section,
+.empty-search-result,
 .fallback-panel,
 .regional-panel,
 .source-preview,
@@ -215,6 +217,25 @@ button:focus-visible {
 .fallback-panel p {
   margin: 8px 0 17px;
   color: #705d52;
+}
+
+.empty-search-result {
+  /* 空结果与网络故障分开呈现：官方接口已正常答复时，给出可执行的搜索词修正，而不误导为服务异常。 */
+  color: #705d52;
+  background: #fff7ec;
+}
+
+.empty-search-result h2 {
+  margin: 0;
+  color: #2d211c;
+  font-size: clamp(19px, 2vw, 25px);
+  letter-spacing: -0.028em;
+}
+
+.empty-search-result p:not(.eyebrow) {
+  max-width: 680px;
+  margin: 9px 0 0;
+  line-height: 1.65;
 }
 
 .fallback-form input {
@@ -607,6 +628,7 @@ button:focus-visible {
   .page-header,
   .search-panel,
   .candidate-section,
+  .empty-search-result,
   .fallback-panel,
   .regional-panel,
   .source-preview,

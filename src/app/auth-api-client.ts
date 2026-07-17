@@ -24,7 +24,7 @@ export interface RecoverAuthInput {
  * 此接口故意不暴露 Cookie、令牌、管理员资料或 Worker 的原始响应。
  */
 export interface AuthApiClient {
-  getStatus(): Promise<{ initialized: boolean }>;
+  getStatus(): Promise<{ initialized: boolean; authenticated: boolean }>;
   initialize(input: InitializeAuthInput): Promise<{ recoveryCode: string }>;
   login(password: string): Promise<void>;
   recover(input: RecoverAuthInput): Promise<void>;
@@ -67,9 +67,9 @@ export function createAuthApiClient(request: typeof fetch = fetch): AuthApiClien
   }
 
   return {
-    /** 首次访问只读取是否已初始化，不读取任何管理员设置或认证材料。 */
-    async getStatus(): Promise<{ initialized: boolean }> {
-      return requestJson<{ initialized: boolean }>("/api/auth/status", "GET");
+    /** 首次访问仅读取设置和当前 HttpOnly Cookie 是否有效，借此恢复界面但不暴露任何认证材料。 */
+    async getStatus(): Promise<{ initialized: boolean; authenticated: boolean }> {
+      return requestJson<{ initialized: boolean; authenticated: boolean }>("/api/auth/status", "GET");
     },
 
     /** 初始化成功时唯一允许读取的秘密是本次必须展示给管理员保存的一次性恢复码。 */

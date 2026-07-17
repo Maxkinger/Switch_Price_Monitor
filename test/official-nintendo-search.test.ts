@@ -7,19 +7,19 @@ import { createOfficialNintendoSearch } from "../src/worker/providers/official-n
  * 从而证明解析规则不依赖管理员账号、Cookie 或真实网络，也不会把网页结构变化变成不稳定的联网测试。
  */
 describe("official Nintendo product search", () => {
-  it("normalizes a verified US Nintendo result with sale price and regular price", async () => {
-    // 价格均为最小货币单位，模拟官网搜索结果已经给出的促销价和原价；候选页据此才能正确显示划线原价与折扣。
+  it("normalizes the current US Nintendo search schema with sale price and regular price", async () => {
+    // 任天堂当前公开索引使用 title/url/eshopDetails，金额是美元主单位；适配器必须安全换算为分，才能保留候选页的划线原价与折扣。
     const search = createOfficialNintendoSearch(async (request) => {
       expect(String(request)).toContain("algolia.net");
       return Response.json({
         results: [{
           hits: [{
-            productTitle: "Overcooked! 2",
-            productLink: "/us/store/products/overcooked-2-switch/",
-            publisher: "Team17",
-            price: { salePrice: 999, regPrice: 2499, currency: "USD" },
-            imageUrl: "https://assets.nintendo.com/overcooked.jpg",
-            productType: "game",
+            title: "Overcooked! 2",
+            url: "/us/store/products/overcooked-2-switch/",
+            softwarePublisher: "Team17",
+            productImageSquare: "https://assets.nintendo.com/overcooked.jpg",
+            isUpgrade: false,
+            eshopDetails: { productType: "TITLE", regularPrice: 24.99, discountPrice: 9.99, currency: "USD" },
           }],
         }],
       });
@@ -66,5 +66,17 @@ describe("official Nintendo product search", () => {
     }));
 
     await expect(search.search("US", "Overcooked", new AbortController().signal)).resolves.toEqual({ status: "available", candidates: [] });
+  });
+
+  it("returns the official-link fallback when the public search request times out", async () => {
+    // 搜索页不可无限等待外部公开索引；超时后返回人工官方链接入口，管理员仍可继续确认商品而不是误以为按钮失效。
+    const search = createOfficialNintendoSearch((_request, init) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new Error("aborted by timeout")), { once: true });
+    }) as Promise<Response>, 1);
+
+    await expect(search.search("US", "Overcooked", new AbortController().signal)).resolves.toEqual({
+      status: "unavailable",
+      message: "该区官方搜索暂不可用，请粘贴任天堂官方商品链接。",
+    });
   });
 });

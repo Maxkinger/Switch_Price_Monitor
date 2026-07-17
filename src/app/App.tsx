@@ -26,12 +26,17 @@ export function App() {
   const [pendingAction, setPendingAction] = useState<AuthPendingAction>(null);
   const [appKey, setAppKey] = useState(0);
 
-  /** 初次加载只询问是否已完成设置，不尝试读取会话 Cookie、管理员地区或任何认证材料。 */
+  /** 初次加载只询问设置状态与 HttpOnly Cookie 是否仍有效；不读取 Cookie、管理员地区或任何认证材料。 */
   useEffect(() => {
     let isCurrent = true;
     void authApi.getStatus()
-      .then(({ initialized }) => {
-        if (isCurrent) setAuth((state) => ({ ...state, screen: initialized ? "login" : "setup", notice: null }));
+      .then(({ initialized, authenticated }) => {
+        if (isCurrent) setAuth((state) => ({
+          ...state,
+          // 已初始化且 Cookie 已验证时直接恢复受保护页面；这只依赖服务端布尔结果，不能把会话令牌暴露给 React。
+          screen: initialized ? (authenticated ? "authenticated" : "login") : "setup",
+          notice: null,
+        }));
       })
       .catch(() => {
         if (isCurrent) setAuth((state) => ({ ...state, screen: "login", notice: "认证状态暂时无法获取，请稍后重试。" }));

@@ -21,10 +21,11 @@ describe("authentication API client", () => {
     }));
   });
 
-  it("reads the public initialization flag without exposing a browser-managed session cookie", async () => {
-    const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ initialized: true }));
+  it("reads setup and verified-session flags without exposing a browser-managed session cookie", async () => {
+    // 该响应只让页面决定恢复登录界面还是已认证界面；Cookie 仍由浏览器自动携带，客户端不会读取令牌。
+    const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ initialized: true, authenticated: true }));
 
-    await expect(createAuthApiClient(request).getStatus()).resolves.toEqual({ initialized: true });
+    await expect(createAuthApiClient(request).getStatus()).resolves.toEqual({ initialized: true, authenticated: true });
     expect(request).toHaveBeenCalledWith("/api/auth/status", expect.objectContaining({ credentials: "same-origin" }));
   });
 

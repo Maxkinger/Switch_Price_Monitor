@@ -23,12 +23,18 @@ const supportedProductTypes: readonly ProductType[] = ["game", "upgrade-pack", "
  * 任天堂美区官网公开搜索适配器。它只处理已经验证字段结构的美区游戏索引；其他地区一律返回官方链接确认提示，
  * 避免把美区索引或任何第三方数据错误用于香港、日区、墨西哥区和巴西区的商品匹配。
  */
-export function createOfficialNintendoSearch(fetchOfficialSearch: typeof fetch = fetch): OfficialProductSearch {
+export function createOfficialNintendoSearch(fetchOfficialSearch: typeof fetch = fetch, timeoutMs = 12_000): OfficialProductSearch {
   return {
     async search(regionCode, query, signal) {
       if (regionCode !== "US") return unavailableSearch();
 
       let response: Response;
+      // 公开 Algolia 索引偶发保持连接但不返回；独立控制器把超时与调用方取消合并，避免管理员页面永久停在“搜索中”。
+      const timeoutController = new AbortController();
+      let timedOut = false;
+      const timeout = setTimeout(() => { timedOut = true; timeoutController.abort(); }, timeoutMs);
+      const forwardAbort = () => timeoutController.abort();
+      signal.addEventListener("abort", forwardAbort, { once: true });
       try {
         // 搜索请求只发送用户输入的名称和官网固定索引；不附带 Cookie、Nintendo Account、购买记录或浏览器会话。
         response = await fetchOfficialSearch(officialUsSearchEndpoint, {
@@ -41,11 +47,17 @@ export function createOfficialNintendoSearch(fetchOfficialSearch: typeof fetch =
           body: JSON.stringify({
             requests: [{ indexName: officialUsGameIndex, query, params: "hitsPerPage=20" }],
           }),
-          signal,
+          signal: timeoutController.signal,
         });
       } catch (error) {
+        // 超时与 HTTP 非成功一样只能证明自动搜索不可用；返回官方链接入口能让管理员继续完成验证流程。
+        if (timedOut) return unavailableSearch();
         // 只有连接、DNS 或中止等传输失败才作为网络错误上抛，路由可将其安全转换为官方链接确认提示。
         throw new ProviderNetworkError(error instanceof Error ? error.message : "official Nintendo search request failed");
+      } finally {
+        // 每次请求都清理计时器和监听器，避免已完成搜索在后续无意义地触发中止或累积 Worker 资源。
+        clearTimeout(timeout);
+        signal.removeEventListener("abort", forwardAbort);
       }
 
       // 非成功状态无法证明候选字段可信，必须退回人工官方链接而不是把 HTTP 错误页解析成“无结果”。
@@ -77,19 +89,20 @@ function parseUsOfficialSearch(value: unknown): OfficialProductCandidate[] {
 /** 从单条搜索命中读取所有受控字段；只要身份、币种、价格精度或官方主机有一个不成立就拒绝该候选。 */
 function toUsCandidate(value: unknown): OfficialProductCandidate | null {
   if (!isRecord(value)) return null;
-  const productUrl = readOfficialUsProductUrl(value.productLink);
-  const canonicalTitle = readNonEmptyString(value.productTitle);
-  const productType = readProductType(value.productType);
-  const price = readUsPrice(value.price);
+  // 任天堂 2026 年公开索引以 url/title/eshopDetails 表示商品；不可回退读取旧字段，避免结构变化时误把不完整命中写入确认流程。
+  const productUrl = readOfficialUsProductUrl(value.url);
+  const canonicalTitle = readNonEmptyString(value.title);
+  const productType = readUsProductType(value);
+  const price = readUsPrice(value.eshopDetails);
   if (!productUrl || !canonicalTitle || !productType || !price) return null;
   return {
     regionCode: "US",
     productUrl,
     canonicalTitle,
-    publisher: readNonEmptyString(value.publisher),
+    publisher: readNonEmptyString(value.softwarePublisher),
     productType,
     currency: "USD",
-    coverUrl: readOfficialCoverUrl(value.imageUrl),
+    coverUrl: readOfficialCoverUrl(value.productImageSquare),
     currentPriceMinor: price.currentPriceMinor,
     regularPriceMinor: price.regularPriceMinor,
   };
@@ -121,16 +134,36 @@ function readOfficialCoverUrl(value: unknown): string | null {
   }
 }
 
-/** 价格必须是美元分的非负安全整数；没有已验证当前价时整条命中拒绝，避免页面显示推测金额。 */
+/**
+ * 美区公开索引把价格放在 eshopDetails 且以美元主单位（例如 9.99）返回；系统内部统一使用分，
+ * 因此必须先验证精确到美分的安全数值。常规价是候选身份核对所需的基线，缺失时不伪造当前价。
+ */
 function readUsPrice(value: unknown): { currentPriceMinor: number; regularPriceMinor: number | null } | null {
-  if (!isRecord(value) || value.currency !== "USD" || !isMinorAmount(value.salePrice)) return null;
-  if (value.regPrice !== undefined && !isMinorAmount(value.regPrice)) return null;
-  return { currentPriceMinor: value.salePrice, regularPriceMinor: value.regPrice ?? null };
+  if (!isRecord(value) || value.currency !== "USD") return null;
+  const regularPriceMinor = readUsdMajorAmount(value.regularPrice);
+  if (regularPriceMinor === null) return null;
+  const discountPriceMinor = value.discountPrice === null ? null : readUsdMajorAmount(value.discountPrice);
+  if (discountPriceMinor === null && value.discountPrice !== null) return null;
+  const currentPriceMinor = discountPriceMinor ?? regularPriceMinor;
+  // 任天堂公开折扣价不应高于常规价；相反值表示响应异常，不能进入后续历史最低价或折扣展示。
+  if (currentPriceMinor > regularPriceMinor) return null;
+  return { currentPriceMinor, regularPriceMinor };
 }
 
-/** 商品类型必须来自既有持久化枚举，不能将任天堂临时展示标签直接写入订阅确认模型。 */
-function readProductType(value: unknown): ProductType | null {
-  return typeof value === "string" && supportedProductTypes.includes(value as ProductType) ? value as ProductType : null;
+/**
+ * 官网索引使用商城枚举而不是持久化商品类别。升级标记优先于 TITLE，随后把受控商城类型映射到领域枚举；
+ * 未知值一律拒绝，防止把临时营销分类、DLC 或本体混淆后保存为错误订阅。
+ */
+function readUsProductType(value: Record<string, unknown>): ProductType | null {
+  if (value.isUpgrade === true) return "upgrade-pack";
+  const details = value.eshopDetails;
+  if (!isRecord(details) || typeof details.productType !== "string") return null;
+  if (details.productType === "TITLE") return "game";
+  if (details.productType === "BUNDLE") return "bundle";
+  if (details.productType === "DLC") {
+    return value.dlcType === "Expansion Pass" || value.dlcType === "Season Pass" ? "season-pass" : "dlc";
+  }
+  return null;
 }
 
 /** 公开搜索文本字段只接受去除空白后仍有内容的字符串，拒绝对象、数组和空字符串的隐式转换。 */
@@ -138,9 +171,11 @@ function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-/** 美区搜索结果以分为单位，必须为非负安全整数，避免浮点价格污染历史最低价与折扣计算。 */
-function isMinorAmount(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+/** 将任天堂美元主单位安全转换为分；超过两位小数或超出安全整数范围的金额不可信，不能参与价格比较。 */
+function readUsdMajorAmount(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
+  const minor = Math.round(value * 100);
+  return Number.isSafeInteger(minor) && Math.abs(value - minor / 100) < 0.000_001 ? minor : null;
 }
 
 /** 将外部 JSON 收窄为普通对象，避免数组、null 或带原型对象绕过字段验证。 */

@@ -23,13 +23,16 @@ describe("authentication HTTP routes", () => {
     expect(login.headers.get("set-cookie")).toContain("Secure");
   });
 
-  it("reports only whether first-run setup is required without exposing administrator data", async () => {
-    // 前端需要据此决定显示初始化页还是登录页；响应只含布尔值，不能泄露地区、密码哈希、会话或恢复码状态。
-    await expect((await call("/api/auth/status", undefined, null, "GET")).json()).resolves.toEqual({ initialized: false });
+  it("reports setup and current-session state without exposing administrator data", async () => {
+    // 刷新 SPA 时只能依据两个布尔值恢复界面：是否需首次设置、当前请求的 HttpOnly Cookie 是否有效；响应不得泄露令牌、密码哈希或管理员配置。
+    await expect((await call("/api/auth/status", undefined, null, "GET")).json()).resolves.toEqual({ initialized: false, authenticated: false });
 
     await initializeThroughHttp();
+    await expect((await call("/api/auth/status", undefined, null, "GET")).json()).resolves.toEqual({ initialized: true, authenticated: false });
 
-    await expect((await call("/api/auth/status", undefined, null, "GET")).json()).resolves.toEqual({ initialized: true });
+    const login = await call("/api/auth/login", { password: "correct-horse-battery-staple" });
+    await expect((await call("/api/auth/status", undefined, login.headers.get("set-cookie"), "GET")).json())
+      .resolves.toEqual({ initialized: true, authenticated: true });
   });
 
   it("returns a retryable lock response after repeated invalid login requests", async () => {

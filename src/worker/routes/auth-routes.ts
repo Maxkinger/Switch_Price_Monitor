@@ -14,9 +14,13 @@ import {
  */
 export async function handleAuthRoute(request: Request, database: D1Database): Promise<Response | null> {
   const path = new URL(request.url).pathname;
-  // 此公开状态端点只暴露是否已完成首次设置，供 React 在不试错提交密码的情况下选择正确的认证界面。
+  // 此公开状态端点只返回首次设置与当前 Cookie 的有效性两个布尔值，供 SPA 刷新后安全恢复界面；绝不返回令牌、管理员资料或地区配置。
   if (request.method === "GET" && path === "/api/auth/status") {
-    return Response.json({ initialized: await new AuthService(database).isInitialized() });
+    const auth = new AuthService(database);
+    return Response.json({
+      initialized: await auth.isInitialized(),
+      authenticated: await auth.authenticate(readSessionCookie(request.headers.get("cookie")), new Date().toISOString()),
+    });
   }
   // 仅列出的 POST 路由由认证模块消费；其余请求交回 Worker 主路由，避免遮蔽未来的静态资源或 API。
   if (request.method !== "POST" || !["/api/auth/initialize", "/api/auth/login", "/api/auth/recover", "/api/auth/logout"].includes(path)) return null;

@@ -4,6 +4,7 @@ import type { OfficialProductCandidate } from "../src/shared/domain";
 import {
   candidatePriceLabel,
   createSubscriptionWizardState,
+  hasNoOfficialCandidates,
   setRegionalCandidate,
   toggleCandidate,
 } from "../src/app/subscription-wizard";
@@ -39,6 +40,14 @@ describe("subscription wizard state", () => {
 
     expect(next.regionalConfirmations["US:kirby:HK"]).toEqual(hongKongKirby());
     expect(next.regionalConfirmations["US:overcooked:HK"]).toBeUndefined();
+  });
+
+  it("identifies a successful official search with no candidates so the page can show a next step", () => {
+    // 官方接口正常返回空数组不等同于网络故障；但首次进入的初始空模型没有提交过查询，不能错误显示为“未找到”。
+    expect(hasNoOfficialCandidates({ status: "available", candidates: [] }, "")).toBe(false);
+    expect(hasNoOfficialCandidates({ status: "available", candidates: [] }, "OverCooked2")).toBe(true);
+    expect(hasNoOfficialCandidates({ status: "available", candidates: [overcooked()] }, "Overcooked! 2")).toBe(false);
+    expect(hasNoOfficialCandidates({ status: "unavailable", message: "该区官方搜索暂不可用，请粘贴任天堂官方商品链接。" }, "Overcooked! 2")).toBe(false);
   });
 });
 

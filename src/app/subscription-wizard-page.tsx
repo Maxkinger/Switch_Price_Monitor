@@ -3,6 +3,7 @@ import { createProductApiClient, ProductApiError, type RegionResolutionResponse 
 import {
   candidatePriceLabel,
   createSubscriptionWizardState,
+  hasNoOfficialCandidates,
   regionalConfirmationKey,
   setRegionalCandidate,
   toggleCandidate,
@@ -468,6 +469,17 @@ export function SubscriptionWizardPage({ onUnauthorized }: { onUnauthorized: () 
                 {wizard.submitState === "submitting" ? "确认中…" : "确认订阅"}
               </button>
             </div>
+          </section>
+        ) : null}
+
+        {hasNoOfficialCandidates(wizard.searchResult, wizard.query) ? (
+          <section className="empty-search-result" aria-live="polite" aria-labelledby="empty-search-title">
+            <p className="eyebrow">官方搜索已完成</p>
+            <h2 id="empty-search-title">未找到美区官方候选商品</h2>
+            <p>
+              任天堂官方索引没有匹配“{wizard.query}”。请尝试完整商品名称与标点，例如 “Overcooked! 2”；
+              若已找到商品页，也可在官方搜索不可用时粘贴官方链接核验。
+            </p>
           </section>
         ) : null}
 
