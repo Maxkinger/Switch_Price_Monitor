@@ -125,7 +125,7 @@ Run: `npm test -- --run test/manual-refresh-repository.test.ts test/api-refresh.
 
 Expected: PASS；测试 D1 含 `0006` 后的新表结构，冷却原子且不含状态队列 API。
 
-- [ ] **Step 5: 等待用户确认后提交并推送 Task 1**
+- [x] **Step 5: 等待用户确认后提交并推送 Task 1**
 
 拟提交范围：`0006` 迁移、迁移测试装配、刷新仓储、六小时 Cron 解耦及相关测试。确认后执行：
 
@@ -209,7 +209,7 @@ Run: `npm test -- --run test/api-refresh.test.ts test/worker-maintenance.test.ts
 
 Expected: PASS；立即请求只执行一次，复用既有采集规则且不会在路由层展开来源、汇率或通知细节。
 
-- [ ] **Step 5: 等待用户确认后提交并推送 Task 2**
+- [x] **Step 5: 等待用户确认后提交并推送 Task 2**
 
 拟提交范围：立即刷新服务/路由、Worker 运行器装配及相关后端测试。确认后执行：
 
@@ -239,7 +239,7 @@ git push origin main
 - `createDashboardApiClient().refreshNow()` returns `CompletedRefreshResult` with same-origin credentials.
 - Produces `immediateRefreshNotice(result)`，返回 `已完成本次采集：成功 X 个地区，待确认 Y 个地区。`。
 
-- [ ] **Step 1: 写入失败测试**
+- [x] **Step 1: 写入失败测试**
 
 替换旧排队文案测试并补充客户端读取：
 
@@ -257,13 +257,13 @@ it("reads an immediate refresh result with same-origin credentials", async () =>
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/dashboard-api-client.test.ts test/dashboard-page-state.test.ts`
 
 Expected: FAIL，因为客户端和状态模块仍使用 `queueRefresh`、`queued` DTO 与等待 Cron 文案。
 
-- [ ] **Step 3: 实现浏览器完成反馈与重读**
+- [x] **Step 3: 实现浏览器完成反馈与重读**
 
 在客户端定义并返回 `CompletedRefreshResult`：
 
@@ -283,7 +283,7 @@ async refreshNow(): Promise<CompletedRefreshResult> {
 
 用 `immediateRefreshNotice` 替代 `refreshWaitingNotice`。仪表盘的刷新动作先等待 `refreshNow()`，再调用 `getDashboard()` 回填概览并显示结果；订阅详情的刷新动作先等待 `refreshNow()`，再调用既有 `reload()`。两处保留 `401` 安全回退和 `429` 的 Worker 文案，不从前端猜测冷却时间。
 
-- [ ] **Step 4: 运行前端与全量质量门禁**
+- [x] **Step 4: 运行前端与全量质量门禁**
 
 Run: `npm test -- --run && npx tsc --noEmit && npm run build && ! rg -n "等待采集任务执行|claimQueued|manualRefreshConsumed" src test && git diff --check`
 

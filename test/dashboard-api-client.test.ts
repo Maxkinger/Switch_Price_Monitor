@@ -21,6 +21,20 @@ describe("dashboard API client", () => {
     expect(request).toHaveBeenNthCalledWith(3, "/api/subscriptions/subscription-overcooked-2", expect.objectContaining({ method: "PATCH", credentials: "same-origin" }));
   });
 
+  it("reads an immediate refresh result with same-origin credentials", async () => {
+    // 200 只携带本轮聚合计数；客户端不得额外读取商品 URL、原始价格或供应商页面内容。
+    const request = vi.fn(async () => Response.json({
+      status: "completed",
+      executedAt: "2026-07-17T01:00:00.000Z",
+      attempted: 2,
+      collected: 1,
+      stale: 1,
+    })) as unknown as typeof fetch;
+
+    await expect(createDashboardApiClient(request).refreshNow()).resolves.toMatchObject({ status: "completed", collected: 1 });
+    expect(request).toHaveBeenCalledWith("/api/refresh", expect.objectContaining({ method: "POST", credentials: "same-origin" }));
+  });
+
   it("preserves a refresh cooldown timestamp without retaining an API response body", async () => {
     // 429 只给页面显示下一可请求时间，错误对象不能保留可能含敏感内容的原始 JSON 或 Response 实例。
     const request = vi.fn(async () => Response.json(
@@ -28,7 +42,7 @@ describe("dashboard API client", () => {
       { status: 429 },
     )) as unknown as typeof fetch;
 
-    await expect(createDashboardApiClient(request).queueRefresh()).rejects.toEqual(
+    await expect(createDashboardApiClient(request).refreshNow()).rejects.toEqual(
       new DashboardApiError("刷新过于频繁。", 429, "2026-07-17T01:15:00.000Z"),
     );
   });

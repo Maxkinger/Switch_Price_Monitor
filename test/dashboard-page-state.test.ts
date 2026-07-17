@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { DashboardApiError } from "../src/app/dashboard-api-client";
-import { applyDetailRequestFailure, initialDetailState, refreshWaitingNotice } from "../src/app/dashboard-page-state";
+import { applyDetailRequestFailure, immediateRefreshNotice, initialDetailState } from "../src/app/dashboard-page-state";
 
 /** 页面状态机测试将安全登出、表单草稿与刷新队列文案从 React 渲染中分离，避免错误处理分支彼此覆盖。 */
 describe("dashboard page state", () => {
@@ -17,8 +17,14 @@ describe("dashboard page state", () => {
     expect(applyDetailRequestFailure(invalid, new DashboardApiError("请先登录。", 401))).toEqual({ kind: "unauthorized" });
   });
 
-  it("turns a queued refresh response into an honest waiting notice", () => {
-    // 202 仅表示 Worker 已写入队列，页面不得把它表述为已完成价格抓取。
-    expect(refreshWaitingNotice({ status: "queued", requestedAt: "2026-07-17T00:00:00.000Z", nextAllowedAt: "2026-07-17T00:15:00.000Z" })).toBe("已排队，等待采集任务执行。");
+  it("turns a completed manual refresh into a result notice", () => {
+    // 仅在服务端采集完成后展示成功与待确认计数；页面不根据卡片数量自行推断本轮结果。
+    expect(immediateRefreshNotice({
+      status: "completed",
+      executedAt: "2026-07-17T01:00:00.000Z",
+      attempted: 5,
+      collected: 3,
+      stale: 2,
+    })).toBe("已完成本次采集：成功 3 个地区，待确认 2 个地区。");
   });
 });

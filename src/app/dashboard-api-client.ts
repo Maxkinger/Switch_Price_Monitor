@@ -58,6 +58,18 @@ export interface HistorySnapshot extends DashboardPrice {
   currency: string;
 }
 
+/**
+ * 立即刷新完成结果只携带服务端聚合计数和执行时刻；页面据此提示管理员并重新读取持久化仪表盘，
+ * 不在浏览器内保存供应商页面、地区商品链接、原始价格响应或任何会话数据。
+ */
+export interface CompletedRefreshResult {
+  status: "completed";
+  executedAt: string;
+  attempted: number;
+  collected: number;
+  stale: number;
+}
+
 /** PATCH 的三个互斥更新形状严格对应 Worker 现有校验，避免前端拼接未支持的自由字段。 */
 export type SubscriptionUpdate =
   | { enabled: boolean }
@@ -116,9 +128,12 @@ export function createDashboardApiClient(request: typeof fetch = fetch) {
       return requestJson<{ snapshots: HistorySnapshot[] }>(`/api/history?${query.toString()}`, "GET");
     },
 
-    /** 手动刷新只排队；202 响应不是“价格已更新”，页面必须显示等待下一轮采集的诚实状态。 */
-    async queueRefresh(): Promise<{ status: "queued"; requestedAt: string; nextAllowedAt: string }> {
-      return requestJson<{ status: "queued"; requestedAt: string; nextAllowedAt: string }>("/api/refresh", "POST");
+    /**
+     * 手动刷新在 Worker 完成统一采集后才返回；调用页仍要重新读取详情或仪表盘，
+     * 以避免浏览器依据聚合计数自行拼接价格、汇率、历史最低价或过期状态。
+     */
+    async refreshNow(): Promise<CompletedRefreshResult> {
+      return requestJson<CompletedRefreshResult>("/api/refresh", "POST");
     },
 
     /** 保存一类订阅配置后由页面重新读取详情，避免本地合并覆盖 Worker 的校验结果或并发变更。 */

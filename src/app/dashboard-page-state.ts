@@ -1,4 +1,4 @@
-import { DashboardApiError } from "./dashboard-api-client";
+import { DashboardApiError, type CompletedRefreshResult } from "./dashboard-api-client";
 
 /**
  * 详情页在内存中保留的目标价草稿。金额继续使用 Worker 的最小货币单位，
@@ -35,9 +35,9 @@ export function applyDetailRequestFailure(state: DetailRequestState, error: Dash
 }
 
 /**
- * 手动刷新返回 202 只代表队列已持久化，文案明确说明等待任务执行，
- * 防止管理员误把尚未访问任天堂官方商店的状态理解为价格已经更新。
+ * 手动刷新只在服务端统一采集结束后返回 completed。浏览器仅展示聚合计数，
+ * 实际价格、来源、历史最低价和过期判断必须由页面随后重新读取 Worker 仪表盘获取。
  */
-export function refreshWaitingNotice(_result: { status: "queued"; requestedAt: string; nextAllowedAt: string }): string {
-  return "已排队，等待采集任务执行。";
+export function immediateRefreshNotice(result: CompletedRefreshResult): string {
+  return `已完成本次采集：成功 ${result.collected} 个地区，待确认 ${result.stale} 个地区。`;
 }
