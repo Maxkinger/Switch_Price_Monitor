@@ -220,7 +220,7 @@ Run: `npm test -- --run test/subscription-wizard.test.ts test/dashboard-api-clie
 
 Expected: PASS；新订阅会自动采用安全匹配，未处理地区无法静默提交，详情可补全而不移除既有地区。
 
-- [ ] **Step 5: 等待用户确认后提交并推送 Task 3**
+- [x] **Step 5: 已确认后提交并推送 Task 3**
 
 拟提交范围：设置驱动的向导状态与页面、订阅详情补全界面、客户端和前端测试。
 
@@ -239,17 +239,17 @@ git push origin main
 - Modify: `docs/quality/quality-and-acceptance.md`
 - Modify: `docs/superpowers/plans/2026-07-17-settings-driven-region-completion.md`
 
-- [ ] **Step 1: 更新实施状态与验收说明**
+- [x] **Step 1: 更新实施状态与验收说明**
 
 将规格索引和 FR-001 更新为“已实施，待生产逐区验收”，记录：默认区仅是搜索入口、服务端设置为地区事实来源、自动匹配/显式跳过、已有订阅原子补全和不删除历史的边界。
 
-- [ ] **Step 2: 运行完整质量门禁**
+- [x] **Step 2: 运行完整质量门禁**
 
 Run: `npm test -- --run && npx tsc --noEmit && npm run build && ! rg -n "regionChoices\.map\(\(region\) => region\.code\)|resolveRegions\([^)]*," src test && git diff --check`
 
 Expected: 全部测试、类型检查和构建通过；生产代码不再把前端硬编码地区数组作为跨区解析范围。
 
-- [ ] **Step 3: 生产迁移、部署与受控验收**
+- [x] **Step 3: 生产迁移、部署与受控验收**
 
 不需要数据迁移。获得用户明确允许后：
 
