@@ -11,11 +11,14 @@ import { handleProductRoute } from "./routes/product-routes";
 import { handleSettingsRoute } from "./routes/settings-routes";
 import { handleSubscriptionRoute } from "./routes/subscription-routes";
 import { createNintendoPriceApiProvider } from "./providers/official-nintendo-price-api";
+import { createOfficialNintendoProductPageResolver } from "./providers/official-nintendo-product-page";
+import { createOfficialNintendoSearch } from "./providers/official-nintendo-search";
 import { RetentionRepository } from "./repositories/retention-repository";
 import { NotificationEventRepository } from "./repositories/notification-event-repository";
 import { SettingsRepository } from "./repositories/settings-repository";
 import { DashboardService } from "./services/dashboard-service";
 import { OfficialPriceIdService } from "./services/official-price-id-service";
+import { OfficialProductDiscoveryService } from "./services/official-product-discovery-service";
 import type { DailyReportSubscription } from "./services/report-service";
 import { RetentionService } from "./services/retention-service";
 import { runPendingNotificationDelivery, runScheduled, runScheduledMaintenance } from "./services/scheduler-service";
@@ -70,6 +73,12 @@ const worker: ExportedHandler<Env> = {
       request,
       env.DB,
       new SubscriptionPreviewService(new OfficialPriceIdService(createNintendoPriceApiProvider()), defaultFallbackSources),
+      // 商品发现只在管理员会话通过后由路由触发；服务端构造可确保官网搜索配置、商品页请求和用户浏览器完全隔离。
+      new OfficialProductDiscoveryService(
+        new SettingsRepository(env.DB),
+        createOfficialNintendoSearch(),
+        createOfficialNintendoProductPageResolver(),
+      ),
     );
     if (productResponse) return productResponse;
 

@@ -1,6 +1,7 @@
 import { initialRegionCodes, type RegionCode } from "../../shared/domain";
 import type { ProductType } from "../providers/types";
 import type { OfficialPriceIdCandidate } from "../services/official-price-id-service";
+import type { OfficialProductDiscoveryService } from "../services/official-product-discovery-service";
 import { SubscriptionPreviewService } from "../services/subscription-preview-service";
 import { requireAdmin } from "./auth-guard";
 
@@ -12,10 +13,13 @@ export async function handleProductRoute(
   request: Request,
   database: D1Database,
   preview: SubscriptionPreviewService,
+  discovery?: Pick<OfficialProductDiscoveryService, "searchDefaultRegion">,
 ): Promise<Response | null> {
   const path = new URL(request.url).pathname;
-  // 精确匹配方法和地址，未来的商品搜索、确认持久化端点不会被本预览路由意外截获。
-  if (request.method !== "POST" || path !== "/api/products/preview-sources") return null;
+  // 精确白名单避免商品路由截获静态资源或未来端点；搜索服务未注入时保留旧预览路由的可测试性。
+  const isPreview = request.method === "POST" && path === "/api/products/preview-sources";
+  const isSearch = request.method === "POST" && path === "/api/products/search" && discovery !== undefined;
+  if (!isPreview && !isSearch) return null;
 
   // 必须先验证管理员会话才解析请求体或访问官方接口，避免匿名调用借预览端点放大任天堂请求负载。
   if (!(await requireAdmin(request, database))) {
@@ -23,6 +27,11 @@ export async function handleProductRoute(
   }
 
   try {
+    if (isSearch && discovery) {
+      // 查询长度在 Worker 边界限制为 1..100，避免匿名以外的管理员也能把超长文本原样转发给官网公开搜索服务。
+      const query = readSearchQuery(await request.json<unknown>());
+      return Response.json(await discovery.searchDefaultRegion(query));
+    }
     const candidates = readConfirmationCandidates(await request.json<unknown>());
     // 服务只产生瞬时 DTO；即使官方验证失败，异常也不会把用户 URL、外部响应或秘密写入 D1。
     return Response.json({ regions: await preview.create(candidates) });
@@ -37,6 +46,14 @@ export async function handleProductRoute(
       { status: isValidationError ? 422 : 500 },
     );
   }
+}
+
+/** 名称搜索只接受去除首尾空白后的有限长度文本，地区始终由服务端设置决定，浏览器不能附带地区覆盖字段。 */
+function readSearchQuery(value: unknown): string {
+  if (!isRecord(value) || typeof value.query !== "string") throw new ProductPreviewRequestError("搜索名称无效。");
+  const query = value.query.trim();
+  if (query.length === 0 || query.length > 100) throw new ProductPreviewRequestError("搜索名称长度应为 1 到 100 个字符。");
+  return query;
 }
 
 /** 路由输入错误使用独立类型，避免把管理员表单问题误记为来源适配器或数据库故障。 */
