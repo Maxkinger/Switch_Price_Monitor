@@ -323,7 +323,7 @@ Run: `npm test -- --run && npm run test:dom -- --run && npx tsc --noEmit && npm 
 
 Expected: PASS；硬删除、既有软停用、全局请求加载、仪表盘和详情页面回归均通过，构建产物无类型或空白错误。
 
-- [ ] **Step 5: 提交 Task 4（等待用户确认）**
+- [x] **Step 5: 提交 Task 4（已确认并推送 `cb11066`）**
 
 拟提交范围：详情页删除返回、最终文档与全量质量门禁记录。
 
