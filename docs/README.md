@@ -28,7 +28,7 @@
 | [公开偏好设置页实施计划](superpowers/plans/2026-07-17-public-settings-page.md) | 同源设置客户端、`/settings` 路由、响应式页面、文档追踪与质量门禁 | 已完成 |
 | [立即手动刷新设计规格](superpowers/specs/2026-07-17-immediate-manual-refresh-design.md) | 手动采集立即执行、15 分钟冷却与六小时 Cron 独立运行边界 | 已实现，生产美区样本验收已通过 |
 | [仪表盘与订阅详情设计规格](superpowers/specs/2026-07-17-dashboard-subscription-detail-design.md) | 概览优先仪表盘、单页订阅详情、趋势与安全编辑边界 | 已确认，待实施 |
-| [订阅硬删除与全局请求加载设计规格](superpowers/specs/2026-07-18-subscription-hard-delete-global-loading-design.md) | 仪表盘多选永久删除、详情删除返回及全局网络加载动画 | 已实施；本地完整质量门禁通过，尚未部署本次变更 |
+| [订阅硬删除与全局请求加载设计规格](superpowers/specs/2026-07-18-subscription-hard-delete-global-loading-design.md) | 仪表盘多选永久删除、详情删除返回及全局网络加载动画 | 已部署；公开可用性与两条生产删除路径均已验证 |
 | [订阅硬删除与全局请求加载实施计划](superpowers/plans/2026-07-18-subscription-hard-delete-global-loading.md) | 请求计数器、批量原子删除、仪表盘/详情入口与最终质量验收 | 已完成，已推送 `cb11066` |
 | [五区真实价格采集设计规格](superpowers/specs/2026-07-17-five-region-live-collection-design.md) | 五区独立官方适配器、第三方回退、真实采集执行与验收边界 | 已确认，已实施；第三方实际回退待来源许可 |
 | [五区真实价格采集实施计划](superpowers/plans/2026-07-17-five-region-live-collection.md) | 官方五区采集、汇率、Cron 与未获准第三方禁用边界的测试先行实施顺序 | 已完成 |
