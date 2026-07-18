@@ -27,6 +27,8 @@ export type RegionResolutionResponse =
       status: "needs-manual-selection";
       message: string;
       candidates: OfficialProductCandidate[];
+      /** Worker 依据官方身份信号计算的首屏候选数；前端只能用它折叠展示，不能自行生成或扩大推荐范围。 */
+      featuredCandidateCount: number;
     }
   | {
       candidateKey: string;

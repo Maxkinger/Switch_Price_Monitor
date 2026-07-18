@@ -72,6 +72,7 @@ describe("official product discovery service", () => {
       regionCode: "JP",
       status: "needs-manual-selection",
       candidates: [first, second],
+      featuredCandidateCount: 2,
     }]);
   });
 
@@ -93,6 +94,46 @@ describe("official product discovery service", () => {
     }]);
   });
 
+  it("automatically matches one localized Japanese candidate when independent official identity signals agree", async () => {
+    // 日文别名不应掩盖同一官方商品：拉丁主标题、Switch 2 Edition、发行商和受控类型全部一致且只有一项时，
+    // 才能安全省去人工点击；本用例锁定该规则不会退化为仅比较完整英文标题。
+    const anchor = usCandidate({ canonicalTitle: "Overcooked! 2 – Nintendo Switch 2 Edition" });
+    const localized = japaneseCandidate({ canonicalTitle: "Overcooked® 2 - オーバークック２ Nintendo Switch 2 Edition" });
+    const service = new OfficialProductDiscoveryService(
+      { get: async () => ({ defaultSearchRegion: "US", enabledRegions: ["US", "JP"] }) },
+      { search: async () => ({ status: "available" as const, candidates: [localized] }) },
+      { resolve: async () => null },
+    );
+
+    await expect(service.resolveRegions([anchor])).resolves.toEqual([{
+      candidateKey: `US:${anchor.productUrl}`,
+      regionCode: "JP",
+      status: "automatic",
+      candidate: localized,
+    }]);
+  });
+
+  it("keeps multiple localized matches manual and marks every high-confidence candidate as featured", async () => {
+    // 即使两条日区商品都与锚点拥有足够身份信号，也不能按搜索顺序猜测；返回的推荐数量只指导前端展示，
+    // 不会让浏览器自行确认或改变最终官方链接复验。
+    const anchor = usCandidate({ canonicalTitle: "Overcooked! 2 – Nintendo Switch 2 Edition" });
+    const first = japaneseCandidate({ canonicalTitle: "Overcooked® 2 - オーバークック２ Nintendo Switch 2 Edition", productUrl: "https://store-jp.nintendo.com/item/software/D70010000106251/" });
+    const second = japaneseCandidate({ canonicalTitle: "Overcooked® 2 - オーバークック２ Nintendo Switch 2 Edition", productUrl: "https://store-jp.nintendo.com/item/software/D70010000106252/" });
+    const service = new OfficialProductDiscoveryService(
+      { get: async () => ({ defaultSearchRegion: "US", enabledRegions: ["US", "JP"] }) },
+      { search: async () => ({ status: "available" as const, candidates: [second, first] }) },
+      { resolve: async () => null },
+    );
+
+    await expect(service.resolveRegions([anchor])).resolves.toEqual([{
+      candidateKey: `US:${anchor.productUrl}`,
+      regionCode: "JP",
+      status: "needs-manual-selection",
+      candidates: [first, second],
+      featuredCandidateCount: 2,
+    }]);
+  });
+
   it("requires sorted manual selection when more than one strict official match exists", async () => {
     // 即使两项都满足自动身份规则，也不能任意挑选第一项；管理员必须看到完整官方候选。
     // 固定排序避免任天堂搜索响应的顺序波动导致页面选中状态错位或视觉闪烁。
@@ -109,6 +150,7 @@ describe("official product discovery service", () => {
       regionCode: "JP",
       status: "needs-manual-selection",
       candidates: [first, second],
+      featuredCandidateCount: 2,
     }]);
   });
 
@@ -132,7 +174,7 @@ describe("official product discovery service", () => {
 });
 
 /** 返回一条完整美区候选，作为默认区搜索与跨区确认的稳定身份基线。 */
-function usCandidate(): OfficialProductCandidate {
+function usCandidate(overrides: Partial<OfficialProductCandidate> = {}): OfficialProductCandidate {
   return {
     regionCode: "US",
     productUrl: "https://www.nintendo.com/us/store/products/overcooked-2-switch/",
@@ -143,6 +185,7 @@ function usCandidate(): OfficialProductCandidate {
     coverUrl: null,
     currentPriceMinor: 999,
     regularPriceMinor: null,
+    ...overrides,
   };
 }
 

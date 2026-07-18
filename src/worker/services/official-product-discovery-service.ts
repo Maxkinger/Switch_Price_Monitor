@@ -12,7 +12,7 @@ export interface DiscoverySettingsReader {
 /** 每个已选默认区商品在另一启用地区的确认状态；候选永远绑定 `candidateKey`，不会在多选时串给其他游戏。 */
 export type RegionResolution =
   | { candidateKey: string; regionCode: RegionCode; status: "automatic"; candidate: OfficialProductCandidate }
-  | { candidateKey: string; regionCode: RegionCode; status: "needs-manual-selection"; candidates: OfficialProductCandidate[] }
+  | { candidateKey: string; regionCode: RegionCode; status: "needs-manual-selection"; candidates: OfficialProductCandidate[]; featuredCandidateCount: number }
   | { candidateKey: string; regionCode: RegionCode; status: "needs-manual-link" };
 
 /** 未初始化设置或官方链接无法验证时使用受控领域错误，路由可返回中文 422/409 而不回显任天堂响应。 */
@@ -71,9 +71,20 @@ export class OfficialProductDiscoveryService {
     const sameTypeCandidates = verifiedSameTypeCandidates(candidate, regionCode, result.candidates);
     const matches = sameTypeCandidates.filter((option) => hasSameOfficialIdentity(candidate, option));
     if (matches.length === 1) return { candidateKey, regionCode, status: "automatic", candidate: matches[0] };
-    return sameTypeCandidates.length > 0
-      ? { candidateKey, regionCode, status: "needs-manual-selection", candidates: sameTypeCandidates }
-      : { candidateKey, regionCode, status: "needs-manual-link" };
+    const localizedMatches = sameTypeCandidates.filter((option) => localizedIdentityRelevance(candidate, option) === 2);
+    if (localizedMatches.length === 1) return { candidateKey, regionCode, status: "automatic", candidate: localizedMatches[0] };
+    const rankedCandidates = rankRegionalCandidates(candidate, sameTypeCandidates);
+    if (rankedCandidates.length === 0) return { candidateKey, regionCode, status: "needs-manual-link" };
+
+    // 推荐数量由 Worker 根据已验证的官方字段计算，浏览器只能据此折叠显示，不能依靠标题或价格重新推断匹配关系。
+    const relatedCandidateCount = rankedCandidates.filter((option) => localizedIdentityRelevance(candidate, option) > 0).length;
+    return {
+      candidateKey,
+      regionCode,
+      status: "needs-manual-selection",
+      candidates: rankedCandidates,
+      featuredCandidateCount: relatedCandidateCount > 0 ? relatedCandidateCount : Math.min(3, rankedCandidates.length),
+    };
   }
 }
 
@@ -104,6 +115,17 @@ function compareOfficialCandidates(left: OfficialProductCandidate, right: Offici
   return titleOrder !== 0 ? titleOrder : left.productUrl.localeCompare(right.productUrl);
 }
 
+/**
+ * 本地化候选先按可审计的官方身份信号排序，再沿用标题和 URL 的稳定顺序。相关度只决定人工界面的展示优先级；
+ * 唯一的最高相关度候选才可自动确认，避免日文别名、同名 DLC 或营销标题被浏览器或搜索顺序误配。
+ */
+function rankRegionalCandidates(anchor: OfficialProductCandidate, candidates: OfficialProductCandidate[]): OfficialProductCandidate[] {
+  return [...candidates].sort((left, right) => {
+    const relevanceOrder = localizedIdentityRelevance(anchor, right) - localizedIdentityRelevance(anchor, left);
+    return relevanceOrder !== 0 ? relevanceOrder : compareOfficialCandidates(left, right);
+  });
+}
+
 /** 候选键只使用默认区的地区与官方 URL；标题可能随语言变化，URL 是当前向导内更稳定且已验证的身份来源。 */
 export function officialCandidateKey(candidate: Pick<OfficialProductCandidate, "regionCode" | "productUrl">): string {
   return `${candidate.regionCode}:${candidate.productUrl}`;
@@ -113,6 +135,38 @@ export function officialCandidateKey(candidate: Pick<OfficialProductCandidate, "
 function hasSameOfficialIdentity(left: OfficialProductCandidate, right: OfficialProductCandidate): boolean {
   if (normalizeTitle(left.canonicalTitle) !== normalizeTitle(right.canonicalTitle) || left.productType !== right.productType) return false;
   return left.publisher === null || right.publisher === null || normalizeTitle(left.publisher) === normalizeTitle(right.publisher);
+}
+
+/**
+ * 为本地化标题计算有限的官方身份相关度。2 表示可用于自动确认的完整独立证据，1 仅表示应优先展示；
+ * 发行商缺失、类型差异或只共享泛化版本文案时返回 0，防止把相同引擎版本、同名系列或附加内容误当作同一商品。
+ */
+function localizedIdentityRelevance(anchor: OfficialProductCandidate, option: OfficialProductCandidate): 0 | 1 | 2 {
+  if (anchor.productType !== option.productType || anchor.publisher === null || option.publisher === null || normalizeTitle(anchor.publisher) !== normalizeTitle(option.publisher)) return 0;
+  const anchorTitle = latinTitleMarker(anchor.canonicalTitle);
+  if (anchorTitle === null || anchorTitle !== latinTitleMarker(option.canonicalTitle)) return 0;
+  const anchorEdition = editionMarker(anchor.canonicalTitle);
+  return anchorEdition !== null && anchorEdition === editionMarker(option.canonicalTitle) ? 2 : 1;
+}
+
+/**
+ * 从不同语言的官方标题中提取首个同时包含三个以上拉丁字母和数字的主标题标记。
+ * Unicode NFKC 会统一全角数字与商标排版，例如 `Overcooked® 2` 和 `Overcooked! ２` 都成为 `overcooked2`；
+ * 纯版本词或纯数字不足以作为游戏身份，因而返回 null，不能触发自动确认。
+ */
+function latinTitleMarker(title: string): string | null {
+  const matched = title.normalize("NFKC").toLocaleLowerCase().match(/[a-z]{3,}(?:[^\p{L}\p{N}]+\d+)+/u)?.[0];
+  if (!matched) return null;
+  const normalized = matched.replace(/[^a-z0-9]+/gu, "");
+  return /[a-z]{3,}/u.test(normalized) && /\d/u.test(normalized) ? normalized : null;
+}
+
+/**
+ * 版本标记是本地化自动确认的第二项独立信号。当前只接受明确的 Switch 2 Edition 英文官方标记；
+ * 未识别的新版本命名必须降级为人工确认，而不是猜测其等价关系。
+ */
+function editionMarker(title: string): string | null {
+  return /nintendo\s+switch\s*2\s+edition/iu.test(title.normalize("NFKC")) ? "nintendo-switch-2-edition" : null;
 }
 
 /** 规范化只用于瞬时自动匹配，不覆盖或修改管理员最终确认的官方标题。 */

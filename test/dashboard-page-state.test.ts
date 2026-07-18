@@ -34,7 +34,8 @@ describe("dashboard page state", () => {
     // 以确保“确认补全”是唯一的持久化入口，浏览器也不会自行推断跨区商品。
     const confirmations = applyAutomaticMissingResolutions([
       { candidateKey: "US:overcooked", regionCode: "JP" as const, status: "automatic" as const, candidate: japaneseCandidate() },
-      { candidateKey: "US:overcooked", regionCode: "MX" as const, status: "needs-manual-selection" as const, message: "请选择该区官方候选商品", candidates: [mexicanCandidate()] },
+      // 服务端推荐数量只影响候选首屏显示；详情页状态机仍仅自动采用 automatic，人工候选绝不绕过管理员确认。
+      { candidateKey: "US:overcooked", regionCode: "MX" as const, status: "needs-manual-selection" as const, message: "请选择该区官方候选商品", candidates: [mexicanCandidate()], featuredCandidateCount: 1 },
       { candidateKey: "US:overcooked", regionCode: "HK" as const, status: "needs-manual-link" as const, message: "该区官方搜索暂不可用，请粘贴任天堂官方商品链接。" },
     ]);
 

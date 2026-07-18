@@ -66,6 +66,12 @@
 - 管理员明确授权现有订阅用于验收后，仪表盘选中《Overcooked! 2 - Gourmet Edition》与《Overcooked! 2 - Nintendo Switch 2 Edition Upgrade Pack》，经二次确认后监控商品数由 3 变为 1；未选中的《Animal Crossing™: New Horizons – Nintendo Switch™ 2 Edition Upgrade Pack》保留。
 - 随后在该剩余订阅的详情页进入“危险操作”，经二次确认后自动回到仪表盘；监控商品数与可用地区价格均为 0，并显示“还没有订阅”。两次操作均不读取、输出或记录 Cookie、恢复码、Telegram 凭据或被删除的原始价格历史。
 
+### 3.7 跨语言地区商品高置信度识别本地质量门禁（2026-07-18）
+
+- `test/official-product-discovery-service.test.ts` 先以美区 `Overcooked! 2 – Nintendo Switch 2 Edition` 和日区 `Overcooked® 2 - オーバークック２ Nintendo Switch 2 Edition` 建立失败用例；实现后唯一、同发行商、同类型且同版本标记的候选会得到 `automatic`，多个高置信候选仍返回人工选择与推荐数量。
+- `test/subscription-wizard-page.test.tsx` 覆盖首屏只显示 Worker 推荐的日区候选、其余同类型官方候选在点击“显示更多官方候选”后才出现；界面折叠不会自动选择地区商品。
+- 完整本地门禁结果为 Worker 55 个文件、172 项断言通过，DOM 3 个文件、7 项断言通过，TypeScript 严格检查、Vite 生产构建和 `git diff --check` 均通过。未部署 Worker，未读取、输出或修改生产会话、订阅、价格快照、恢复码或 Telegram 凭据。
+
 ## 4. 验收原则
 
 - 不把“请求成功”当作“价格正确”：必须通过商品身份校验。

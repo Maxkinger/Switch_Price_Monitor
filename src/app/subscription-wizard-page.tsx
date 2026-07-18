@@ -127,20 +127,25 @@ function RegionalConfirmationPanel({
   confirmedCandidates,
   manualLinks,
   pendingLinkKey,
+  expandedRegionalKeys,
   onSelectCandidate,
   onManualLinkChange,
   onResolveLink,
   onToggleSkip,
+  onToggleCandidateExpansion,
 }: {
   selected: OfficialProductCandidate;
   resolutions: RegionResolutionResponse[];
   confirmedCandidates: Record<string, OfficialProductCandidate>;
   manualLinks: Record<string, string>;
   pendingLinkKey: string | null;
+  /** 展开键只控制当前页面的候选可见性，不能参与地区确认、跳过或最终订阅载荷。 */
+  expandedRegionalKeys: string[];
   onSelectCandidate: (regionCode: RegionCode, candidate: OfficialProductCandidate, source: RegionalProductMatchSource) => void;
   onManualLinkChange: (key: string, value: string) => void;
   onResolveLink: (regionCode: RegionCode) => void;
   onToggleSkip: (regionCode: RegionCode) => void;
+  onToggleCandidateExpansion: (key: string) => void;
 }) {
   const selectedKey = candidateKey(selected);
   const otherRegions = resolutions.filter((resolution) => resolution.candidateKey === selectedKey);
@@ -160,6 +165,14 @@ function RegionalConfirmationPanel({
         {otherRegions.map((resolution) => {
           const key = regionalConfirmationKey(selectedKey, resolution.regionCode);
           const confirmed = confirmedCandidates[key];
+          const isExpanded = expandedRegionalKeys.includes(key);
+          // Worker 已按官方身份信号排序并给出首屏数量；前端只消费这个受控结果，不能自行按标题、价格或搜索顺序猜测商品关系。
+          const visibleCandidates = resolution.status === "needs-manual-selection" && !isExpanded
+            ? resolution.candidates.slice(0, resolution.featuredCandidateCount)
+            : resolution.status === "needs-manual-selection" ? resolution.candidates : [];
+          const hiddenCandidateCount = resolution.status === "needs-manual-selection"
+            ? resolution.candidates.length - visibleCandidates.length
+            : 0;
           return (
             <article className="regional-option" key={key}>
               <div>
@@ -171,7 +184,7 @@ function RegionalConfirmationPanel({
               ) : null}
               {resolution.status === "needs-manual-selection" ? (
                 <div className="regional-option__candidates">
-                  {resolution.candidates.map((candidate) => (
+                  {visibleCandidates.map((candidate) => (
                     <CandidateCard
                       key={candidate.productUrl}
                       candidate={candidate}
@@ -179,6 +192,16 @@ function RegionalConfirmationPanel({
                       onToggle={() => onSelectCandidate(resolution.regionCode, candidate, "manual_selection")}
                     />
                   ))}
+                  {hiddenCandidateCount > 0 ? (
+                    <button type="button" className="text-button regional-option__more-candidates" aria-expanded={isExpanded} onClick={() => onToggleCandidateExpansion(key)}>
+                      {`显示更多官方候选（${hiddenCandidateCount}）`}
+                    </button>
+                  ) : null}
+                  {isExpanded && resolution.candidates.length > resolution.featuredCandidateCount ? (
+                    <button type="button" className="text-button regional-option__more-candidates" aria-expanded="true" onClick={() => onToggleCandidateExpansion(key)}>
+                      收起更多官方候选
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
               {resolution.status === "needs-manual-link" ? (
@@ -221,6 +244,8 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
   const [resolutions, setResolutions] = useState<RegionResolutionResponse[]>([]);
   // 解析响应可能为空（例如仅启用默认区），因此单独记录已完成核验的默认区候选，不能以结果数组长度判断是否允许提交。
   const [resolvedCandidateKeys, setResolvedCandidateKeys] = useState<string[]>([]);
+  /** 候选折叠状态只服务于当前跨区响应；每次重新搜索或核验都会清空，避免旧商品的 UI 键影响新结果。 */
+  const [expandedRegionalKeys, setExpandedRegionalKeys] = useState<string[]>([]);
   const [manualLinks, setManualLinks] = useState<Record<string, string>>({});
   const [pendingLinkKey, setPendingLinkKey] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -262,6 +287,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
       setResolutions([]);
       setResolvedCandidateKeys([]);
       setManualLinks({});
+      setExpandedRegionalKeys([]);
     } catch (error) {
       handleProductError(error, "官方搜索暂时不可用，请稍后重试。");
     } finally {
@@ -285,6 +311,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
       setResolutions([]);
       setResolvedCandidateKeys([]);
       setManualLinks({});
+      setExpandedRegionalKeys([]);
     } catch (error) {
       handleProductError(error, "官方链接核验未完成，请稍后重试。");
     } finally {
@@ -301,6 +328,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
 
     setIsResolvingRegions(true);
     setNotice(null);
+    setExpandedRegionalKeys([]);
     try {
       const resolved = await api.resolveRegions(selectedCandidates);
       setResolutions(resolved);
@@ -496,10 +524,12 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
             confirmedCandidates={wizard.regionalConfirmations}
             manualLinks={manualLinks}
             pendingLinkKey={pendingLinkKey}
+            expandedRegionalKeys={expandedRegionalKeys}
             onSelectCandidate={(regionCode, candidate, source) => handleRegionalCandidate(selected, regionCode, candidate, source)}
             onManualLinkChange={(key, value) => setManualLinks((current) => ({ ...current, [key]: value }))}
             onResolveLink={(regionCode) => handleResolveRegionalLink(selected, regionCode)}
             onToggleSkip={(regionCode) => setWizard((current) => skipRegionalConfirmation(current, candidateKey(selected), regionCode))}
+            onToggleCandidateExpansion={(key) => setExpandedRegionalKeys((current) => current.includes(key) ? current.filter((entry) => entry !== key) : [...current, key])}
           />
         ))}
 
