@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { DashboardApiError, createDashboardApiClient } from "../src/app/dashboard-api-client";
+import { createApiRequestTracker } from "../src/app/api-request-tracker";
 
 /**
  * 浏览器数据客户端测试确认它只请求本站 Worker，并把 API 的节流提示转换为可展示的受控错误。
@@ -57,5 +58,27 @@ describe("dashboard API client", () => {
     // 补全端点只能由同源 Cookie 授权；请求不包含游戏 ID、既有商品 ID 或地区范围，避免浏览器篡改订阅身份。
     expect(request).toHaveBeenNthCalledWith(1, "/api/subscriptions/subscription-overcooked-2/resolve-regions", expect.objectContaining({ method: "POST", credentials: "same-origin" }));
     expect(request).toHaveBeenNthCalledWith(2, "/api/subscriptions/subscription-overcooked-2/complete-regions", expect.objectContaining({ method: "POST", credentials: "same-origin", body: JSON.stringify({ regions: [], skippedRegionCodes: ["JP"] }) }));
+  });
+
+  it("keeps the global request count active until a dashboard request settles", async () => {
+    // 仪表盘初次读取期间必须持续显示遮罩，结算后才允许用户继续操作。
+    const tracker = createApiRequestTracker();
+    let resolveRequest: (response: Response) => void = () => undefined;
+    const client = createDashboardApiClient(vi.fn(() => new Promise<Response>((resolve) => { resolveRequest = resolve; })) as unknown as typeof fetch, tracker);
+    const pending = client.getDashboard();
+
+    expect(tracker.getPendingCount()).toBe(1);
+    resolveRequest(Response.json({ subscriptions: [], stats: {} }));
+    await pending;
+    expect(tracker.getPendingCount()).toBe(0);
+  });
+
+  it("releases the global request count when a dashboard network request rejects", async () => {
+    // 网络层没有 Response 时也必须由 finally 结束计数，否则离线或浏览器中断会把整个已登录页面永久锁在遮罩后。
+    const tracker = createApiRequestTracker();
+    const client = createDashboardApiClient(vi.fn(async () => { throw new Error("offline"); }) as unknown as typeof fetch, tracker);
+
+    await expect(client.getDashboard()).rejects.toThrow("offline");
+    expect(tracker.getPendingCount()).toBe(0);
   });
 });

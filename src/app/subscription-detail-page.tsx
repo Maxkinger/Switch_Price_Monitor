@@ -6,9 +6,6 @@ import { DashboardApiError, type CompletedRefreshResult, type MissingRegionCompl
 import { formatCnyFen, formatLocalPrice } from "./dashboard-view-model";
 import { applyAutomaticMissingResolutions, immediateRefreshNotice, missingRegionPresentation } from "./dashboard-page-state";
 
-/** 详情页的手动官方链接仍经同源 Worker 校验，浏览器不会直接访问任天堂页面或保存外部响应。 */
-const productApi = createProductApiClient();
-
 /** 详情页只依赖受控详情读取、立即采集、编辑和地区补全接口；游戏身份与启用地区范围始终由 Worker 读取。 */
 interface DetailApi {
   getSubscription(id: string): Promise<SubscriptionDetail>;
@@ -20,9 +17,9 @@ interface DetailApi {
 
 /**
  * 单页订阅详情提供三个独立保存操作：启用状态、已确认地区范围和目标价。
- * 页面不接受商品 ID 文本输入；地区复选框只来自 Worker 返回的已确认映射，不能绕过官方核验流程。
+ * 页面不接受商品 ID 文本输入；地区复选框只来自 Worker 返回的已确认映射，商品客户端由应用壳共享以纳入全局加载状态。
  */
-export function SubscriptionDetailPage({ api, subscriptionId, onBack, onUnauthorized }: { api: DetailApi; subscriptionId: string; onBack: () => void; onUnauthorized: () => void }) {
+export function SubscriptionDetailPage({ api, productApi, subscriptionId, onBack, onUnauthorized }: { api: DetailApi; productApi: ReturnType<typeof createProductApiClient>; subscriptionId: string; onBack: () => void; onUnauthorized: () => void }) {
   const [detail, setDetail] = useState<SubscriptionDetail | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [globalTarget, setGlobalTarget] = useState("");

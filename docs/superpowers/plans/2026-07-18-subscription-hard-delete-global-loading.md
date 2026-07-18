@@ -26,6 +26,10 @@
 - Create: `src/app/api-request-tracker.ts`
 - Create: `test/api-request-tracker.test.ts`
 - Create: `src/app/global-request-overlay.tsx`
+- Modify: `package.json`
+- Modify: `package-lock.json`
+- Modify: `vitest.config.mts`
+- Create: `vitest.dom.config.mts`
 - Modify: `src/app/app-shell.tsx`
 - Modify: `src/app/api-client.ts`
 - Modify: `src/app/dashboard-api-client.ts`
@@ -36,13 +40,18 @@
 - Modify: `test/api-client.test.ts`
 - Modify: `test/dashboard-api-client.test.ts`
 - Modify: `test/settings-api-client.test.ts`
+- Create: `test/global-request-overlay.test.tsx`
 
 **Interfaces:**
 - Produces `ApiRequestTracker` with `begin(): () => void`、`subscribe(listener): () => void`、`getPendingCount(): number`。
 - `createProductApiClient`、`createDashboardApiClient` 与 `createSettingsApiClient` 接受可选第二参数 `tracker?: ApiRequestTracker`。
 - `AppShell` 创建一个稳定 tracker，并通过 `useSyncExternalStore` 把 `pendingCount > 0` 传给 `GlobalRequestOverlay`；该 tracker 被传入全部已认证页客户端。
 
-- [ ] **Step 1: 写入请求计数器的失败测试**
+- [x] **Step 0: 已获用户允许并安装页面测试开发依赖**
+
+已安装 `@testing-library/react`、`@testing-library/user-event` 与 `jsdom`，它们仅用于 Vitest 的浏览器 DOM 测试，不会进入 Worker 生产依赖。由于 jsdom 不能在 Cloudflare 测试池加载，新增独立 `vitest.dom.config.mts` 和 `npm run test:dom`；Worker/D1 与 DOM 两类测试都会在最终质量门禁运行。
+
+- [x] **Step 1: 写入请求计数器的失败测试**
 
 ```ts
 it("keeps the overlay active until every concurrent request ends", () => {
@@ -59,13 +68,13 @@ it("keeps the overlay active until every concurrent request ends", () => {
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/api-request-tracker.test.ts`
 
 Expected: FAIL，因为 `api-request-tracker.ts` 尚不存在。
 
-- [ ] **Step 3: 最小实现请求计数器与客户端 finally 包装**
+- [x] **Step 3: 最小实现请求计数器与客户端 finally 包装**
 
 ```ts
 export function createApiRequestTracker(): ApiRequestTracker {
@@ -88,7 +97,7 @@ try { return await request(path, init); } finally { finish?.(); }
 
 在每个客户端的底层传输函数中采用上述 `try/finally`，而不是在页面按钮中手工计数。将当前模块级 API 客户端改为 `AppShell` 内用 `useMemo` 创建，并把同一个产品客户端作为 prop 传入向导和详情页；保留认证前客户端不接入遮罩。`GlobalRequestOverlay` 只在可见时渲染 `role="status"`、`aria-live="polite"`、文本“正在同步数据…”，并用 CSS 动画显示圆形 spinner。
 
-- [ ] **Step 4: 扩展客户端失败/成功回归测试**
+- [x] **Step 4: 扩展客户端失败/成功回归测试**
 
 ```ts
 it("cleans the request count after a rejected same-origin request", async () => {
@@ -99,7 +108,7 @@ it("cleans the request count after a rejected same-origin request", async () => 
 });
 ```
 
-Run: `npm test -- --run test/api-request-tracker.test.ts test/api-client.test.ts test/dashboard-api-client.test.ts test/settings-api-client.test.ts && npx tsc --noEmit`
+Run: `npm test -- --run test/api-request-tracker.test.ts test/api-client.test.ts test/dashboard-api-client.test.ts test/settings-api-client.test.ts && npm run test:dom -- --run test/global-request-overlay.test.tsx && npx tsc --noEmit`
 
 Expected: PASS；请求成功、异常和并发结束后计数均为零，客户端仍只使用同源 Cookie。
 
@@ -108,7 +117,7 @@ Expected: PASS；请求成功、异常和并发结束后计数均为零，客户
 拟提交范围：共享请求计数器、全局遮罩、已认证 API 客户端注入与相关测试。
 
 ```bash
-git add src/app/api-request-tracker.ts src/app/global-request-overlay.tsx src/app/app-shell.tsx src/app/api-client.ts src/app/dashboard-api-client.ts src/app/settings-api-client.ts src/app/subscription-wizard-page.tsx src/app/subscription-detail-page.tsx src/app/styles.css test/api-request-tracker.test.ts test/api-client.test.ts test/dashboard-api-client.test.ts test/settings-api-client.test.ts
+git add package.json package-lock.json vitest.config.mts vitest.dom.config.mts src/app/api-request-tracker.ts src/app/global-request-overlay.tsx src/app/app-shell.tsx src/app/api-client.ts src/app/dashboard-api-client.ts src/app/settings-api-client.ts src/app/subscription-wizard-page.tsx src/app/subscription-detail-page.tsx src/app/styles.css test/api-request-tracker.test.ts test/api-client.test.ts test/dashboard-api-client.test.ts test/settings-api-client.test.ts test/global-request-overlay.test.tsx docs/superpowers/plans/2026-07-18-subscription-hard-delete-global-loading.md
 git commit -m "feat: show global API loading state"
 git push origin main
 ```

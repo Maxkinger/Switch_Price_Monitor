@@ -6,6 +6,7 @@ import type {
   SubscriptionConfirmationResult,
   SubscriptionRegionPreview
 } from "../shared/domain";
+import type { ApiRequestTracker } from "./api-request-tracker";
 
 /**
  * 商品接口返回的跨区匹配状态。
@@ -53,27 +54,32 @@ export class ProductApiError extends Error {
  * 价格来源（任天堂官方站、后续配置的第三方回退站）全部在 Worker 内部处理，
  * 此模块禁止拼接或请求外部商品地址，以免泄漏密钥、绕开来源标记或触发跨域限制。
  */
-export function createProductApiClient(request: typeof fetch = fetch) {
-  /** 统一发送 JSON 请求，并将非成功状态转换成可展示的错误。 */
+export function createProductApiClient(request: typeof fetch = fetch, tracker?: ApiRequestTracker) {
+  /** 统一发送 JSON 请求，并将非成功状态转换成可展示的错误；finally 确保外部失败不会遗留全局加载遮罩。 */
   async function postJson<TResponse>(path: string, body: unknown): Promise<TResponse> {
-    const response = await request(path, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: {
-        "content-type": "application/json"
-      },
-      body: JSON.stringify(body)
-    });
+    const finish = tracker?.begin();
+    try {
+      const response = await request(path, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify(body)
+      });
 
-    const payload = (await response.json().catch(() => ({}))) as {
-      error?: string;
-    };
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
 
-    if (!response.ok) {
-      throw new ProductApiError(payload.error ?? "请求未完成，请稍后重试。", response.status);
+      if (!response.ok) {
+        throw new ProductApiError(payload.error ?? "请求未完成，请稍后重试。", response.status);
+      }
+
+      return payload as TResponse;
+    } finally {
+      finish?.();
     }
-
-    return payload as TResponse;
   }
 
   return {

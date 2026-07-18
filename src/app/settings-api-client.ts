@@ -1,4 +1,5 @@
 import type { AppSettings } from "../shared/domain";
+import type { ApiRequestTracker } from "./api-request-tracker";
 import type { PublicSettingsPatch } from "./settings-form";
 
 /**
@@ -25,21 +26,27 @@ export class SettingsApiError extends Error {
  * 创建设置页的同源客户端。浏览器自动处理 HttpOnly 会话 Cookie；此模块绝不能读取、拼接、记录或转交 Cookie，
  * 从而让管理员偏好仍由 Worker 的认证守卫保护，且不会泄露到任天堂、Telegram 或第三方来源。
  */
-export function createSettingsApiClient(request: typeof fetch = fetch): SettingsApiClient {
+export function createSettingsApiClient(request: typeof fetch = fetch, tracker?: ApiRequestTracker): SettingsApiClient {
   /**
    * 固定设置路径的 JSON 传输层。任何非成功响应只提取安全 `error` 文案，
    * 避免页面意外保留数据库、请求体或未来秘密字段；成功响应仍由 TypeScript DTO 约束其使用范围。
    */
   async function requestJson<TResponse>(method: "GET" | "PATCH", body?: PublicSettingsPatch): Promise<TResponse> {
-    const response = await request("/api/settings", {
-      method,
-      credentials: "same-origin",
-      headers: body === undefined ? undefined : { "content-type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    const payload = (await response.json().catch(() => ({}))) as { error?: string };
-    if (!response.ok) throw new SettingsApiError(payload.error ?? "设置请求未完成，请稍后重试。", response.status);
-    return payload as TResponse;
+    const finish = tracker?.begin();
+    try {
+      const response = await request("/api/settings", {
+        method,
+        credentials: "same-origin",
+        headers: body === undefined ? undefined : { "content-type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) throw new SettingsApiError(payload.error ?? "设置请求未完成，请稍后重试。", response.status);
+      return payload as TResponse;
+    } finally {
+      // 偏好保存失败也必须释放加载状态，管理员才能在保留草稿后继续修正。
+      finish?.();
+    }
   }
 
   return {

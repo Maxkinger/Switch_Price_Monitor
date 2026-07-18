@@ -23,9 +23,6 @@ import type {
   SubscriptionConfirmationResult,
 } from "../shared/domain";
 
-/** 前端只访问同源 Worker；所有任天堂官方页解析与价格来源校验均由服务端执行。 */
-const productApi = createProductApiClient();
-
 /**
  * 地区标签仅用于 UI 文案与官方链接回退选择，绝不代表跨区业务范围。
  * 实际启用地区由 Worker 设置决定，向导不会把此展示常量发送给跨区解析接口。
@@ -212,9 +209,9 @@ function RegionalConfirmationPanel({
 
 /**
  * 已认证后的添加订阅向导。它只管理本次选择过程，最终写入前由后端重新验证每个官方链接并原子化创建订阅；
- * 因此刷新、取消或认证失效都不会留下部分游戏、地区商品或未经验证的价格记录。
+ * 共享商品客户端由应用壳传入，使搜索、核验和确认都计入全局加载状态，且刷新、取消或认证失效不会留下部分数据。
  */
-export function SubscriptionWizardPage({ onUnauthorized }: { onUnauthorized: () => void }) {
+export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnType<typeof createProductApiClient>; onUnauthorized: () => void }) {
   const [wizard, setWizard] = useState<SubscriptionWizardState>(() => createSubscriptionWizardState(emptySearchResult));
   const [query, setQuery] = useState("");
   const [fallbackRegion, setFallbackRegion] = useState<RegionCode>("US");
@@ -260,7 +257,7 @@ export function SubscriptionWizardPage({ onUnauthorized }: { onUnauthorized: () 
     setNotice(null);
     setResults([]);
     try {
-      const searchResult = await productApi.searchProducts(trimmedQuery);
+      const searchResult = await api.searchProducts(trimmedQuery);
       setWizard({ ...createSubscriptionWizardState(searchResult), query: trimmedQuery });
       setResolutions([]);
       setResolvedCandidateKeys([]);
@@ -283,7 +280,7 @@ export function SubscriptionWizardPage({ onUnauthorized }: { onUnauthorized: () 
     setIsSearching(true);
     setNotice(null);
     try {
-      const candidate = await productApi.resolveOfficialLink(fallbackRegion, fallbackLink.trim());
+      const candidate = await api.resolveOfficialLink(fallbackRegion, fallbackLink.trim());
       setWizard({ ...createSubscriptionWizardState({ status: "available", candidates: [candidate] }), query: candidate.canonicalTitle });
       setResolutions([]);
       setResolvedCandidateKeys([]);
@@ -305,7 +302,7 @@ export function SubscriptionWizardPage({ onUnauthorized }: { onUnauthorized: () 
     setIsResolvingRegions(true);
     setNotice(null);
     try {
-      const resolved = await productApi.resolveRegions(selectedCandidates);
+      const resolved = await api.resolveRegions(selectedCandidates);
       setResolutions(resolved);
       setResolvedCandidateKeys(selectedCandidates.map((candidate) => candidateKey(candidate)));
       // 自动结果仅来自 Worker 对保存设置和官方身份的唯一匹配；页面不会自行按名称或价格猜测跨区商品。
@@ -341,7 +338,7 @@ export function SubscriptionWizardPage({ onUnauthorized }: { onUnauthorized: () 
     setPendingLinkKey(key);
     setNotice(null);
     try {
-      const candidate = await productApi.resolveOfficialLink(regionCode, link);
+      const candidate = await api.resolveOfficialLink(regionCode, link);
       handleRegionalCandidate(selected, regionCode, candidate, "manual_link");
     } catch (error) {
       handleProductError(error, "地区商品链接核验失败，请检查链接后重试。");
@@ -379,7 +376,7 @@ export function SubscriptionWizardPage({ onUnauthorized }: { onUnauthorized: () 
     setNotice(null);
     try {
       const inputs = buildConfirmationInputs();
-      const previewGroups = await Promise.all(inputs.map((input) => productApi.previewSources(input.regions)));
+      const previewGroups = await Promise.all(inputs.map((input) => api.previewSources(input.regions)));
       setWizard((current) => ({
         ...current,
         sourcePreviews: Object.fromEntries(inputs.map((input, index) => [candidateKey(input.selected), previewGroups[index]])),
@@ -395,7 +392,7 @@ export function SubscriptionWizardPage({ onUnauthorized }: { onUnauthorized: () 
     setWizard((current) => ({ ...current, submitState: "submitting" }));
     setNotice(null);
     try {
-      const confirmationResults = await productApi.confirmSubscriptions(buildConfirmationInputs());
+      const confirmationResults = await api.confirmSubscriptions(buildConfirmationInputs());
       setResults(confirmationResults);
       setWizard((current) => ({ ...current, submitState: "succeeded" }));
     } catch (error) {

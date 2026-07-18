@@ -72,6 +72,7 @@ export interface CompletedRefreshResult {
 
 import type { ConfirmedRegionalProduct, RegionCode } from "../shared/domain";
 import type { RegionResolutionResponse } from "./api-client";
+import type { ApiRequestTracker } from "./api-request-tracker";
 
 /** PATCH 的三个互斥更新形状严格对应 Worker 现有校验，避免前端拼接未支持的自由字段。 */
 export type SubscriptionUpdate =
@@ -109,23 +110,29 @@ export class DashboardApiError extends Error {
  * 创建仪表盘同源客户端。所有路径均为固定的 `/api/*`，并强制携带 same-origin 凭据，
  * 使 HttpOnly 会话 Cookie 只由浏览器处理，前端不读取、不拼接也不转交给外部来源。
  */
-export function createDashboardApiClient(request: typeof fetch = fetch) {
+export function createDashboardApiClient(request: typeof fetch = fetch, tracker?: ApiRequestTracker) {
   /**
    * 统一 JSON 传输层只解析 Worker 明确返回的 JSON。非 2xx 都变成受控错误，
    * 401 留给应用壳层清除内存状态，422 留给表单保留草稿，429 留给刷新冷却提示。
    */
   async function requestJson<TResponse>(path: string, method: "GET" | "POST" | "PATCH", body?: unknown): Promise<TResponse> {
-    const response = await request(path, {
-      method,
-      credentials: "same-origin",
-      headers: body === undefined ? undefined : { "content-type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    const payload = (await response.json().catch(() => ({}))) as { error?: string; nextAllowedAt?: string };
-    if (!response.ok) {
-      throw new DashboardApiError(payload.error ?? "请求未完成，请稍后重试。", response.status, payload.nextAllowedAt);
+    const finish = tracker?.begin();
+    try {
+      const response = await request(path, {
+        method,
+        credentials: "same-origin",
+        headers: body === undefined ? undefined : { "content-type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string; nextAllowedAt?: string };
+      if (!response.ok) {
+        throw new DashboardApiError(payload.error ?? "请求未完成，请稍后重试。", response.status, payload.nextAllowedAt);
+      }
+      return payload as TResponse;
+    } finally {
+      // 所有受认证读取/写入均由 finally 结算，防止 401、429 或网络异常让遮罩无法退出。
+      finish?.();
     }
-    return payload as TResponse;
   }
 
   return {

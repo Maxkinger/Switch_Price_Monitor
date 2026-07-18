@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createProductApiClient, ProductApiError } from "../src/app/api-client";
+import { createApiRequestTracker } from "../src/app/api-request-tracker";
 
 /**
  * 浏览器 API 客户端测试只验证本系统同源请求契约。它刻意注入请求函数而不启动 Worker，
@@ -39,6 +40,19 @@ describe("product API client", () => {
       body: JSON.stringify({ candidates: [candidate()] }),
       credentials: "same-origin",
     }));
+  });
+
+  it("keeps the global request count active until product discovery settles", async () => {
+    // 请求尚未结算时必须显示遮罩；只断言最终为零会让根本未接入计数器的客户端虚假通过。
+    const tracker = createApiRequestTracker();
+    let resolveRequest: (response: Response) => void = () => undefined;
+    const client = createProductApiClient(vi.fn(() => new Promise<Response>((resolve) => { resolveRequest = resolve; })) as unknown as typeof fetch, tracker);
+    const pending = client.searchProducts("Overcooked");
+
+    expect(tracker.getPendingCount()).toBe(1);
+    resolveRequest(Response.json({ status: "available", candidates: [] }));
+    await pending;
+    expect(tracker.getPendingCount()).toBe(0);
   });
 });
 

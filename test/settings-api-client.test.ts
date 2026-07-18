@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { AppSettings } from "../src/shared/domain";
 import { SettingsApiError, createSettingsApiClient } from "../src/app/settings-api-client";
+import { createApiRequestTracker } from "../src/app/api-request-tracker";
 import { createSettingsForm, toPublicSettingsPatch } from "../src/app/settings-form";
 
 /**
@@ -33,6 +34,19 @@ describe("public settings API client", () => {
 
     await expect(createSettingsApiClient(request).getSettings())
       .rejects.toEqual(new SettingsApiError("默认搜索区必须属于已选地区。", 422));
+  });
+
+  it("keeps the global request count active until a settings request settles", async () => {
+    // 设置读取尚未返回时也必须计入遮罩，防止页面先显示旧草稿再异步覆盖。
+    const tracker = createApiRequestTracker();
+    let resolveRequest: (response: Response) => void = () => undefined;
+    const client = createSettingsApiClient(vi.fn(() => new Promise<Response>((resolve) => { resolveRequest = resolve; })) as unknown as typeof fetch, tracker);
+    const pending = client.getSettings();
+
+    expect(tracker.getPendingCount()).toBe(1);
+    resolveRequest(Response.json(settings()));
+    await pending;
+    expect(tracker.getPendingCount()).toBe(0);
   });
 });
 

@@ -12,6 +12,7 @@ export default defineConfig({
     }),
   ],
   test: {
+    // 该配置只收集 Worker/D1 `.ts` 测试；DOM `.tsx` 测试必须由独立 jsdom 配置运行，避免把浏览器依赖错误装载为 Worker 模块。
     include: ["test/**/*.test.ts"],
     setupFiles: ["./test/apply-migrations.ts"],
   },
