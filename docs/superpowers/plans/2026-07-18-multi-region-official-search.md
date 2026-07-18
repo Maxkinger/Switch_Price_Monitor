@@ -250,7 +250,7 @@ Run: `npm test -- --run test/subscription-wizard.test.ts test/dashboard-page-sta
 
 Expected: PASS；自动结果无需再次选择，官方候选是首选人工路径，手动链接仅在无候选时出现，构建产物无类型错误。
 
-- [ ] **Step 5: 等待用户确认后提交并推送 Task 5**
+- [x] **Step 5: 已确认并提交 Task 5**
 
 拟提交范围：新订阅向导、已有订阅补全的三态展示和前端测试。
 
@@ -271,17 +271,17 @@ git push origin main
 - Modify: `docs/superpowers/specs/2026-07-18-multi-region-official-search-design.md`
 - Modify: `docs/superpowers/plans/2026-07-18-multi-region-official-search.md`
 
-- [ ] **Step 1: 更新实施状态与验收记录**
+- [x] **Step 1: 更新实施状态与验收记录**
 
 记录五区官方搜索档案、自动/人工确认边界、JP 不可验证时的安全回退、以及“启用地区由设置决定”的约束。将 FR-001 的本次部分更新为已实施/待生产受控验收；不得宣称某地区已自动搜到真实商品，除非当次部署后实际验证。
 
-- [ ] **Step 2: 运行完整质量门禁**
+- [x] **Step 2: 已运行完整质量门禁**
 
 Run: `npm test -- --run && npx tsc --noEmit && npm run build && git diff --check && ! rg -n "regionCode !== \"US\"|store_game_en_us.*regionCode" src/worker/providers/official-nintendo-search.ts`
 
 Expected: 所有测试、类型检查、构建与空白检查通过；官方搜索适配器不再把 MX、BR、HK、JP 一概标记为不可用。
 
-- [ ] **Step 3: 获得用户明确允许后部署并验收**
+- [x] **Step 3: 已获用户允许后部署并完成只读验收**
 
 ```bash
 npm run deploy
