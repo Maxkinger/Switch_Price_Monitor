@@ -1,7 +1,7 @@
 # Switch Price Monitor 文档中心
 
 状态：开发进行中
-最后更新：2026-07-18
+最后更新：2026-07-19
 
 本目录按产品、架构与决策分类维护。每个需求或设计部分经确认后，应同步更新相应文档，并在需求追踪表中记录状态。
 
@@ -27,6 +27,8 @@
 | [日区订阅确认官方 API 复核实施计划](superpowers/plans/2026-07-18-japan-confirmation-api.md) | 日区双官方接口复核、最终跨语言确认与受控验收步骤 | 已完成，待提交 |
 | [日区升级包官方关系发现设计规格](superpowers/specs/2026-07-18-japanese-upgrade-pack-relation-discovery-design.md) | 普通 Worker 排队页限制、Browser Run 三次隔离可行性探针与失败回退边界 | 可行性验证未通过；维持人工官方链接兜底，不进入生产集成 |
 | [日区升级包 Browser Run 可行性验证实施计划](superpowers/plans/2026-07-18-japanese-upgrade-browser-run-feasibility.md) | 隔离临时探针、纯函数安全校验、三次真实远程探测与准入结论归档 | 已执行；三次均在浏览器启动阶段失败，未形成持久部署 |
+| [Browser Run 启动失败受控诊断设计规格](superpowers/specs/2026-07-19-browser-run-launch-failure-diagnostic-design.md) | 本地/远程 A/B 启动诊断、脱敏错误证据、阶段判断矩阵与测试边界 | 已确认，实施计划已编写 |
+| [Browser Run 启动失败受控诊断实施计划](superpowers/plans/2026-07-19-browser-run-launch-failure-diagnostic.md) | 临时探针脱敏诊断、生命周期测试、本地/远程对照与任天堂恢复准入步骤 | 已编写，待批准执行 |
 | [临时发布版本号设计规格](superpowers/specs/2026-07-18-temporary-release-version-design.md) | 页面版本标识、补丁号自动递增与未来发布系统替换边界 | 已部署 V 0.0.5，待提交推送 |
 | [临时发布版本号实施计划](superpowers/plans/2026-07-18-temporary-release-version.md) | 构建时版本注入、受控补丁递增发布与质量门禁 | 已部署 V 0.0.5，待提交推送 |
 | [香港区任天堂官方价格 API 设计规格](superpowers/specs/2026-07-18-hong-kong-official-price-api-design.md) | 日区回归、香港 `titles/aocs` 官方价格 ID、HKD 公开 API 与严格响应校验 | 已部署并完成生产验收 |
