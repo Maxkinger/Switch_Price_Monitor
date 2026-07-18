@@ -22,8 +22,8 @@ export class JapaneseSubscriptionConfirmationService {
   ) {}
 
   /**
-   * 从当次官方搜索重建待保存的日区候选。跨区日区候选使用已经重新验证过的默认区锚点标题作为搜索词，
-   * 这样浏览器无法通过改写日文标题扩大自动匹配范围；日区作为默认区时没有跨区锚点，才使用其自身标题。
+   * 从当次官方搜索重建待保存的日区候选。搜索词使用待保存候选的官方日区标题：英文默认区标题未必能返回
+   * 已本地化的日区组合商品；随后仍要求同一精确官方 URL 在响应中出现，因而浏览器改写标题并不能扩大确认范围。
    */
   public async resolve(
     anchor: OfficialProductCandidate,
@@ -34,8 +34,7 @@ export class JapaneseSubscriptionConfirmationService {
     if (titleId === null) return null;
 
     try {
-      const query = anchor.regionCode === "JP" ? candidate.canonicalTitle : anchor.canonicalTitle;
-      const searchResult = await this.search.search("JP", query, new AbortController().signal);
+      const searchResult = await this.search.search("JP", candidate.canonicalTitle, new AbortController().signal);
       if (searchResult.status !== "available") return null;
 
       // 搜索适配器已验证下载版 id/nsuid 与 URL 映射；这里仍要求完全相同 URL，防止相邻标题或同名版本替换管理员所选项。

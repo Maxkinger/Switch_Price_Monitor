@@ -145,7 +145,53 @@ describe("subscription confirmation service", () => {
     await expect(service.confirm([localizedAutomaticUpgradeSubscription(us, japanese)], now)).rejects.toThrow("日区官方商品确认暂时失败");
     await expect(counts()).resolves.toEqual({ games: 0, products: 0, subscriptions: 0, regions: 0 });
   });
+
+  it("writes a Hong Kong automatic bundle only after fresh regional discovery proves the same URL", async () => {
+    // 非日区 automatic 没有管理员逐项确认；页面身份重读后还必须重新执行跨区唯一性发现，防止过期候选在官方新增同版本时继续写入。
+    const automaticVerifier = { verifyAutomaticRegionalCandidate: vi.fn().mockResolvedValue(true) };
+    const service = createHongKongBundleService(automaticVerifier);
+    const input = hongKongBundleSubscription("automatic");
+
+    await expect(service.confirm([input], now)).resolves.toEqual([expect.objectContaining({ status: "created" })]);
+    expect(automaticVerifier.verifyAutomaticRegionalCandidate).toHaveBeenCalledWith(overcookedGourmetUs(), overcookedGourmetHk());
+    await expect(counts()).resolves.toEqual({ games: 1, products: 2, subscriptions: 1, regions: 2 });
+  });
+
+  it("rejects an expired Hong Kong automatic bundle before any D1 write", async () => {
+    // 重新发现不再得到同一唯一 URL 时必须整批失败；不能降级为人工选择，也不能先写默认区后留下半成品订阅。
+    const automaticVerifier = { verifyAutomaticRegionalCandidate: vi.fn().mockResolvedValue(false) };
+    const service = createHongKongBundleService(automaticVerifier);
+
+    await expect(service.confirm([hongKongBundleSubscription("automatic")], now)).rejects.toThrow("地区商品自动匹配已失效，请重新核验其他地区。");
+    await expect(counts()).resolves.toEqual({ games: 0, products: 0, subscriptions: 0, regions: 0 });
+  });
+
+  it("keeps a manually selected Hong Kong bundle independent from automatic discovery", async () => {
+    // 管理员已明确点击本区候选时仍需官方详情和同类型校验，但不应调用 automatic 唯一性验证器；否则人工补救会被自动搜索可用性错误阻断。
+    const automaticVerifier = { verifyAutomaticRegionalCandidate: vi.fn().mockResolvedValue(false) };
+    const service = createHongKongBundleService(automaticVerifier);
+
+    await expect(service.confirm([hongKongBundleSubscription("manual_selection")], now)).resolves.toEqual([expect.objectContaining({ status: "created" })]);
+    expect(automaticVerifier.verifyAutomaticRegionalCandidate).not.toHaveBeenCalled();
+    await expect(counts()).resolves.toEqual({ games: 1, products: 2, subscriptions: 1, regions: 2 });
+  });
 });
+
+/**
+ * 港区最终确认夹具显式注入自动发现验证器；页面解析桩仅按 URL 返回服务器重读候选，
+ * 价格 ID 保持不支持地区，证明本组测试只改变 automatic 唯一性门禁而不伪造港区报价。
+ */
+function createHongKongBundleService(automaticVerifier: { verifyAutomaticRegionalCandidate(anchor: OfficialProductCandidate, candidate: OfficialProductCandidate): Promise<boolean> }): SubscriptionConfirmationService {
+  const candidates = [overcookedGourmetUs(), overcookedGourmetHk()];
+  return new SubscriptionConfirmationService(
+    new SubscriptionConfirmationRepository(env.DB),
+    { resolve: async (regionCode, productUrl) => candidates.find((candidate) => candidate.regionCode === regionCode && candidate.productUrl === productUrl) ?? null },
+    { resolve: async () => ({ status: "official-id-unavailable" as const, officialPriceId: null, reason: "unsupported-region" as const }) },
+    { get: async () => ({ enabledRegions: ["US" as const, "HK" as const] }) },
+    { resolve: async () => null },
+    automaticVerifier,
+  );
+}
 
 /** 用真实仓储连接 D1；官方页面与日区价格 ID 使用固定验证结果，使测试只覆盖最终确认业务规则。 */
 function createService(candidates: OfficialProductCandidate[], enabledRegions: Array<"US" | "JP"> = ["US", "JP"]): SubscriptionConfirmationService {
@@ -249,6 +295,44 @@ function localizedAutomaticUpgradeSubscription(us: OfficialProductCandidate, jap
     regions: [
       { ...us, matchSource: "manual_selection" as const },
       { ...japanese, matchSource: "automatic" as const },
+    ],
+    skippedRegionCodes: [],
+  };
+}
+
+/** 美区 Gourmet 组合商品是港区自动发现的默认区锚点；发行商和类型用于写入前跨区身份比较。 */
+function overcookedGourmetUs(): OfficialProductCandidate {
+  return {
+    regionCode: "US",
+    productUrl: "https://www.nintendo.com/us/store/products/overcooked-2-gourmet-edition-switch/",
+    canonicalTitle: "Overcooked! 2 - Gourmet Edition",
+    publisher: "Team17",
+    productType: "bundle",
+    currency: "USD",
+    coverUrl: null,
+    currentPriceMinor: 3999,
+    regularPriceMinor: null,
+  };
+}
+
+/** 港区组合候选使用经详情绑定的 bundles URL；测试不提供价格，避免把关联发现引用误当成报价来源。 */
+function overcookedGourmetHk(): OfficialProductCandidate {
+  return {
+    ...overcookedGourmetUs(),
+    regionCode: "HK",
+    productUrl: "https://ec.nintendo.com/HK/zh/bundles/70070000010913",
+    currency: "HKD",
+    currentPriceMinor: null,
+  };
+}
+
+/** 默认区保留人工选择来源，港区来源由用例切换；这样只测试非日区 automatic 门禁，不改变默认区信任规则。 */
+function hongKongBundleSubscription(matchSource: "automatic" | "manual_selection") {
+  return {
+    selected: overcookedGourmetUs(),
+    regions: [
+      { ...overcookedGourmetUs(), matchSource: "manual_selection" as const },
+      { ...overcookedGourmetHk(), matchSource },
     ],
     skippedRegionCodes: [],
   };

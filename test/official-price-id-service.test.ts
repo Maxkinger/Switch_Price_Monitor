@@ -35,6 +35,12 @@ describe("OfficialPriceIdService", () => {
     canonicalTitle: "Overcooked! 2 - Nintendo Switch 2 Edition Upgrade Pack",
     productType: "upgrade-pack" as const,
   };
+  const hongKongBundleCandidate = {
+    ...hongKongTitleCandidate,
+    productUrl: "https://ec.nintendo.com/HK/zh/bundles/70070000010913",
+    canonicalTitle: "Overcooked! 2 - Gourmet Edition",
+    productType: "bundle" as const,
+  };
 
   it("extracts a Japanese price id from the confirmed URL and accepts it only after official verification", async () => {
     let receivedId: string | null = null;
@@ -88,7 +94,11 @@ describe("OfficialPriceIdService", () => {
     await expect(service.resolve(hongKongAocCandidate)).resolves.toEqual({
       status: "official-available", officialPriceId: "70050000065163",
     });
-    expect(receivedIds).toEqual(["70010000106253", "70050000065163"]);
+    // 组合商品使用与 titles/aocs 相同的公开价格 API，但 URL 资源类型必须显式准入，不能从任意数字片段推导。
+    await expect(service.resolve(hongKongBundleCandidate)).resolves.toEqual({
+      status: "official-available", officialPriceId: "70070000010913",
+    });
+    expect(receivedIds).toEqual(["70010000106253", "70050000065163", "70070000010913"]);
 
     // 非香港语言、额外路径和非数字值即使包含看似正确的 ID，也不能成为官方价格映射。
     await expect(service.resolve({ ...hongKongAocCandidate, productUrl: "https://ec.nintendo.com/HK/en/aocs/70050000065163" })).resolves.toMatchObject({

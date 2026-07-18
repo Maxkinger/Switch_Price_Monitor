@@ -170,8 +170,200 @@ describe("official product discovery service", () => {
 
     await expect(createService({ status: "available", candidates: [] }).resolveRegions([usCandidate()])).resolves.toEqual(expected);
     await expect(createService({ status: "unavailable", message: "该区官方搜索暂不可用，请粘贴任天堂官方商品链接。" }).resolveRegions([usCandidate()])).resolves.toEqual(expected);
+    });
   });
-});
+
+  it("automatically matches a unique official Japanese Gourmet Edition bundle", async () => {
+    // 美区英文搜索词在日区只会先返回同系列 Switch 2 本体；服务只能从这条官方结果中提取唯一日文别名再检索一次，
+    // 之后仍须以 bundle、Team17、拉丁主标题与美食家版本标记四项证据自动确认，不能把本体直接替换成组合商品。
+    const anchor = usCandidate({
+      canonicalTitle: "Overcooked! 2 - Gourmet Edition",
+      productType: "bundle",
+    });
+    const seriesAnchor = japaneseCandidate({
+      canonicalTitle: "Overcooked® 2 - オーバークック２ Nintendo Switch 2 Edition",
+      productType: "game",
+      productUrl: "https://store-jp.nintendo.com/item/software/D70010000106252/",
+    });
+    const localized = japaneseCandidate({
+      canonicalTitle: "Overcooked® 2 - オーバークック２：真の食通エディション",
+      productType: "bundle",
+      productUrl: "https://store-jp.nintendo.com/item/software/D70070000010202/",
+    });
+    const search = {
+      search: vi.fn<OfficialProductSearch["search"]>().mockImplementation(async (_regionCode, query) => {
+        // 夹具按搜索词区分两次官方响应，证明二次检索的输入不能由浏览器伪造，而是必须是首条官方候选中的日文系列别名。
+        if (query === anchor.canonicalTitle) return { status: "available" as const, candidates: [seriesAnchor] };
+        return { status: "available" as const, candidates: [localized] };
+      }),
+    };
+    const service = new OfficialProductDiscoveryService(
+      { get: async () => ({ defaultSearchRegion: "US", enabledRegions: ["US", "JP"] }) },
+      search,
+      { resolve: async () => null },
+    );
+
+    await expect(service.resolveRegions([anchor])).resolves.toEqual([{
+      candidateKey: `US:${anchor.productUrl}`,
+      regionCode: "JP",
+      status: "automatic",
+      candidate: localized,
+    }]);
+    expect(search.search).toHaveBeenNthCalledWith(1, "JP", anchor.canonicalTitle, expect.any(AbortSignal));
+    expect(search.search).toHaveBeenNthCalledWith(2, "JP", "オーバークック2", expect.any(AbortSignal));
+  });
+
+  it("does not guess a Japanese fallback query when the first official result has no unique same-series Japanese alias", async () => {
+    // 二次检索最多一次且仅接受唯一、同发行商且含相同拉丁系列标记的日文别名；别名缺失或歧义必须停在手动链接路径，
+    // 否则普通日文词可能扩大检索面，把同发行商的其他组合商品误加入订阅。
+    const anchor = usCandidate({ canonicalTitle: "Overcooked! 2 - Gourmet Edition", productType: "bundle" });
+    const unrelated = japaneseCandidate({ canonicalTitle: "Team17 Collection", productType: "game" });
+    const search = {
+      search: vi.fn<OfficialProductSearch["search"]>().mockResolvedValue({ status: "available", candidates: [unrelated] }),
+    };
+    const service = new OfficialProductDiscoveryService(
+      { get: async () => ({ defaultSearchRegion: "US", enabledRegions: ["US", "JP"] }) },
+      search,
+      { resolve: async () => null },
+    );
+
+    await expect(service.resolveRegions([anchor])).resolves.toEqual([{
+      candidateKey: `US:${anchor.productUrl}`,
+      regionCode: "JP",
+      status: "needs-manual-link",
+    }]);
+    expect(search.search).toHaveBeenCalledExactlyOnceWith("JP", anchor.canonicalTitle, expect.any(AbortSignal));
+  });
+
+  it("discovers a unique Hong Kong Gourmet Edition through a verified base-title relation", async () => {
+    // 港区普通搜索不直接返回 Gourmet 组合商品：服务只可剥离已知版本后缀再搜索一次本体，展开其一层官方关系并复核关联详情。
+    const anchor = usCandidate({
+      canonicalTitle: "Overcooked! 2 - Gourmet Edition",
+      productType: "bundle",
+    });
+    const firstRoot = hongKongBaseCandidate();
+    const secondRoot = hongKongBaseCandidate({ productUrl: "https://ec.nintendo.com/HK/zh/titles/70010000106253", canonicalTitle: "Overcooked! 2 – Nintendo Switch 2 Edition" });
+    const verified = hongKongCandidate({ publisher: "Team17", coverUrl: "https://img-eshop.cdn.nintendo.net/i/overcooked-gourmet-hk.jpg" });
+    const search = {
+      search: vi.fn<OfficialProductSearch["search"]>().mockImplementation(async (_regionCode, query) => ({
+        status: "available" as const,
+        candidates: query === anchor.canonicalTitle ? [] : [firstRoot, secondRoot],
+      })),
+    };
+    const pageResolver = { resolve: vi.fn().mockResolvedValue(verified) };
+    const relatedResolver = {
+      resolveRelated: vi.fn().mockImplementation(async (_regionCode, productUrl) => productUrl === firstRoot.productUrl ? [{
+        regionCode: "HK" as const,
+        productUrl: verified.productUrl,
+        canonicalTitle: verified.canonicalTitle,
+        productType: "bundle" as const,
+        coverUrl: verified.coverUrl,
+      }] : []),
+    };
+    const service = new OfficialProductDiscoveryService(
+      { get: async () => ({ defaultSearchRegion: "US", enabledRegions: ["US", "HK"] }) },
+      search,
+      pageResolver,
+      relatedResolver,
+    );
+
+    await expect(service.resolveRegions([anchor])).resolves.toEqual([{
+      candidateKey: `US:${anchor.productUrl}`,
+      regionCode: "HK",
+      status: "automatic",
+      candidate: verified,
+    }]);
+    expect(search.search).toHaveBeenNthCalledWith(1, "HK", anchor.canonicalTitle, expect.any(AbortSignal));
+    expect(search.search).toHaveBeenNthCalledWith(2, "HK", "Overcooked! 2", expect.any(AbortSignal));
+    expect(relatedResolver.resolveRelated).toHaveBeenCalledWith("HK", firstRoot.productUrl, expect.any(AbortSignal));
+    expect(pageResolver.resolve).toHaveBeenCalledWith("HK", verified.productUrl, expect.any(AbortSignal));
+  });
+
+  it("rejects Hong Kong relation expansion when the controlled base search returns more than five roots", async () => {
+    // 本体根超过固定上限时不能继续发起详情请求；这既限制 Worker 请求放大，也避免宽泛系列搜索产生不可靠的自动唯一性。
+    const anchor = usCandidate({ canonicalTitle: "Overcooked! 2 - Gourmet Edition", productType: "bundle" });
+    const roots = Array.from({ length: 6 }, (_unused, index) => hongKongBaseCandidate({
+      productUrl: `https://ec.nintendo.com/HK/zh/titles/${70010000033098 + index}`,
+    }));
+    const search = { search: vi.fn<OfficialProductSearch["search"]>()
+      .mockResolvedValueOnce({ status: "available", candidates: [] })
+      .mockResolvedValueOnce({ status: "available", candidates: roots }) };
+    const pages = { resolve: vi.fn().mockResolvedValue(null) };
+    const related = { resolveRelated: vi.fn().mockResolvedValue([]) };
+    const service = new OfficialProductDiscoveryService(
+      { get: async () => ({ defaultSearchRegion: "US", enabledRegions: ["US", "HK"] }) },
+      search,
+      pages,
+      related,
+    );
+
+    await expect(service.resolveRegions([anchor])).resolves.toEqual([{
+      candidateKey: `US:${anchor.productUrl}`,
+      regionCode: "HK",
+      status: "needs-manual-link",
+    }]);
+    expect(related.resolveRelated).not.toHaveBeenCalled();
+    expect(pages.resolve).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when any Hong Kong base root cannot prove its complete relation set", async () => {
+    // 多个受控本体根中任一详情结构失效时，不能利用另一根的部分 Gourmet 关系自动确认，否则唯一性结论不完整。
+    const anchor = usCandidate({ canonicalTitle: "Overcooked! 2 - Gourmet Edition", productType: "bundle" });
+    const roots = [hongKongBaseCandidate(), hongKongBaseCandidate({ productUrl: "https://ec.nintendo.com/HK/zh/titles/70010000106253" })];
+    const verified = hongKongCandidate({ publisher: "Team17" });
+    const service = new OfficialProductDiscoveryService(
+      { get: async () => ({ defaultSearchRegion: "US", enabledRegions: ["US", "HK"] }) },
+      { search: vi.fn<OfficialProductSearch["search"]>()
+        .mockResolvedValueOnce({ status: "available", candidates: [] })
+        .mockResolvedValueOnce({ status: "available", candidates: roots }) },
+      { resolve: vi.fn().mockResolvedValue(verified) },
+      { resolveRelated: vi.fn().mockResolvedValueOnce([{ regionCode: "HK", productUrl: verified.productUrl, canonicalTitle: verified.canonicalTitle, productType: "bundle", coverUrl: null }]).mockResolvedValueOnce(null) },
+    );
+
+    await expect(service.resolveRegions([anchor])).resolves.toEqual([{
+      candidateKey: `US:${anchor.productUrl}`,
+      regionCode: "HK",
+      status: "needs-manual-link",
+    }]);
+  });
+
+  it("does not invent a Hong Kong base query for an unrecognized bundle edition suffix", async () => {
+    // 版本后缀白名单只包含已确认的 Gourmet Edition；未知组合名不能被宽泛截断后继续搜索，以免误配同系列其他合集。
+    const anchor = usCandidate({ canonicalTitle: "Overcooked! 2 - Anniversary Collection", productType: "bundle" });
+    const search = { search: vi.fn<OfficialProductSearch["search"]>().mockResolvedValue({ status: "available", candidates: [] }) };
+    const related = { resolveRelated: vi.fn().mockResolvedValue([]) };
+    const service = new OfficialProductDiscoveryService(
+      { get: async () => ({ defaultSearchRegion: "US", enabledRegions: ["US", "HK"] }) },
+      search,
+      { resolve: async () => null },
+      related,
+    );
+
+    await expect(service.resolveRegions([anchor])).resolves.toEqual([{
+      candidateKey: `US:${anchor.productUrl}`,
+      regionCode: "HK",
+      status: "needs-manual-link",
+    }]);
+    expect(search.search).toHaveBeenCalledTimes(1);
+    expect(related.resolveRelated).not.toHaveBeenCalled();
+  });
+
+  it("accepts a confirmed full-width colon before the Hong Kong Gourmet Edition suffix", async () => {
+    // 任天堂本地化标题可能用全角冒号分隔版本名；该符号已在设计白名单内，只能移除完整 Gourmet Edition 后缀并搜索一次基础标题。
+    const anchor = usCandidate({ canonicalTitle: "Overcooked! 2：Gourmet Edition", productType: "bundle" });
+    const search = { search: vi.fn<OfficialProductSearch["search"]>()
+      .mockResolvedValueOnce({ status: "available", candidates: [] })
+      .mockResolvedValueOnce({ status: "available", candidates: [hongKongBaseCandidate()] }) };
+    const service = new OfficialProductDiscoveryService(
+      { get: async () => ({ defaultSearchRegion: "US", enabledRegions: ["US", "HK"] }) },
+      search,
+      { resolve: async () => null },
+      { resolveRelated: async () => [] },
+    );
+
+    await service.resolveRegions([anchor]);
+    expect(search.search).toHaveBeenNthCalledWith(2, "HK", "Overcooked! 2", expect.any(AbortSignal));
+  });
 
 /** 返回一条完整美区候选，作为默认区搜索与跨区确认的稳定身份基线。 */
 function usCandidate(overrides: Partial<OfficialProductCandidate> = {}): OfficialProductCandidate {
@@ -202,6 +394,36 @@ function japaneseCandidate(overrides: Partial<OfficialProductCandidate> = {}): O
     publisher: "Team17",
     currency: "JPY",
     currentPriceMinor: 2500,
+    ...overrides,
+  };
+}
+
+/** 港区 eShop 搜索只承诺组合商品 URL 与标题；发行商必须通过后续同 URL 官方详情页读取，不能在搜索夹具中伪造。 */
+function hongKongCandidate(overrides: Partial<OfficialProductCandidate> = {}): OfficialProductCandidate {
+  return {
+    ...usCandidate(),
+    regionCode: "HK",
+    productUrl: "https://ec.nintendo.com/HK/zh/bundles/70070000010913",
+    canonicalTitle: "Overcooked! 2 - Gourmet Edition",
+    publisher: null,
+    productType: "bundle",
+    currency: "HKD",
+    currentPriceMinor: null,
+    regularPriceMinor: null,
+    ...overrides,
+  };
+}
+
+/** 港区关系发现只接受普通 titles 本体作为根；该夹具刻意保持 game 类型和完整发行商，供数量与地区白名单测试复用。 */
+function hongKongBaseCandidate(overrides: Partial<OfficialProductCandidate> = {}): OfficialProductCandidate {
+  return {
+    ...usCandidate(),
+    regionCode: "HK",
+    productUrl: "https://ec.nintendo.com/HK/zh/titles/70010000033098",
+    canonicalTitle: "Overcooked! 2",
+    currency: "HKD",
+    currentPriceMinor: null,
+    regularPriceMinor: null,
     ...overrides,
   };
 }

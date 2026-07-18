@@ -84,17 +84,21 @@ const worker: ExportedHandler<Env> = {
 
     // 商品发现与最终确认必须在会话守卫前由路由统一保护；每个请求构造无状态服务，避免在 Worker 实例间缓存候选 URL 或外部响应。
     const officialPages = createOfficialNintendoProductPageResolver();
+    const officialSearch = createOfficialNintendoSearch();
+    // 同一个官方解析器同时提供详情复核与港区一层关系能力；发现服务仍通过两个窄接口消费，避免把递归展开权限泄漏给普通详情调用方。
+    const officialDiscovery = new OfficialProductDiscoveryService(
+      new SettingsRepository(env.DB),
+      officialSearch,
+      officialPages,
+      officialPages,
+    );
     const officialPriceIds = new OfficialPriceIdService(createNintendoPriceApiProvider());
     const productResponse = await handleProductRoute(
       request,
       env.DB,
       new SubscriptionPreviewService(officialPriceIds, defaultFallbackSources),
       // 商品发现只在管理员会话通过后由路由触发；服务端构造可确保官网搜索配置、商品页请求和用户浏览器完全隔离。
-      new OfficialProductDiscoveryService(
-        new SettingsRepository(env.DB),
-        createOfficialNintendoSearch(),
-        officialPages,
-      ),
+      officialDiscovery,
       // 最终确认复用本区页面解析器、日区双官方接口确认器与持久化设置，
       // 确保发现时与写入前使用同一地区安全范围，旧浏览器页面也不能绕过启用地区覆盖校验。
       new SubscriptionConfirmationService(
@@ -104,6 +108,8 @@ const worker: ExportedHandler<Env> = {
         new SettingsRepository(env.DB),
         // 日区最终确认不再解析可能返回排队外壳的 Store 页面；两项任天堂官方接口分别证明身份字段与在售价格状态。
         new JapaneseSubscriptionConfirmationService(createOfficialNintendoSearch(), officialPriceIds),
+        // 非日区 automatic 候选写入前复用同一请求内的官方发现实例，重新证明 URL 仍唯一，不能信任浏览器保存的旧状态。
+        officialDiscovery,
       ),
     );
     if (productResponse) return productResponse;
@@ -118,7 +124,8 @@ const worker: ExportedHandler<Env> = {
         officialPages,
         officialPriceIds,
         new SettingsRepository(env.DB),
-        new OfficialProductDiscoveryService(new SettingsRepository(env.DB), createOfficialNintendoSearch(), officialPages),
+        // 已有订阅补全使用独立的无状态发现实例，但共享同一请求内的官方适配器；不会缓存或跨用户复用候选。
+        new OfficialProductDiscoveryService(new SettingsRepository(env.DB), officialSearch, officialPages, officialPages),
       ),
     );
     if (subscriptionResponse) return subscriptionResponse;

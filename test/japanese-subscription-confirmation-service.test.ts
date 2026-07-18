@@ -18,8 +18,9 @@ describe("JapaneseSubscriptionConfirmationService", () => {
     const service = new JapaneseSubscriptionConfirmationService(search, prices);
 
     await expect(service.resolve(anchor, candidate, "automatic")).resolves.toEqual(candidate);
-    // 非日区锚点的标题是搜索词；这样自动来源不能借浏览器自报的日文标题改变本次唯一性复核范围。
-    expect(search.search).toHaveBeenCalledWith("JP", anchor.canonicalTitle, expect.any(AbortSignal));
+    // 最终复核以待保存的日区官方标题检索；美区英文标题未必能重新找到日区本地化商品，
+    // 但结果仍必须包含同一精确官方 URL，不能只因标题相近就确认浏览器提交的候选。
+    expect(search.search).toHaveBeenCalledWith("JP", candidate.canonicalTitle, expect.any(AbortSignal));
     expect(prices.resolve).toHaveBeenCalledWith(candidate);
   });
 

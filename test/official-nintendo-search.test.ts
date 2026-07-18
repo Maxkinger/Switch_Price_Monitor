@@ -133,14 +133,13 @@ describe("official Nintendo product search", () => {
 
   it("parses Hong Kong official search RSC data into an eShop candidate", async () => {
     // 港区官网搜索结果将商品页写成 ec.nintendo.com 模板；适配器只能替换同一条官方数据中的 NSUID，不能接受页面中任意外链。
-    const search = createOfficialNintendoSearch(async (request) => {
-      expect(String(request)).toBe("https://www.nintendo.com/hk/search?k=Overcooked+2");
-      return new Response(hongKongSearchHtml());
-    });
+    // Cloudflare Worker 会被港区 Magento 商城搜索拒绝，因此名称搜索只能访问经生产验证可用的普通香港官网一次；关联商品须在后续详情解析中补齐。
+    const fetchOfficialSearch = vi.fn<typeof fetch>().mockResolvedValue(new Response(hongKongSearchHtml()));
+    const search = createOfficialNintendoSearch(fetchOfficialSearch);
 
-    await expect(search.search("HK", "Overcooked 2", new AbortController().signal)).resolves.toEqual({
+    await expect(search.search("HK", "Overcooked 2", new AbortController().signal)).resolves.toMatchObject({
       status: "available",
-      candidates: [{
+      candidates: expect.arrayContaining([{
         regionCode: "HK",
         productUrl: "https://ec.nintendo.com/HK/zh/titles/70010000106253",
         canonicalTitle: "Overcooked! 2 – Nintendo Switch 2 Edition",
@@ -150,8 +149,22 @@ describe("official Nintendo product search", () => {
         coverUrl: "https://images.ctfassets.net/example/overcooked-hk.jpg?w=320&fm=webp",
         currentPriceMinor: null,
         regularPriceMinor: null,
-      }],
+      }]),
     });
+    expect(fetchOfficialSearch).toHaveBeenCalledTimes(1);
+    expect(String(fetchOfficialSearch.mock.calls[0]?.[0])).toBe("https://www.nintendo.com/hk/search?k=Overcooked+2");
+  });
+
+  it("falls back safely when the single Hong Kong official search endpoint rejects the Worker", async () => {
+    // HTTP 拒绝只能说明本次普通香港官网搜索不可用；响应不能附带临时网络诊断，也不能再次访问已知会拒绝 Worker 的 Magento 入口。
+    const fetchOfficialSearch = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 403 }));
+    const search = createOfficialNintendoSearch(fetchOfficialSearch);
+
+    await expect(search.search("HK", "Overcooked! 2 - Gourmet Edition", new AbortController().signal)).resolves.toEqual({
+      status: "unavailable",
+      message: "该区官方搜索暂不可用，请粘贴任天堂官方商品链接。",
+    });
+    expect(fetchOfficialSearch).toHaveBeenCalledTimes(1);
   });
 
   it("uses the Japanese Nintendo public software API and constructs only a numeric Store product URL", async () => {
@@ -183,6 +196,17 @@ describe("official Nintendo product search", () => {
               current_price: 5280,
               price: 5280,
             },
+            {
+              // 日区官方 API 把美食家版公开为 `DL_DLC`；它是独立购买的组合商品而非普通 DLC，
+              // 必须映射为 bundle，才能与美区的官方 Gourmet Edition 保持同一订阅类型。
+              id: "70070000010202",
+              nsuid: "70070000010202",
+              title: "Overcooked® 2 - オーバークック２：真の食通エディション",
+              maker: "Team17",
+              sform: "DL_DLC",
+              current_price: 1225,
+              price: 4900,
+            },
           ],
         },
       });
@@ -200,12 +224,23 @@ describe("official Nintendo product search", () => {
         coverUrl: null,
         currentPriceMinor: 3740,
         regularPriceMinor: 3740,
+      }, {
+        regionCode: "JP",
+        productUrl: "https://store-jp.nintendo.com/item/software/D70070000010202/",
+        canonicalTitle: "Overcooked® 2 - オーバークック２：真の食通エディション",
+        publisher: "Team17",
+        productType: "bundle",
+        currency: "JPY",
+        // 促销价和常规价分别来自日区同一条官方搜索记录；日元没有小数位，因此不得再乘以 100。
+        coverUrl: null,
+        currentPriceMinor: 1225,
+        regularPriceMinor: 4900,
       }],
     });
   });
 
   it("provides the official-link fallback when the Hong Kong RSC contract is unavailable", async () => {
-    // 港区搜索页结构变化时不能将空 HTML 误报为“没有商品”；必须让管理员改用同区任天堂官方链接而不是借用其他地区或第三方搜索结果。
+    // 普通港区官网可达但 RSC 契约缺失时必须回退到人工官方链接；HTTP 200 不能被误报成“确实没有商品”。
     const fetchOfficialSearch = vi.fn<typeof fetch>().mockResolvedValue(new Response("<html>incomplete official page</html>"));
     const search = createOfficialNintendoSearch(fetchOfficialSearch);
 
@@ -213,7 +248,7 @@ describe("official Nintendo product search", () => {
       status: "unavailable",
       message: "该区官方搜索暂不可用，请粘贴任天堂官方商品链接。",
     });
-    expect(fetchOfficialSearch).toHaveBeenCalledOnce();
+    expect(fetchOfficialSearch).toHaveBeenCalledTimes(1);
   });
 
   it("drops malformed or non-Nintendo hits instead of exposing an unverified candidate", async () => {

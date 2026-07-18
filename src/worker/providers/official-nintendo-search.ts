@@ -89,12 +89,23 @@ async function searchOfficialHongKong(
   signal: AbortSignal,
   timeoutMs: number,
 ): Promise<OfficialSearchResult> {
+  const softwareCandidates = await searchOfficialHongKongSoftware(fetchOfficialSearch, query, signal, timeoutMs);
+  // Magento 商城搜索会拒绝 Cloudflare Worker，名称检索只依赖可用的香港普通官网；组合商品将在已验证本体详情的一层官方关系中补齐。
+  return softwareCandidates === null ? unavailableSearch() : { status: "available", candidates: softwareCandidates };
+}
+
+/** 港区普通官网搜索仅负责软件索引；RSC 结构缺失表示该官方索引本次无法可靠使用。 */
+async function searchOfficialHongKongSoftware(
+  fetchOfficialSearch: typeof fetch,
+  query: string,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<OfficialProductCandidate[] | null> {
   const url = new URL(officialHongKongSearchEndpoint);
   url.searchParams.set("k", query);
   const response = await fetchOfficialResponse(fetchOfficialSearch, url.toString(), { headers: { accept: "text/html" } }, signal, timeoutMs);
-  if (!response) return unavailableSearch();
-  const candidates = parseOfficialHongKongSearch(await response.text());
-  return candidates === null ? unavailableSearch() : { status: "available", candidates };
+  if (!response) return null;
+  return parseOfficialHongKongSearch(await response.text());
 }
 
 /** 日本官网公开软件 API 的参数固定为下载软件的受控搜索；不访问会触发 JavaScript 排队的 My Nintendo Store 搜索页。 */
@@ -132,7 +143,12 @@ async function fetchOfficialResponse(
     const response = await fetchOfficialSearch(input, { ...init, signal: timeoutController.signal });
     return response.ok ? response : null;
   } catch (error) {
-    if (timedOut) return null;
+    if (timedOut) {
+      return null;
+    }
+    if (signal.aborted) {
+      return null;
+    }
     throw new ProviderNetworkError(error instanceof Error ? error.message : "official Nintendo search request failed");
   } finally {
     clearTimeout(timeout);
@@ -310,7 +326,8 @@ function toOfficialJapaneseCandidate(value: unknown): OfficialProductCandidate |
   const id = readNonEmptyString(value.id);
   const nsuid = readNonEmptyString(value.nsuid);
   const canonicalTitle = readNonEmptyString(value.title);
-  if (!id || !nsuid || id !== nsuid || !/^\d+$/.test(id) || !isOfficialJapaneseDownloadForm(value.sform) || !canonicalTitle) return null;
+  const productType = canonicalTitle === null ? null : readOfficialJapaneseDownloadProductType(value.sform, canonicalTitle);
+  if (!id || !nsuid || id !== nsuid || !/^\d+$/.test(id) || !canonicalTitle || productType === null) return null;
   const regularPriceMinor = readJapaneseYenAmount(value.price);
   const currentPriceMinor = readJapaneseYenAmount(value.current_price) ?? regularPriceMinor;
   return {
@@ -318,7 +335,7 @@ function toOfficialJapaneseCandidate(value: unknown): OfficialProductCandidate |
     productUrl: `https://store-jp.nintendo.com/item/software/D${id}/`,
     canonicalTitle,
     publisher: readNonEmptyString(value.maker),
-    productType: classifyOfficialProductType(canonicalTitle),
+    productType,
     currency: "JPY",
     // API 仅返回图像散列而非带格式扩展名的公开 URL；宁可使用页面占位封面，也不能猜测 CDN 地址。
     coverUrl: null,
@@ -327,9 +344,15 @@ function toOfficialJapaneseCandidate(value: unknown): OfficialProductCandidate |
   };
 }
 
-/** 日区 `*_DL` 是官网软件 API 的下载版形态；卡带、实体版和其他聚合记录没有安全的 Store 下载 URL 映射。 */
-function isOfficialJapaneseDownloadForm(value: unknown): boolean {
-  return typeof value === "string" && value.endsWith("_DL");
+/**
+ * 日区软件 API 的形态同时决定是否可以安全构造 Store URL 与候选类型。`BEE_DL`、`HAC_DL` 是已验证的下载软件，
+ * 其细分类型仍可从官方标题中的升级包等受控词判断；`DL_DLC` 则是本次实测的独立组合商品，必须强制写成 bundle。
+ * 实体卡带、未知形态或其他 DLC 枚举没有经过 Store URL/价格 API 准入，不能仅因带有数字 ID 就进入订阅流程。
+ */
+function readOfficialJapaneseDownloadProductType(value: unknown, title: string): ProductType | null {
+  if (value === "BEE_DL" || value === "HAC_DL") return classifyOfficialProductType(title);
+  if (value === "DL_DLC") return "bundle";
+  return null;
 }
 
 /** 日元没有小数位；API 金额必须是非负安全整数，浮点、字符串和异常值都不能参与候选价格展示。 */

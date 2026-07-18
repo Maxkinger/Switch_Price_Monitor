@@ -26,10 +26,10 @@ export type OfficialPriceIdResolution =
 const japaneseStorePath = /^\/item\/software\/D(\d+)\/?$/;
 
 /**
- * 香港 eShop 的完整游戏与追加内容分别使用 titles/aocs 路径，但公开价格 API 都接受路径中的纯数字 ID。
+ * 香港 eShop 的完整游戏、追加内容和组合商品分别使用 titles/aocs/bundles 路径，但公开价格 API 都接受路径中的纯数字 ID。
  * 正则只接受精确地区、语言和资源类型，避免把相似 URL、其他服 URL 或任意数字片段作为可采集价格映射。
  */
-const hongKongEshopPath = /^\/HK\/zh\/(?:titles|aocs)\/(\d+)\/?$/;
+const hongKongEshopPath = /^\/HK\/zh\/(?:titles|aocs|bundles)\/(\d+)\/?$/;
 
 /**
  * 从已确认商品链接取得已准入地区的价格 ID 后立即调用官方价格提供方二次验证。JP 和 HK 各自只有一套经过 ADR-002 验证的规则，
@@ -83,7 +83,7 @@ function extractJapanesePriceId(productUrl: string): string | null {
 }
 
 /**
- * 只接受 HTTPS 香港 eShop 的 titles/aocs 精确路径，且不接受查询或片段参数。价格 ID 是地区绑定标识，
+ * 只接受 HTTPS 香港 eShop 的 titles/aocs/bundles 精确路径，且不接受查询或片段参数。价格 ID 是地区绑定标识，
  * 所以即使查询参数含有数字也不能作为候选，避免管理员粘贴分享、跳转或跨服链接时误绑定错误商品价格。
  */
 function extractHongKongPriceId(productUrl: string): string | null {

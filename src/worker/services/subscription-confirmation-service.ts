@@ -26,6 +26,19 @@ type OfficialPriceIdResolver = Pick<OfficialPriceIdService, "resolve">;
 type JapaneseCandidateResolver = Pick<JapaneseSubscriptionConfirmationService, "resolve">;
 
 /**
+ * 非日区 automatic 候选的最终唯一性验证窄接口。实现由官方发现服务提供；确认服务只关心相同 URL 是否仍可自动成立，
+ * 不接触搜索词、关联结构或地区适配器细节。
+ */
+export interface AutomaticRegionalCandidateVerifier {
+  verifyAutomaticRegionalCandidate(anchor: OfficialProductCandidate, candidate: OfficialProductCandidate): Promise<boolean>;
+}
+
+/** 未注入发现服务时 automatic 一律安全拒绝；生产入口会显式注入真实实现，人工选择与日区专用确认不受影响。 */
+const unavailableAutomaticRegionalCandidateVerifier: AutomaticRegionalCandidateVerifier = {
+  verifyAutomaticRegionalCandidate: async () => false,
+};
+
+/**
  * 最终确认只读取启用地区，不读取默认搜索区或展示偏好。确认时重新读取设置，
  * 才能阻止浏览器旧缓存将未处理地区静默遗漏或伪造额外地区映射。
  */
@@ -48,6 +61,7 @@ export class SubscriptionConfirmationService {
     private readonly officialPriceIds: OfficialPriceIdResolver,
     private readonly settings: EnabledRegionSettingsReader,
     private readonly japanese: JapaneseCandidateResolver,
+    private readonly automaticVerifier: AutomaticRegionalCandidateVerifier = unavailableAutomaticRegionalCandidateVerifier,
     private readonly createId: () => string = () => crypto.randomUUID(),
   ) {}
 
@@ -164,6 +178,11 @@ export class SubscriptionConfirmationService {
     if (!isMatchSource(region.matchSource)) throw new SubscriptionConfirmationError("地区商品匹配来源无效。");
     const verified = await this.resolveOfficialCandidate(selected, region, region.matchSource);
     if (!hasConfirmedRegionIdentity(selected, verified, region.matchSource)) throw new SubscriptionConfirmationError("地区商品与默认区商品身份不一致。");
+    if (region.matchSource === "automatic" && verified.regionCode !== "JP") {
+      // 非日区详情相同只证明商品本身存在，不能证明它仍是跨区唯一候选；写入前必须复跑官方发现规则并绑定同一 URL。
+      const remainsAutomatic = await this.automaticVerifier.verifyAutomaticRegionalCandidate(selected, verified);
+      if (!remainsAutomatic) throw new SubscriptionConfirmationError("地区商品自动匹配已失效，请重新核验其他地区。");
+    }
     const officialPrice = await this.officialPriceIds.resolve(verified);
     return {
       regionCode: verified.regionCode,
