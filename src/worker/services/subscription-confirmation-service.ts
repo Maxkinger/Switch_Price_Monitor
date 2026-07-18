@@ -133,11 +133,14 @@ export class SubscriptionConfirmationService {
     return verified;
   }
 
-  /** 单区候选需通过官方重读、同一逻辑身份比较与本区价格 ID 二次验证后才可进入 D1 批次。 */
+  /**
+   * 单区候选需通过官方重读、按来源分级的身份比较与本区价格 ID 二次验证后才可进入 D1 批次。
+   * 浏览器提供的 `matchSource` 只表达管理员/系统的审计路径，不能替代官方 URL 重验，也不能影响最终写入的官方字段。
+   */
   private async validateRegion(region: ConfirmedRegionalProduct, selected: OfficialProductCandidate): Promise<UnidentifiedValidatedRegion> {
     if (!isMatchSource(region.matchSource)) throw new SubscriptionConfirmationError("地区商品匹配来源无效。");
     const verified = await this.resolveOfficialCandidate(region);
-    if (!hasSameLogicalIdentity(selected, verified)) throw new SubscriptionConfirmationError("地区商品与默认区商品身份不一致。");
+    if (!hasConfirmedRegionIdentity(selected, verified, region.matchSource)) throw new SubscriptionConfirmationError("地区商品与默认区商品身份不一致。");
     const officialPrice = await this.officialPriceIds.resolve(verified);
     return {
       regionCode: verified.regionCode,
@@ -176,6 +179,21 @@ function isMatchSource(value: unknown): value is RegionalProductMatchSource {
 function hasSameLogicalIdentity(left: OfficialProductCandidate, right: OfficialProductCandidate): boolean {
   if (normalize(left.canonicalTitle) !== normalize(right.canonicalTitle) || left.productType !== right.productType) return false;
   return left.publisher === null || right.publisher === null || normalize(left.publisher) === normalize(right.publisher);
+}
+
+/**
+ * 按来源决定最终确认的身份强度。`automatic` 没有管理员逐项选择，必须保持标题、类型和发行商的严格比较；
+ * `manual_selection`/`manual_link` 则允许地区语言和发行商写法不同，但在 Worker 已重验本区官方 URL 的前提下，
+ * 仍必须是与默认区相同的受控商品类型。这样不会把人工确认误扩展为任意链接或本体/DLC/升级包之间的混配。
+ */
+function hasConfirmedRegionIdentity(
+  anchor: OfficialProductCandidate,
+  verified: OfficialProductCandidate,
+  matchSource: RegionalProductMatchSource,
+): boolean {
+  return matchSource === "automatic"
+    ? hasSameLogicalIdentity(anchor, verified)
+    : anchor.productType === verified.productType;
 }
 
 /** 规范化身份保留标题、可空发行商和类型，避免仅按名称把同名 DLC、本体或不同发行商商品合并。 */

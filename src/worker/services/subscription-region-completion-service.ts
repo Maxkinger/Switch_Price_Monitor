@@ -89,11 +89,14 @@ export class SubscriptionRegionCompletionService {
     return verified;
   }
 
-  /** 单区新增候选必须来自受控来源、与重验锚点具有同一逻辑身份，并通过本区官方价格 ID 二次验证。 */
+  /**
+   * 单区新增候选必须来自受控来源、与重验锚点满足来源对应的身份规则，并通过本区官方价格 ID 二次验证。
+   * 补全不能信任页面缓存的标题或价格；无论人工还是自动来源，最终持久化字段均只来自本次官方 URL 解析结果。
+   */
   private async validateRegion(region: ConfirmedRegionalProduct, anchor: OfficialProductCandidate): Promise<Omit<ValidatedConfirmedRegion, "id">> {
     if (!isMatchSource(region.matchSource)) throw new SubscriptionRegionCompletionError("地区商品匹配来源无效。");
     const verified = await this.resolveOfficialCandidate(region);
-    if (!hasSameLogicalIdentity(anchor, verified)) throw new SubscriptionRegionCompletionError("地区商品与既有订阅身份不一致。");
+    if (!hasConfirmedRegionIdentity(anchor, verified, region.matchSource)) throw new SubscriptionRegionCompletionError("地区商品与既有订阅身份不一致。");
     const officialPrice = await this.officialPriceIds.resolve(verified);
     return {
       regionCode: verified.regionCode,
@@ -136,6 +139,21 @@ function isMatchSource(value: unknown): value is ConfirmedRegionalProduct["match
 function hasSameLogicalIdentity(left: OfficialProductCandidate, right: OfficialProductCandidate): boolean {
   if (normalize(left.canonicalTitle) !== normalize(right.canonicalTitle) || left.productType !== right.productType) return false;
   return left.publisher === null || right.publisher === null || normalize(left.publisher) === normalize(right.publisher);
+}
+
+/**
+ * 已有订阅补全沿用与新建确认相同的信任分级：自动解析只能在唯一严格身份下成立；
+ * 管理员点击候选卡或粘贴链接后，可接受本地化标题/发行商，但前提仍是 Worker 已重验该区任天堂 URL 且类型相同。
+ * 此函数不放宽地区、主机或路径校验，那些约束由 `resolveOfficialCandidate` 在网络请求前后负责。
+ */
+function hasConfirmedRegionIdentity(
+  anchor: OfficialProductCandidate,
+  verified: OfficialProductCandidate,
+  matchSource: ConfirmedRegionalProduct["matchSource"],
+): boolean {
+  return matchSource === "automatic"
+    ? hasSameLogicalIdentity(anchor, verified)
+    : anchor.productType === verified.productType;
 }
 
 /** 规范化仅用于身份比较，不改写数据库展示名称或任天堂官方页面标题。 */

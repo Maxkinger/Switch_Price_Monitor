@@ -48,6 +48,46 @@ describe("subscription region completion service", () => {
     await expect(readUsSnapshotCount()).resolves.toBe(1);
     await expect(readGlobalTarget()).resolves.toBe(5000);
   });
+
+  it("adds a manually selected localized Japanese official candidate without replacing history", async () => {
+    // 补全页与新建向导应使用相同的人工审计语义：本地化名称由管理员确认，
+    // 但 Worker 仍需重新解析本区官方 URL 并验证升级包类型，且只允许原子追加缺失地区。
+    const service = createService([overcookedUs(), localizedOvercookedJp()]);
+
+    await expect(service.completeExisting("subscription-overcooked", {
+      regions: [{ ...localizedOvercookedJp(), matchSource: "manual_selection" }],
+      skippedRegionCodes: [],
+    }, now)).resolves.toEqual({ subscriptionId: "subscription-overcooked", addedRegionCodes: ["JP"] });
+    await expect(readRegionCodes()).resolves.toEqual(["JP", "US"]);
+    await expect(readUsSnapshotCount()).resolves.toBe(1);
+  });
+
+  it("rejects a localized manual candidate with a different product type without adding a region", async () => {
+    // 人工候选不允许把同名本体、DLC 或组合包混进既有订阅；类型不一致时必须在 D1 批次前失败，
+    // 保证美区历史、目标价和现有地区关联均不发生部分更新。
+    const invalidJapaneseUpgrade = { ...localizedOvercookedJp(), productType: "upgrade-pack" as const };
+    const service = createService([overcookedUs(), invalidJapaneseUpgrade]);
+
+    await expect(service.completeExisting("subscription-overcooked", {
+      regions: [{ ...invalidJapaneseUpgrade, matchSource: "manual_link" }],
+      skippedRegionCodes: [],
+    }, now)).rejects.toThrow("地区商品与既有订阅身份不一致。");
+    await expect(readRegionCodes()).resolves.toEqual(["US"]);
+    await expect(readUsSnapshotCount()).resolves.toBe(1);
+    await expect(readGlobalTarget()).resolves.toBe(5000);
+  });
+
+  it("continues to reject localized candidates that claim the automatic source", async () => {
+    // 自动匹配没有管理员针对语言差异的选择动作，故必须继续满足完整逻辑身份；
+    // 该用例防止人工来源的放宽规则意外扩展到自动补全，造成错误地区静默加入监控。
+    const service = createService([overcookedUs(), localizedOvercookedJp()]);
+
+    await expect(service.completeExisting("subscription-overcooked", {
+      regions: [{ ...localizedOvercookedJp(), matchSource: "automatic" }],
+      skippedRegionCodes: [],
+    }, now)).rejects.toThrow("地区商品与既有订阅身份不一致。");
+    await expect(readRegionCodes()).resolves.toEqual(["US"]);
+  });
 });
 
 /**
@@ -114,4 +154,9 @@ function overcookedUs(): OfficialProductCandidate {
 /** 日区候选只在官方页面解析器成功返回时才可成为新增地区商品，浏览器载荷本身没有写入权限。 */
 function overcookedJp(): OfficialProductCandidate {
   return { regionCode: "JP", productUrl: "https://store-jp.nintendo.com/item/software/D70050000064985/", canonicalTitle: "Overcooked! 2", publisher: "Team17", productType: "game", currency: "JPY", coverUrl: "https://assets.nintendo.com/overcooked-2.jpg", currentPriceMinor: 1000, regularPriceMinor: null };
+}
+
+/** 日区夹具刻意使用本地化标题和发行商，验证补全服务不会把人工确认误当作严格自动匹配。 */
+function localizedOvercookedJp(): OfficialProductCandidate {
+  return { ...overcookedJp(), canonicalTitle: "オーバークック２", publisher: "Team17 Japan" };
 }

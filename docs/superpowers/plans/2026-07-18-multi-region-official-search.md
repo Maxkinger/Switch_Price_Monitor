@@ -159,7 +159,7 @@ Run: `npm test -- --run test/official-product-discovery-service.test.ts test/api
 
 Expected: PASS；唯一安全结果自动加入，歧义或本地化结果出现候选列表，真正无结果才显示链接兜底。
 
-- [ ] **Step 5: 等待用户确认后提交并推送 Task 3**
+- [x] **Step 5: 已确认并提交 Task 3**
 
 拟提交范围：跨区发现分流、API 行为测试与确定性排序。
 
@@ -182,23 +182,23 @@ git push origin main
 - `manual_selection` and `manual_link` require a Worker-resolved official URL for their declared region and the same `productType` as the anchor; their localized title/publisher need not equal the anchor.
 - Existing enabled-region coverage and D1 atomicity checks remain unchanged.
 
-- [ ] **Step 1: 写入失败测试**
+- [x] **Step 1: 写入失败测试**
 
 在新建和补全服务测试中分别加入 JP 本地化标题夹具。以 `manual_selection` 提交相同 `upgrade-pack` 类型并断言成功；以不同 `game` 类型提交并断言“地区商品与默认区商品身份不一致。”且仓储未写入。再以 `automatic` 和本地化标题提交，断言仍拒绝，防止放宽自动匹配规则。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/subscription-confirmation-service.test.ts test/subscription-region-completion.test.ts`
 
 Expected: FAIL，因为两个服务目前对所有 `matchSource` 都执行严格标题/发行商身份校验。
 
-- [ ] **Step 3: 最小确认实现**
+- [x] **Step 3: 最小确认实现**
 
 抽取共享的受控验证函数（或在两个服务中保持同一小型受控规则），先重新解析 `region.productUrl`，再按 `matchSource` 选择严格自动身份或人工同类型身份规则。绝不信任浏览器提交的标题、币种、发行商和价格；最终入库字段永远取自 `verified`。保留现有地区范围、重复地区、默认区不可跳过和单批次写入校验。
 
 中文注释需说明人工选择是管理员对本地化名称的审计确认，不是放行非官方链接、跨服 URL 或错误商品类型。
 
-- [ ] **Step 4: 运行确认回归**
+- [x] **Step 4: 运行确认回归**
 
 Run: `npm test -- --run test/subscription-confirmation-service.test.ts test/subscription-region-completion.test.ts test/api-subscription-detail.test.ts && npx tsc --noEmit`
 

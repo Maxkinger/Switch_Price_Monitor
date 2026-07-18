@@ -66,6 +66,53 @@ describe("subscription confirmation service", () => {
     await expect(service.confirm([input], now)).resolves.toEqual([expect.objectContaining({ status: "created" })]);
     await expect(counts()).resolves.toEqual({ games: 1, products: 1, subscriptions: 1, regions: 1 });
   });
+
+  it("accepts a manually selected localized Japanese upgrade pack after official revalidation", async () => {
+    // 管理员在日区候选卡中已审计了本地化标题；Worker 仍以重读后的官方 URL 和相同升级包类型为准，
+    // 因此不能因为中日标题不同而拒绝这条合法映射，也不能采信浏览器自报的价格或发行商。
+    const input = localizedUpgradeSubscription("manual_selection");
+    const service = createService([overcookedUpgradeUs(), localizedOvercookedUpgradeJp()]);
+
+    await expect(service.confirm([input], now)).resolves.toEqual([expect.objectContaining({ status: "created" })]);
+    await expect(counts()).resolves.toEqual({ games: 1, products: 2, subscriptions: 1, regions: 2 });
+  });
+
+  it("accepts a manually linked localized Japanese upgrade pack after official revalidation", async () => {
+    // 手动链接同样需要 Worker 成功重读本区任天堂页面，区别只在管理员提供 URL 而非点击候选卡；
+    // 它可接受标题本地化，但仍必须与默认区保持同一升级包类型，不能成为绕过官方链接验证的路径。
+    const input = localizedUpgradeSubscription("manual_link");
+    const service = createService([overcookedUpgradeUs(), localizedOvercookedUpgradeJp()]);
+
+    await expect(service.confirm([input], now)).resolves.toEqual([expect.objectContaining({ status: "created" })]);
+    await expect(counts()).resolves.toEqual({ games: 1, products: 2, subscriptions: 1, regions: 2 });
+  });
+
+  it("rejects a manually selected localized candidate with a different product type before writing", async () => {
+    // 手动选择仅放宽语言化标题与发行商，不是绕过商品分类的通行证；把游戏本体混入升级包订阅时，
+    // 所有 D1 写入必须整体取消，避免后续价格采集把不同商品当成同一订阅地区。
+    const invalidJapaneseGame = { ...localizedOvercookedUpgradeJp(), productType: "game" as const };
+    const input = {
+      ...localizedUpgradeSubscription("manual_selection"),
+      regions: [
+        { ...overcookedUpgradeUs(), matchSource: "manual_selection" as const },
+        { ...invalidJapaneseGame, matchSource: "manual_selection" as const },
+      ],
+    };
+    const service = createService([overcookedUpgradeUs(), invalidJapaneseGame]);
+
+    await expect(service.confirm([input], now)).rejects.toThrow("地区商品与默认区商品身份不一致。");
+    await expect(counts()).resolves.toEqual({ games: 0, products: 0, subscriptions: 0, regions: 0 });
+  });
+
+  it("keeps automatic localized candidates subject to strict identity validation", async () => {
+    // `automatic` 代表系统无需管理员逐项审计的高信任结果；即使类型相同，标题本地化仍必须拒绝，
+    // 防止本任务为人工选择放宽规则时意外让任何搜索结果自动写入订阅。
+    const input = localizedUpgradeSubscription("automatic");
+    const service = createService([overcookedUpgradeUs(), localizedOvercookedUpgradeJp()]);
+
+    await expect(service.confirm([input], now)).rejects.toThrow("地区商品与默认区商品身份不一致。");
+    await expect(counts()).resolves.toEqual({ games: 0, products: 0, subscriptions: 0, regions: 0 });
+  });
 });
 
 /** 用真实仓储连接 D1；官方页面与日区价格 ID 使用固定验证结果，使测试只覆盖最终确认业务规则。 */
@@ -128,6 +175,28 @@ function kirbyUs(): OfficialProductCandidate {
 
 function kirbyJp(): OfficialProductCandidate {
   return { regionCode: "JP", productUrl: "https://store-jp.nintendo.com/item/software/D70010000000001/", canonicalTitle: "Kirby and the Forgotten Land", publisher: "Nintendo", productType: "game", currency: "JPY", coverUrl: null, currentPriceMinor: 6500, regularPriceMinor: null };
+}
+
+/** 构造升级包锚点，明确与完整游戏不同，防止本地化确认测试意外复用普通游戏的宽松路径。 */
+function overcookedUpgradeUs(): OfficialProductCandidate {
+  return { regionCode: "US", productUrl: "https://www.nintendo.com/us/store/products/overcooked-2-nintendo-switch-2-edition-upgrade-pack/", canonicalTitle: "Overcooked! 2 Nintendo Switch 2 Edition Upgrade Pack", publisher: "Team17", productType: "upgrade-pack", currency: "USD", coverUrl: null, currentPriceMinor: 999, regularPriceMinor: null };
+}
+
+/** 日区候选采用与美区不同的官方标题和发行商写法，但其受控类型仍是同一个升级包。 */
+function localizedOvercookedUpgradeJp(): OfficialProductCandidate {
+  return { regionCode: "JP", productUrl: "https://store-jp.nintendo.com/item/software/D70010000106252/", canonicalTitle: "オーバークック２ Nintendo Switch 2 Edition アップグレードパス", publisher: "Team17 Japan", productType: "upgrade-pack", currency: "JPY", coverUrl: null, currentPriceMinor: 1000, regularPriceMinor: null };
+}
+
+/** 默认区和日区均需出现在确认载荷中；来源由调用方控制，用于分别锁定人工与自动的信任边界。 */
+function localizedUpgradeSubscription(matchSource: "automatic" | "manual_selection" | "manual_link") {
+  return {
+    selected: overcookedUpgradeUs(),
+    regions: [
+      { ...overcookedUpgradeUs(), matchSource: "manual_selection" as const },
+      { ...localizedOvercookedUpgradeJp(), matchSource },
+    ],
+    skippedRegionCodes: [],
+  };
 }
 
 /** 既有记录使用与服务约定相同的稳定身份，模拟管理员之前已确认的美区订阅。 */
