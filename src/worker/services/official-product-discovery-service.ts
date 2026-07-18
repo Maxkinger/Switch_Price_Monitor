@@ -1,5 +1,5 @@
 import type { OfficialProductCandidate, OfficialProductSearch, OfficialSearchResult, RegionCode } from "../../shared/domain";
-import type { OfficialNintendoProductPageResolver } from "../providers/official-nintendo-product-page";
+import { isOfficialNintendoProductUrl, type OfficialNintendoProductPageResolver } from "../providers/official-nintendo-product-page";
 
 /**
  * 发现服务只读取默认搜索区和启用地区。两者均由服务端设置保存，
@@ -58,18 +58,50 @@ export class OfficialProductDiscoveryService {
       .map(async (regionCode) => this.matchRegion(candidate, regionCode))));
   }
 
-  /** 为一个游戏/地区组合选择安全的自动候选或人工确认状态，绝不按数组位置把候选分配给其他游戏。 */
+  /**
+   * 为一个游戏/地区组合选择安全的自动候选或人工确认状态，绝不按数组位置把候选分配给其他游戏。
+   * 自动确认和人工选择的信任边界不同：前者只能使用唯一严格身份，而后者允许管理员审计本地化标题；
+   * 不过两者都必须来自该地区的官方 URL 且属于同一受控商品类型，不能把搜索摘要或任意网页当作可保存映射。
+   */
   private async matchRegion(candidate: OfficialProductCandidate, regionCode: RegionCode): Promise<RegionResolution> {
     const candidateKey = officialCandidateKey(candidate);
     const result = await this.search.search(regionCode, candidate.canonicalTitle, new AbortController().signal);
     if (result.status === "unavailable") return { candidateKey, regionCode, status: "needs-manual-link" };
 
-    const matches = result.candidates.filter((option) => hasSameOfficialIdentity(candidate, option));
+    const sameTypeCandidates = verifiedSameTypeCandidates(candidate, regionCode, result.candidates);
+    const matches = sameTypeCandidates.filter((option) => hasSameOfficialIdentity(candidate, option));
     if (matches.length === 1) return { candidateKey, regionCode, status: "automatic", candidate: matches[0] };
-    return matches.length > 1
-      ? { candidateKey, regionCode, status: "needs-manual-selection", candidates: matches }
+    return sameTypeCandidates.length > 0
+      ? { candidateKey, regionCode, status: "needs-manual-selection", candidates: sameTypeCandidates }
       : { candidateKey, regionCode, status: "needs-manual-link" };
   }
+}
+
+/**
+ * 将外部官方搜索结果再次收窄为本区、同类型且符合商品页白名单的候选，并用标题及 URL 生成稳定顺序。
+ * 搜索适配器已负责解析，但其响应仍是外部输入；这里防御性过滤可避免适配器变更或异常数据把跨区/非官网 URL
+ * 带到管理员操作界面。人工选择可接受本地化标题，所以不能在此要求标题或发行商相同。
+ */
+function verifiedSameTypeCandidates(
+  anchor: OfficialProductCandidate,
+  regionCode: RegionCode,
+  candidates: OfficialProductCandidate[],
+): OfficialProductCandidate[] {
+  return candidates
+    .filter((option) => option.regionCode === regionCode
+      && option.productType === anchor.productType
+      && isOfficialNintendoProductUrl(regionCode, option.productUrl))
+    // `filter` 已创建新数组，因此在项目当前 ES 目标下使用 `sort` 也不会修改外部搜索响应或其他地区的候选顺序。
+    .sort(compareOfficialCandidates);
+}
+
+/**
+ * 标题相同的官方候选再以完整商品 URL 断开平局，保证跨请求的渲染顺序确定。
+ * 这不参与身份判断；它只防止上游检索的非稳定排序使前端选择状态在刷新后映射到另一张候选卡。
+ */
+function compareOfficialCandidates(left: OfficialProductCandidate, right: OfficialProductCandidate): number {
+  const titleOrder = normalizeTitle(left.canonicalTitle).localeCompare(normalizeTitle(right.canonicalTitle));
+  return titleOrder !== 0 ? titleOrder : left.productUrl.localeCompare(right.productUrl);
 }
 
 /** 候选键只使用默认区的地区与官方 URL；标题可能随语言变化，URL 是当前向导内更稳定且已验证的身份来源。 */

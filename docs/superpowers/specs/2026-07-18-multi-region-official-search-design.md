@@ -1,6 +1,6 @@
 # 多地区任天堂官方搜索与自动监控设计规格
 
-**状态：** 实施中；五区官方搜索适配已完成并通过固定夹具回归，跨区确认分流与界面待实施
+**状态：** 实施中；五区官方搜索与跨区发现分流已完成并通过固定夹具回归，最终人工确认校验与界面待实施
 **日期：** 2026-07-18
 
 ## 1. 目标与问题
@@ -14,6 +14,7 @@
 - 2026-07-18：已将 US、MX、BR 的公开任天堂 Algolia 游戏索引收敛为 Worker 内不可变地区档案；档案分别绑定 `store_game_en_us`/`USD`/`/us/`、`store_game_es_mx`/`MXN`/`/es-mx/`、`store_game_pt_br`/`BRL`/`/pt-br/`。固定响应测试覆盖对应索引、币种及 URL 白名单。
 - 2026-07-18：已验证并实现 HK 的 `https://www.nintendo.com/hk/search?k=…` RSC `software.items` 读取。候选只允许其官方 `ec.nintendo.com/HK/zh/titles/{NSUID}` 模板和数字 NSUID；eShop 页面以公开 `search.*` 元数据二次确认，缺少可验证价格时保留空值。
 - 2026-07-18：已验证并实现 JP 的 `https://search.nintendo.jp/nintendo_soft/search.json` 公开软件 API。候选只接受 `*_DL` 下载版和相等的数字 `id/nsuid`，再按官方映射生成 `store-jp.nintendo.com/item/software/D{id}/`；实体版或聚合 ID 不生成商品链接。
+- 2026-07-18：发现服务已区分唯一严格自动匹配与人工选择：同地区、同类型且符合官方商品 URL 白名单的候选会以标题及 URL 稳定排序。只有唯一标题/类型/发行商严格匹配可自动加入；本地化标题、多个严格匹配等歧义保留为管理员候选卡；搜索不可用或已验证空集合才显示官方链接兜底。
 
 ## 2. 范围与非目标
 

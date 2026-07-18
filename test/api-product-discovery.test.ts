@@ -83,6 +83,29 @@ describe("product discovery HTTP routes", () => {
     expect(resolveRegions).toHaveBeenCalledWith([candidate()]);
   });
 
+  it("rejects browser-provided enabled regions before invoking regional discovery", async () => {
+    // 启用地区是管理员设置中的服务器事实来源；若路由接受请求体中的覆盖值，
+    // 旧页面或篡改请求就能缩小或扩大任天堂官网查询范围，因此必须在读取 JSON 时直接拒绝。
+    const resolveRegions = vi.fn(async () => []);
+    const discovery = {
+      searchDefaultRegion: async () => ({ status: "available" as const, candidates: [candidate()] }),
+      resolveOfficialLink: async () => hongKongCandidate(),
+      resolveRegions,
+    };
+    const cookie = await initializeAndLogin();
+
+    const response = await handleProductRoute(
+      request("/api/products/resolve-regions", { candidates: [candidate()], enabledRegions: ["HK"] }, cookie),
+      env.DB,
+      fixedPreview(),
+      discovery,
+    );
+
+    expect(response?.status).toBe(422);
+    await expect(response?.json()).resolves.toEqual({ code: "VALIDATION_ERROR", error: "跨区范围由已保存设置决定。" });
+    expect(resolveRegions).not.toHaveBeenCalled();
+  });
+
   it("confirms a validated batch only for an administrator and returns each created subscription", async () => {
     // 最终确认桩件不写 D1；该用例专门锁定路由的认证、受控请求装配和响应边界，真实原子写入由服务层测试覆盖。
     const confirm = vi.fn(async () => [{ gameId: "game-overcooked", subscriptionId: "subscription-overcooked", status: "created" as const }]);

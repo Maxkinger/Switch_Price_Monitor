@@ -106,7 +106,7 @@ Run: `npm test -- --run test/official-nintendo-search.test.ts test/official-nint
 
 Expected: PASS；HK/JP 有可验证公开结果时产生本区候选，无法验证时稳定回到官方链接兜底，不泄露页面内容。
 
-- [ ] **Step 5: 等待用户确认后提交并推送 Task 2**
+- [x] **Step 5: 已确认并提交 Task 2**
 
 拟提交范围：香港/日本官方网页搜索、必要的商品链接白名单、解析测试。
 
@@ -128,7 +128,7 @@ git push origin main
 - `needs-manual-selection` returns verified same-type official candidates whenever the regional search produced candidates but no unique strict match.
 - `needs-manual-link` is emitted only for unavailable search or a verified empty candidate set.
 
-- [ ] **Step 1: 写入失败测试**
+- [x] **Step 1: 写入失败测试**
 
 在发现服务测试中使用 US 默认区锚点并模拟：
 
@@ -141,19 +141,19 @@ expect(resolution).toMatchObject({ status: "needs-manual-selection", regionCode:
 
 再覆盖唯一严格命中仍输出 `automatic`、不同商品类型候选不会进入人工列表、`unavailable` 不会伪装成空搜索。API 测试断言浏览器仍不能指定区域范围。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/official-product-discovery-service.test.ts test/api-product-discovery.test.ts`
 
 Expected: FAIL，因为现有 `matchRegion` 在零个严格匹配时直接要求手动链接，丢弃了本地化官方候选。
 
-- [ ] **Step 3: 最小发现服务实现**
+- [x] **Step 3: 最小发现服务实现**
 
 保留 `hasSameOfficialIdentity` 作为自动匹配专用规则。`result.candidates` 先按区域、官方 URL、受控商品类型及 `candidate.productType` 过滤；严格匹配恰为一项返回 `automatic`，否则有同类型候选即返回 `needs-manual-selection`，仅已验证空集合或 `unavailable` 返回 `needs-manual-link`。候选顺序需按标题和官方 URL 稳定排序，避免同一响应重排造成页面闪烁或测试不确定。
 
 中文注释必须说明“自动确认”与“管理员已选择”的信任边界不同：语言化标题不能由系统猜测，但不应迫使管理员在已有官方候选时复制链接。
 
-- [ ] **Step 4: 运行服务端回归**
+- [x] **Step 4: 运行服务端回归**
 
 Run: `npm test -- --run test/official-product-discovery-service.test.ts test/api-product-discovery.test.ts test/official-nintendo-search.test.ts && npx tsc --noEmit`
 
