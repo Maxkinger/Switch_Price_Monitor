@@ -114,6 +114,17 @@
 - 机械验收结果为 `passed: false`。失败发生在 Browser Run 启动阶段，三次都没有进入任天堂页面导航，因此本记录不能证明任天堂日区详情页可达或不可达；它只证明当前 Wrangler 远程预览与账号环境没有达到已批准的三次成功门槛。
 - 本轮不准进入 Browser Run 生产集成，日区搜索不到独立升级包时继续使用管理员手工粘贴任天堂官方链接。过程没有读取或保存页面 HTML、Cookie、localStorage、IndexedDB、排队令牌、截图、网络归档、异常堆栈或任何凭据，也没有修改生产 Worker、D1、Cron、订阅、价格历史或版本号。
 
+### 3.14 日区升级包 Browser Run 启动修复与三次复验（2026-07-19）
+
+- 受控诊断代码继续只存在于 `/tmp/switch-price-monitor-jp-browser-probe`，没有并入生产 `src/`、依赖或 Wrangler 配置。新增异常脱敏、浏览器生命周期和固定 HTTP 边界均先经历预期 RED，再通过 5 个测试文件、31 项测试和 TypeScript 严格检查；测试同时证明诊断入口不能接受任意 URL，错误不会携带堆栈、凭据或响应正文。
+- 已确认首次三次 `browser-launch-failed` 的根因是版本协议断层：`@cloudflare/playwright` 1.3.0 使用 `/v1/devtools/browser/{sessionId}` 标准 CDP 路径，而 Wrangler 4.31.0 内置 Miniflare 只实现旧 `/v1/connectDevtools`。旧绑定对新路径返回普通 405，Playwright 对空 WebSocket 调用 `accept()`，与本地稳定复现的 `Cannot read properties of null (reading 'accept')` 完全一致。
+- 临时探针只把 Wrangler 升级到与既有 `@cloudflare/workers-types 4.20260702.1` 精确兼容的 4.107.1（Miniflare 4.20260702.0），并把临时兼容日期收敛到该运行时支持且满足 Playwright CDP 门槛的 `2026-07-09`。本地 Chrome for Testing 下载发生一次 TLS 中断；对固定官方下载地址的 HEAD 请求返回 200，单次重试完成下载后，本地 `launch-only` 返回 `success/complete`。远程 `launch-only` 与固定 `https://example.com/` 导航随后分别以 1821 ms、4555 ms 成功。
+- 第一次任天堂单次验证返回 `{ status: "invalid-official-url", elapsedMs: 6550 }`。只读官方页面证明升级入口为无末尾斜杠的 `https://store-jp.nintendo.com/item/software/D70050000064985`；纯函数回归测试先复现误拒绝，再把零个或一个末尾斜杠统一规范化为带斜杠 URL。HTTPS、精确主机、空端口、空凭据、固定路径层级、纯数字商品 ID、可见文字和唯一性规则均未放宽。
+- 修复后单次验证成功。三次正式独立复验分别开始于 UTC `2026-07-18T16:36:55Z`、`16:37:41Z`、`16:38:28Z`，耗时 8257 ms、5987 ms、8047 ms；三次均只返回 `https://store-jp.nintendo.com/item/software/D70050000064985/`。公开关系卡当时同时显示价格 `700 円（税込）` 与 `30%OFF`，该金额只作为本次页面关系证据，不替代正式价格 API 或历史快照。
+- 机械结果为 `count: 3`、`allSuccess: true`、`oneUrl: true`，满足原规格的三次可行性门槛。远程预览已终止，Cloudflare API 对 `switch-price-monitor-jp-upgrade-probe` 返回 Worker 不存在（10007），确认没有持久部署；生产 V 0.0.12、D1、Cron、订阅、价格历史和版本号均未改变。
+- 最终回归重新运行生产项目 Worker 56 个测试文件、202 项测试，DOM 4 个测试文件、8 项测试以及 TypeScript 严格检查，全部退出为 0；临时探针 5 个测试文件、31 项测试和独立类型检查同样通过。注释一致性复核确认新增或修改的临时源代码、测试和配置均说明了职责、边界条件与安全原因。
+- 本结果只允许进入 Browser Run 生产集成设计，不代表生产功能获批。正式接入前仍须单独确认调用时机、缓存、并发与费用、失败回退、二次官方校验、监控告警和页面结构变化处理；在该设计与实现完成前，现有管理员手工官方链接兜底继续保留。
+
 ## 4. 验收原则
 
 - 不把“请求成功”当作“价格正确”：必须通过商品身份校验。

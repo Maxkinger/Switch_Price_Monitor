@@ -14,7 +14,7 @@
 - 所有临时源代码、测试和配置仍须包含中文详细注释，说明职责、数据约束、边界条件和安全原因；注释必须与实现一致。
 - 严格测试先行：每项行为先运行新增测试并确认因缺少目标实现而失败，再写最小实现并运行通过。
 - 探针只能访问 `https://store-jp.nintendo.com/item/software/D70010000106252/`，不得访问第三方站点、搜索引擎、Nintendo Account、登录、购物车或购买接口。
-- 目标关系必须是可见文字包含 `アップグレードパス` 的 HTTPS 链接，精确主机为 `store-jp.nintendo.com`，路径符合 `^/item/software/D[0-9]+/$`；去重后必须恰好一个。
+- 目标关系必须是可见文字包含 `アップグレードパス` 的 HTTPS 链接，精确主机为 `store-jp.nintendo.com`，路径符合 `^/item/software/D[0-9]+/?$`；官方页面可能省略末尾斜杠，接受后必须统一规范化为带斜杠 URL，去重后必须恰好一个。
 - 单次探测从启动到返回的成功耗时必须小于 30,000 毫秒；三次独立实例串行运行，相邻实例至少间隔 20 秒，不复用 Cookie、缓存、存储或 Browser Run session。
 - 只允许输出 `status`、`upgradeUrl`、`linkText`、`elapsedMs`；不得保存页面 HTML、Cookie、localStorage、IndexedDB、排队令牌、请求头、响应头、截图、网络归档或异常堆栈。
 - 三次必须全部成功且 URL 均为 `https://store-jp.nintendo.com/item/software/D70050000064985/`，才可判定“允许进入生产设计”；成功不代表生产集成获批。
@@ -235,24 +235,25 @@
 
   const parentPageUrl = "https://store-jp.nintendo.com/item/software/D70010000106252/";
   const officialHost = "store-jp.nintendo.com";
-  const officialProductPath = /^\/item\/software\/D[0-9]+\/$/;
+  const officialProductPath = /^\/item\/software\/(D[0-9]+)\/?$/;
   const relationLabel = "アップグレードパス";
 
   function canonicalizeOfficialProductUrl(rawHref: string): string | null {
     try {
       const url = new URL(rawHref, parentPageUrl);
       // 凭据、自定义端口、非 HTTPS、相似主机和宽松路径均可能把探针变成开放抓取器，必须拒绝。
-      if (
-        url.protocol !== "https:" ||
-        url.hostname !== officialHost ||
-        url.port !== "" ||
-        url.username !== "" ||
-        url.password !== "" ||
-        !officialProductPath.test(url.pathname)
-      ) {
-        return null;
-      }
-      return `https://${officialHost}${url.pathname}`;
+    const productMatch = url.pathname.match(officialProductPath);
+    if (
+      url.protocol !== "https:" ||
+      url.hostname !== officialHost ||
+      url.port !== "" ||
+      url.username !== "" ||
+      url.password !== "" ||
+      productMatch === null
+    ) {
+      return null;
+    }
+    return `https://${officialHost}/item/software/${productMatch[1]}/`;
     } catch {
       return null;
     }
