@@ -112,7 +112,7 @@ Run: `npm test -- --run test/api-request-tracker.test.ts test/api-client.test.ts
 
 Expected: PASS；请求成功、异常和并发结束后计数均为零，客户端仍只使用同源 Cookie。
 
-- [ ] **Step 5: 提交 Task 1（等待用户确认）**
+- [x] **Step 5: 提交 Task 1（已确认并推送 `5e3fc98`）**
 
 拟提交范围：共享请求计数器、全局遮罩、已认证 API 客户端注入与相关测试。
 
@@ -131,11 +131,11 @@ git push origin main
 - Modify: `test/api-subscriptions.test.ts`
 
 **Interfaces:**
-- `SubscriptionRepository.deleteMany(ids: string[]): Promise<void>` 在一个 D1 批次中完成已验证订阅的依赖清理。
+- `SubscriptionRepository.deleteMany(ids: string[]): Promise<boolean>` 在一个 D1 批次中完成已验证订阅的依赖清理；任一 ID 缺失时返回 `false` 且不写入。
 - `SubscriptionService.deleteMany(subscriptionIds: string[]): Promise<string[]>` 拒绝任何不存在 ID，并返回删除的原始去重顺序。
 - `DELETE /api/subscriptions` 接受 `{ subscriptionIds: string[] }`，成功返回 `{ deletedSubscriptionIds: string[] }`；空/重复输入返回 422，任一不存在返回 404。
 
-- [ ] **Step 1: 写入批量删除的失败 HTTP 测试**
+- [x] **Step 1: 写入批量删除的失败 HTTP 测试**
 
 ```ts
 it("atomically deletes selected subscriptions and their exclusive price data", async () => {
@@ -156,19 +156,19 @@ it("does not delete any selected record when one requested subscription is absen
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/api-subscriptions.test.ts`
 
 Expected: FAIL，因为路由尚未识别 `DELETE /api/subscriptions`。
 
-- [ ] **Step 3: 最小实现受认证删除与依赖清理**
+- [x] **Step 3: 最小实现受认证删除与依赖清理**
 
 ```ts
 if (method === "DELETE" && path === "/api/subscriptions") return { kind: "bulk-delete" };
 
 const rows = await this.database.prepare(`SELECT id, game_id AS gameId FROM subscriptions WHERE id IN (${placeholders})`).bind(...ids).all<SubscriptionRow>();
-if (rows.results.length !== ids.length) throw new SubscriptionNotFoundError("订阅已不存在。");
+if (rows.results.length !== ids.length) return false;
 await this.database.batch([
   this.database.prepare(`DELETE FROM notification_events WHERE subscription_id IN (${placeholders}) OR regional_product_id IN (SELECT id FROM regional_products WHERE game_id IN (${gamePlaceholders}))`).bind(...ids, ...gameIds),
   this.database.prepare(`DELETE FROM price_snapshots WHERE regional_product_id IN (SELECT id FROM regional_products WHERE game_id IN (${gamePlaceholders}))`).bind(...gameIds),
@@ -181,7 +181,7 @@ await this.database.batch([
 
 在实际实现中为占位符、输入收窄、目标价/关系/健康表删除分别建立小型私有 helper，避免拼接未经校验的浏览器输入。中文注释必须说明先验证全部 ID 再批量删除的原因、`fetch_logs` 的 `SET NULL` 不能满足硬删除要求，以及游戏一订阅约束为何允许删除游戏及其地区商品。
 
-- [ ] **Step 4: 运行删除路由回归**
+- [x] **Step 4: 运行删除路由回归**
 
 Run: `npm test -- --run test/api-subscriptions.test.ts test/api-dashboard.test.ts test/api-subscription-detail.test.ts && npx tsc --noEmit`
 

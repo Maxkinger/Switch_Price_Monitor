@@ -62,4 +62,15 @@ export class SubscriptionService {
     if (!(await this.subscriptions.hasEnabledProductsForGame(gameId, regionalProductIds))) throw new RegionalProductMismatchError("地区商品不属于所选游戏。");
     await this.subscriptions.replaceRegionalProducts(subscriptionId, regionalProductIds, now);
   }
+
+  /**
+   * 硬删除返回调用方已通过路由去重后的原始 ID 顺序，供前端准确移除所选卡片。
+   * 仓储会先验证所有订阅存在；发现任一不存在即抛 404 且不执行 D1 删除批次，防止多选操作部分成功而让用户误以为全部已删除。
+   */
+  public async deleteMany(subscriptionIds: string[]): Promise<string[]> {
+    if (!(await this.subscriptions.deleteMany(subscriptionIds))) {
+      throw new SubscriptionNotFoundError("订阅不存在。");
+    }
+    return subscriptionIds;
+  }
 }

@@ -68,6 +68,12 @@ export async function handleSubscriptionRoute(
       return new Response(null, { status: 204 });
     }
 
+    if (action.kind === "bulk-delete") {
+      // 只接受已收窄且去重的订阅 ID；服务层会在 D1 写入前再次确认所有目标存在，避免浏览器过期选择导致部分删除。
+      const subscriptionIds = readBulkDeleteSubscriptionIds(await request.json<unknown>());
+      return Response.json({ deletedSubscriptionIds: await service.deleteMany(subscriptionIds) });
+    }
+
     const update = readSubscriptionUpdate(await request.json<unknown>());
     if (update.kind === "enabled") { await service.setEnabled(action.subscriptionId, update.enabled, new Date().toISOString()); return Response.json({ subscriptionId: action.subscriptionId, enabled: update.enabled }); }
     if (update.kind === "regions") { await service.replaceRegionalProducts(action.subscriptionId, update.regionalProductIds, new Date().toISOString()); return Response.json({ subscriptionId: action.subscriptionId, regionalProductIds: update.regionalProductIds }); }
@@ -97,6 +103,7 @@ type SubscriptionAction =
   | { kind: "resolve-regions"; subscriptionId: string }
   | { kind: "complete-regions"; subscriptionId: string }
   | { kind: "disable"; subscriptionId: string }
+  | { kind: "bulk-delete" }
   | { kind: "set-enabled"; subscriptionId: string };
 
 /**
@@ -105,6 +112,7 @@ type SubscriptionAction =
  */
 function readSubscriptionAction(method: string, path: string): SubscriptionAction | null {
   if (method === "POST" && path === "/api/subscriptions") return { kind: "create" };
+  if (method === "DELETE" && path === "/api/subscriptions") return { kind: "bulk-delete" };
   const readMatch = method === "GET" ? path.match(/^\/api\/subscriptions\/([^/]+)$/) : null;
   if (readMatch) return { kind: "read", subscriptionId: decodeURIComponent(readMatch[1]) };
   const resolveRegionsMatch = method === "POST" ? path.match(/^\/api\/subscriptions\/([^/]+)\/resolve-regions$/) : null;
@@ -116,6 +124,21 @@ function readSubscriptionAction(method: string, path: string): SubscriptionActio
   const updateMatch = method === "PATCH" ? path.match(/^\/api\/subscriptions\/([^/]+)$/) : null;
   if (updateMatch) return { kind: "set-enabled", subscriptionId: decodeURIComponent(updateMatch[1]) };
   return null;
+}
+
+/**
+ * 批量永久删除只接受非空、非重复的普通字符串数组，拒绝对象、空白 ID 与重复选择。
+ * 这些校验在调用仓储前完成，既避免无效 `IN ()` 查询，也保证服务返回的删除 ID 与管理员确认的选择严格一一对应。
+ */
+function readBulkDeleteSubscriptionIds(value: unknown): string[] {
+  if (!isRecord(value) || !Array.isArray(value.subscriptionIds) || value.subscriptionIds.length === 0) {
+    throw new SubscriptionRequestError("请至少选择一个订阅。");
+  }
+  const subscriptionIds = value.subscriptionIds.map((subscriptionId) => readNonEmptyString(subscriptionId, "订阅标识无效。"));
+  if (new Set(subscriptionIds).size !== subscriptionIds.length) {
+    throw new SubscriptionRequestError("订阅不能重复选择。");
+  }
+  return subscriptionIds;
 }
 
 /**

@@ -9,6 +9,12 @@ interface SubscriptionRow {
   regionalProductIds: string | null;
 }
 
+/** 硬删除前由订阅 ID 取得的最小归属信息；游戏 ID 只用于参数化关联清理，绝不从浏览器请求体读取。 */
+interface SubscriptionDeletionTarget {
+  id: string;
+  gameId: string;
+}
+
 /**
  * 订阅及其地区商品关联的仓储。订阅与价格历史分离，关闭订阅只更新 enabled，
  * 后续功能不得通过删除订阅清掉用户已经积累的历史价格。
@@ -91,6 +97,44 @@ export class SubscriptionRepository {
     ]);
   }
 
+  /**
+   * 永久删除一组订阅及其只属于这些订阅的游戏、地区商品和价格数据。
+   * 先读全量目标再执行单个 D1 batch：任一 ID 不存在时完全不写入；批次执行中发生错误时 D1 会整体回滚，
+   * 防止管理员一次多选删除后留下没有订阅却仍占用空间的快照、日志或通知事件。
+   */
+  public async deleteMany(subscriptionIds: string[]): Promise<boolean> {
+    const subscriptionPlaceholders = placeholdersFor(subscriptionIds);
+    const targets = await this.database
+      .prepare(`SELECT id, game_id AS gameId FROM subscriptions WHERE id IN (${subscriptionPlaceholders})`)
+      .bind(...subscriptionIds)
+      .all<SubscriptionDeletionTarget>();
+
+    // 结果必须和已由路由去重的输入一一对应；否则不能删除“仍存在的部分”，以保持批量操作原子语义。
+    if (targets.results.length !== subscriptionIds.length) return false;
+
+    const gameIds = targets.results.map((target) => target.gameId);
+    const gamePlaceholders = placeholdersFor(gameIds);
+    const regionalProductsForGames = `SELECT id FROM regional_products WHERE game_id IN (${gamePlaceholders})`;
+
+    /**
+     * `fetch_logs` 的外键原本是 SET NULL，适合常规地区商品淘汰却不符合管理员明确的硬删除；
+     * 因此在删地区商品前显式清理日志。游戏一订阅的唯一约束使这些 gameIds 不会属于未选订阅，
+     * 允许在同一批次中安全删除其所有地区商品与游戏，而 exchange_rates、设置和认证记录不在此范围内。
+     */
+    await this.database.batch([
+      this.database.prepare(`DELETE FROM notification_events WHERE subscription_id IN (${subscriptionPlaceholders}) OR regional_product_id IN (${regionalProductsForGames})`).bind(...subscriptionIds, ...gameIds),
+      this.database.prepare(`DELETE FROM subscription_region_targets WHERE subscription_id IN (${subscriptionPlaceholders})`).bind(...subscriptionIds),
+      this.database.prepare(`DELETE FROM subscription_regions WHERE subscription_id IN (${subscriptionPlaceholders})`).bind(...subscriptionIds),
+      this.database.prepare(`DELETE FROM price_snapshots WHERE regional_product_id IN (${regionalProductsForGames})`).bind(...gameIds),
+      this.database.prepare(`DELETE FROM fetch_logs WHERE regional_product_id IN (${regionalProductsForGames})`).bind(...gameIds),
+      this.database.prepare(`DELETE FROM regional_product_health WHERE regional_product_id IN (${regionalProductsForGames})`).bind(...gameIds),
+      this.database.prepare(`DELETE FROM subscriptions WHERE id IN (${subscriptionPlaceholders})`).bind(...subscriptionIds),
+      this.database.prepare(`DELETE FROM regional_products WHERE game_id IN (${gamePlaceholders})`).bind(...gameIds),
+      this.database.prepare(`DELETE FROM games WHERE id IN (${gamePlaceholders})`).bind(...gameIds),
+    ]);
+    return true;
+  }
+
   public async findByGameId(gameId: string): Promise<SubscriptionRecord | null> {
     // 游戏在当前 MVP 只能有一个订阅，查询按 game_id 而不是展示名称，防止多语言标题造成重复匹配。
     const row = await this.database
@@ -120,4 +164,13 @@ export class SubscriptionRepository {
       regionalProductIds: row.regionalProductIds?.split(",") ?? [],
     };
   }
+}
+
+/**
+ * 占位符数量只来自已经过路由非空、去重校验的内部数组，所有实际值仍以 bind 传入。
+ * 该 helper 绝不拼接浏览器输入，避免订阅 ID 被解释为 SQL 片段；空数组表示调用方违反仓储契约，直接抛错而非生成 `IN ()`。
+ */
+function placeholdersFor(values: readonly string[]): string {
+  if (values.length === 0) throw new Error("硬删除至少需要一个已验证订阅标识。");
+  return values.map(() => "?").join(", ");
 }

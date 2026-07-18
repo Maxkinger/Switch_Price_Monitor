@@ -5,9 +5,9 @@ import worker, { type Env } from "../src/worker";
 
 describe("subscription management HTTP routes", () => {
   beforeEach(async () => {
-    // 订阅接口涉及认证、游戏与地区商品三类外键；按依赖倒序清理可避免前一轮数据让重复订阅断言失真。
+    // 硬删除覆盖快照、日志、健康状态、通知和目标价；夹具必须先按依赖倒序清理，避免某次删除测试的外键数据污染后续用例。
     await env.DB.exec(
-      "DELETE FROM subscription_regions; DELETE FROM subscriptions; DELETE FROM regional_products; DELETE FROM games; DELETE FROM sessions; DELETE FROM login_attempts; DELETE FROM admin_credentials; DELETE FROM settings;",
+      "DELETE FROM notification_events; DELETE FROM regional_product_health; DELETE FROM fetch_logs; DELETE FROM price_snapshots; DELETE FROM subscription_region_targets; DELETE FROM subscription_regions; DELETE FROM subscriptions; DELETE FROM regional_products; DELETE FROM games; DELETE FROM exchange_rates; DELETE FROM sessions; DELETE FROM login_attempts; DELETE FROM admin_credentials; DELETE FROM settings;",
     );
     await seedSubscriptionCandidate();
   });
@@ -19,6 +19,14 @@ describe("subscription management HTTP routes", () => {
       gameId: "game-overcooked-2",
       regionalProductIds: ["product-overcooked-2-us"],
     });
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ code: "UNAUTHORIZED", error: "请先登录。" });
+  });
+
+  it("rejects hard deletion when the administrator session is absent", async () => {
+    // 永久删除会清除价格与通知审计记录，必须和创建一样由 HttpOnly 管理员会话保护，不能仅依赖前端确认框。
+    const response = await call("/api/subscriptions", { subscriptionIds: ["subscription-overcooked-2"] }, undefined, "DELETE");
 
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toEqual({ code: "UNAUTHORIZED", error: "请先登录。" });
@@ -117,7 +125,72 @@ describe("subscription management HTTP routes", () => {
     await expect(response.json()).resolves.toEqual({ subscriptionId: "subscription-overcooked-2", regionalProductIds: ["product-overcooked-2-jp"] });
     await expect(env.DB.prepare("SELECT COUNT(*) AS count FROM subscription_regions WHERE subscription_id = ?").bind("subscription-overcooked-2").first<{ count: number }>()).resolves.toEqual({ count: 1 });
   });
+
+  it("atomically hard deletes a selected subscription and all of its exclusive price data", async () => {
+    // 先通过真实创建路由建立订阅，再补齐所有受订阅或地区商品约束的数据，确保测试覆盖硬删除而不是软停用。
+    const cookie = await initializeAndLogin();
+    await createSubscription(cookie);
+    await createUnrelatedSubscription(cookie);
+    await seedSubscriptionDependentData();
+
+    const response = await call("/api/subscriptions", { subscriptionIds: ["subscription-overcooked-2"] }, cookie, "DELETE");
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ deletedSubscriptionIds: ["subscription-overcooked-2"] });
+    // fetch_logs 的外键本可 SET NULL，但永久删除的业务语义要求也擦除这类诊断记录，避免无归属日志长期占用存储。
+    await expect(env.DB.prepare("SELECT COUNT(*) AS count FROM fetch_logs WHERE regional_product_id IS NOT NULL OR source = ?").bind("official-test").first<{ count: number }>()).resolves.toEqual({ count: 0 });
+    await expect(env.DB.prepare("SELECT COUNT(*) AS count FROM price_snapshots").first<{ count: number }>()).resolves.toEqual({ count: 0 });
+    await expect(env.DB.prepare("SELECT COUNT(*) AS count FROM regional_product_health").first<{ count: number }>()).resolves.toEqual({ count: 0 });
+    await expect(env.DB.prepare("SELECT COUNT(*) AS count FROM notification_events").first<{ count: number }>()).resolves.toEqual({ count: 0 });
+    await expect(env.DB.prepare("SELECT COUNT(*) AS count FROM subscription_region_targets").first<{ count: number }>()).resolves.toEqual({ count: 0 });
+    await expect(env.DB.prepare("SELECT COUNT(*) AS count FROM subscription_regions WHERE subscription_id = ?").bind("subscription-overcooked-2").first<{ count: number }>()).resolves.toEqual({ count: 0 });
+    await expect(env.DB.prepare("SELECT COUNT(*) AS count FROM subscriptions").first<{ count: number }>()).resolves.toEqual({ count: 1 });
+    await expect(env.DB.prepare("SELECT COUNT(*) AS count FROM regional_products WHERE game_id = ?").bind("game-overcooked-2").first<{ count: number }>()).resolves.toEqual({ count: 0 });
+    await expect(env.DB.prepare("SELECT COUNT(*) AS count FROM games WHERE id = ?").bind("game-overcooked-2").first<{ count: number }>()).resolves.toEqual({ count: 0 });
+    // 未选中的订阅、游戏及全局汇率不属于目标订阅专属数据，删除一个订阅绝不能清理它们。
+    await expect(env.DB.prepare("SELECT COUNT(*) AS count FROM subscriptions WHERE id = ?").bind("subscription-unrelated").first<{ count: number }>()).resolves.toEqual({ count: 1 });
+    await expect(env.DB.prepare("SELECT COUNT(*) AS count FROM games WHERE id = ?").bind("game-unrelated").first<{ count: number }>()).resolves.toEqual({ count: 1 });
+    await expect(env.DB.prepare("SELECT COUNT(*) AS count FROM exchange_rates WHERE currency = ?").bind("USD").first<{ count: number }>()).resolves.toEqual({ count: 1 });
+  });
+
+  it("does not delete any selected subscription when one requested identifier is absent", async () => {
+    // 全部 ID 必须先通过存在性验证；若批量选择包含已被其他标签页删除的订阅，不能部分删除其余用户数据。
+    const cookie = await initializeAndLogin();
+    await createSubscription(cookie);
+    await seedSubscriptionDependentData();
+
+    const response = await call("/api/subscriptions", { subscriptionIds: ["subscription-overcooked-2", "subscription-missing"] }, cookie, "DELETE");
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ code: "NOT_FOUND", error: "订阅不存在。" });
+    await expect(env.DB.prepare("SELECT COUNT(*) AS count FROM subscriptions WHERE id = ?").bind("subscription-overcooked-2").first<{ count: number }>()).resolves.toEqual({ count: 1 });
+    await expect(env.DB.prepare("SELECT COUNT(*) AS count FROM price_snapshots").first<{ count: number }>()).resolves.toEqual({ count: 1 });
+    await expect(env.DB.prepare("SELECT COUNT(*) AS count FROM games WHERE id = ?").bind("game-overcooked-2").first<{ count: number }>()).resolves.toEqual({ count: 1 });
+  });
+
+  it("rejects empty or duplicated hard-delete selections before querying D1", async () => {
+    // 空选与重复选常来自过期页面状态；路由必须在服务层之前拒绝，避免重复占位符或含糊的删除结果。
+    const cookie = await initializeAndLogin();
+    const empty = await call("/api/subscriptions", { subscriptionIds: [] }, cookie, "DELETE");
+    const duplicated = await call("/api/subscriptions", { subscriptionIds: ["subscription-overcooked-2", "subscription-overcooked-2"] }, cookie, "DELETE");
+
+    expect(empty.status).toBe(422);
+    expect(duplicated.status).toBe(422);
+    await expect(env.DB.prepare("SELECT COUNT(*) AS count FROM games WHERE id = ?").bind("game-overcooked-2").first<{ count: number }>()).resolves.toEqual({ count: 1 });
+  });
 });
+
+/** 构造订阅专属的所有关联记录；全局汇率故意独立插入，供硬删除测试确认其不会被误删。 */
+async function seedSubscriptionDependentData(): Promise<void> {
+  await env.DB.batch([
+    env.DB.prepare("INSERT INTO subscription_region_targets (subscription_id, region_code, target_amount_minor, target_state) VALUES (?, ?, ?, ?)").bind("subscription-overcooked-2", "JP", 800, "met"),
+    env.DB.prepare("INSERT INTO price_snapshots (regional_product_id, amount_minor, currency, cny_fen, source, captured_at) VALUES (?, ?, ?, ?, ?, ?)").bind("product-overcooked-2-jp", 800, "JPY", 4000, "official", "2026-07-18T00:00:00.000Z"),
+    env.DB.prepare("INSERT INTO fetch_logs (regional_product_id, source, status, message, captured_at) VALUES (?, ?, ?, ?, ?)").bind("product-overcooked-2-jp", "official-test", "failed", "测试采集失败", "2026-07-18T00:00:00.000Z"),
+    env.DB.prepare("INSERT INTO regional_product_health (regional_product_id, consecutive_failures, last_success_at, failure_notified, updated_at) VALUES (?, ?, ?, ?, ?)").bind("product-overcooked-2-jp", 3, null, 1, "2026-07-18T00:00:00.000Z"),
+    env.DB.prepare("INSERT INTO notification_events (subscription_id, regional_product_id, event_type, status, dedupe_key, created_at) VALUES (?, ?, ?, ?, ?, ?)").bind("subscription-overcooked-2", "product-overcooked-2-jp", "price-drop", "pending", "delete-test-event", "2026-07-18T00:00:00.000Z"),
+    env.DB.prepare("INSERT INTO exchange_rates (currency, cny_rate, source, captured_at, is_stale) VALUES (?, ?, ?, ?, ?)").bind("USD", 7.2, "test", "2026-07-18T00:00:00.000Z", 0),
+  ]);
+}
 
 async function seedSubscriptionCandidate(): Promise<void> {
   // 候选游戏与两个地区商品模拟搜索、匹配完成后的状态；接口只接受已确认的商品 ID，不能替用户猜测商品。
@@ -195,6 +268,20 @@ async function createSubscription(cookie: string): Promise<void> {
       id: "subscription-overcooked-2",
       gameId: "game-overcooked-2",
       regionalProductIds: ["product-overcooked-2-us", "product-overcooked-2-jp"],
+    },
+    cookie,
+  );
+  expect(response.status).toBe(201);
+}
+
+/** 第二个真实订阅模拟仪表盘中的未选卡片，用于证明批量硬删除不会越过管理员明确选择的 ID 边界。 */
+async function createUnrelatedSubscription(cookie: string): Promise<void> {
+  const response = await call(
+    "/api/subscriptions",
+    {
+      id: "subscription-unrelated",
+      gameId: "game-unrelated",
+      regionalProductIds: ["product-unrelated-us"],
     },
     cookie,
   );
