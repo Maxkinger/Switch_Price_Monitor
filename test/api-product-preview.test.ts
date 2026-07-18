@@ -94,9 +94,13 @@ function requestToWorker(path: string, body: unknown): Request {
   return new Request(`https://example.test${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 }
 
-/** 预览测试不需要真实前端资产，使用失败桩件防止意外掉入静态资源层掩盖路由问题。 */
+/** 预览测试不需要前端资产或 Browser Binding，两个失败桩件可防止路由意外回退或启动受控浏览器而掩盖只读边界。 */
 function workerEnv(): Env {
-  return { DB: env.DB, ASSETS: { fetch: async () => new Response("unexpected asset request", { status: 500 }) } as unknown as Fetcher };
+  return {
+    DB: env.DB,
+    ASSETS: { fetch: async () => new Response("unexpected asset request", { status: 500 }) } as unknown as Fetcher,
+    BROWSER: { fetch: async () => new Response("unexpected browser binding request", { status: 500 }) } as unknown as Fetcher,
+  };
 }
 
 /** 返回所有不应被预览写入的核心业务记录数，作为只读接口的回归保护。 */

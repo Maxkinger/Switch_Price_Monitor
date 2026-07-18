@@ -42,6 +42,8 @@ import { TelegramService } from "./services/telegram-service";
 export interface Env {
   /** 静态资源绑定仅服务前端文件；所有敏感业务操作必须走下方 Worker API。 */
   ASSETS: Fetcher;
+  /** Browser Binding 只服务日区升级关系；不得传入价格采集、Cron、通知或前端响应，避免扩大浏览器会话的使用范围。 */
+  BROWSER: Fetcher;
   /** D1 是价格历史与管理员配置的唯一持久化入口，前端绝不能直接访问。 */
   DB: D1Database;
   /** Telegram 凭据仅由 Cloudflare Secret 在运行时注入；可选字段使未配置部署安全跳过日报。 */

@@ -4,10 +4,17 @@
   "name": "switch-price-monitor",
   "main": "./src/worker/index.ts",
   "compatibility_date": "2026-07-16",
+  // Playwright 1.3.0 依赖 Workers 原生 node:fs 兼容层；该标志只提供运行时 API，不授权访问用户文件或 Secret。
+  // Browser Run 适配器只用它处理受控页面会话，任何用户输入仍须由后续服务显式校验，不能据此扩大文件或凭据访问边界。
+  "compatibility_flags": ["nodejs_compat"],
   // /api 请求优先进入 Worker；其余路径由 SPA 回退处理，支持浏览器直接访问前端路由。
   "assets": {
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*"]
+  },
+  // Browser Binding 仅注入受认证的日区升级关系发现与确认服务；Cron 和价格采集工厂不会接收此绑定，避免浏览器资源被后台任务意外消耗。
+  "browser": {
+    "binding": "BROWSER"
   },
   // 生产 Worker 只通过此 DB 绑定访问项目专用 D1；数据库 ID 不是秘密，但必须与 Cloudflare 中的 switch-price-monitor 对应，避免误连其他项目数据。
   "d1_databases": [
