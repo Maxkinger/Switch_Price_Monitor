@@ -27,6 +27,8 @@
 | [日区订阅确认官方 API 复核实施计划](superpowers/plans/2026-07-18-japan-confirmation-api.md) | 日区双官方接口复核、最终跨语言确认与受控验收步骤 | 已完成，待提交 |
 | [临时发布版本号设计规格](superpowers/specs/2026-07-18-temporary-release-version-design.md) | 页面版本标识、补丁号自动递增与未来发布系统替换边界 | 已部署 V 0.0.2，待提交推送 |
 | [临时发布版本号实施计划](superpowers/plans/2026-07-18-temporary-release-version.md) | 构建时版本注入、受控补丁递增发布与质量门禁 | 已部署 V 0.0.2，待提交推送 |
+| [香港区任天堂官方价格 API 设计规格](superpowers/specs/2026-07-18-hong-kong-official-price-api-design.md) | 日区回归、香港 `titles/aocs` 官方价格 ID、HKD 公开 API 与严格响应校验 | 已实现，待生产受控验收 |
+| [香港区任天堂官方价格 API 实施计划](superpowers/plans/2026-07-18-hong-kong-official-price-api.md) | JP/HK API 适配、HK URL 验证、注册顺序与质量门禁 | 已完成，待提交与生产受控验收 |
 | [多地区任天堂官方搜索与自动监控实施计划](superpowers/plans/2026-07-18-multi-region-official-search.md) | 五区搜索适配器、自动/人工确认边界、前端三态与受控生产验收 | 已完成，待提交验收文档 |
 | [认证入口实施计划](superpowers/plans/2026-07-17-authentication-entry.md) | 首次设置、恢复码确认自动登录、登录、密码恢复、认证失效回退与暖色响应式表单 | 已完成 |
 | [公开偏好设置页设计规格](superpowers/specs/2026-07-17-public-settings-page-design.md) | 已登录管理员的公开偏好边界、三组表单、一次保存与秘密配置延期原则 | 已实施 |

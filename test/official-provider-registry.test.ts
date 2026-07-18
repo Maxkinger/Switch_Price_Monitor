@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createOfficialProviderRegistry } from "../src/worker/providers/official-provider-registry";
 import type { RegionalProduct } from "../src/worker/providers/types";
 
-/** 已确认的地区商品夹具只含公开身份字段，用来证明注册表不会把日区专用 API 错配给其他地区。 */
+/** 已确认的地区商品夹具只含公开身份字段，用来证明注册表不会把已审核的 JP/HK API 错配给其他地区。 */
 const jpProduct: RegionalProduct = {
   id: "product-jp",
   regionCode: "JP",
@@ -25,13 +25,27 @@ const usProduct: RegionalProduct = {
   productUrl: "https://www.nintendo.com/us/store/products/overcooked-2-switch/",
 };
 
+/**
+ * 香港升级包夹具使用官方 AOC URL 和本区 HKD；注册表只能据此返回香港专用 API，
+ * 不能将日区参数或其他地区的页面解析器优先级带入本区采集链路。
+ */
+const hkProduct: RegionalProduct = {
+  ...jpProduct,
+  id: "product-hk",
+  regionCode: "HK",
+  currency: "HKD",
+  officialPriceId: "70050000065163",
+  productUrl: "https://ec.nintendo.com/HK/zh/aocs/70050000065163",
+};
+
 describe("official provider registry", () => {
-  it("places the Japanese price API before the official product page only for JP", () => {
-    // 日区有已确认的地区专属价格 API，因此可先用 API，再在 API 不可用时尝试本区官方页面；顺序直接影响回退的可信边界。
+  it("places only approved Japanese and Hong Kong price APIs before their official product pages", () => {
+    // JP 与 HK 都有已确认的地区专属价格 API，因此可先用 API，再在 API 不可用时尝试本区官方页面；顺序直接影响回退的可信边界。
     const registry = createOfficialProviderRegistry();
 
     expect(registry.providersFor(jpProduct).map((provider) => provider.source)).toEqual(["official", "official"]);
-    // 其他地区不允许复用日区 API 规则，只能获得本区官方页面适配器。
+    expect(registry.providersFor(hkProduct).map((provider) => provider.source)).toEqual(["official", "official"]);
+    // 其他地区不允许复用 JP/HK API 规则，只能获得本区官方页面适配器。
     expect(registry.providersFor(usProduct)).toHaveLength(1);
   });
 

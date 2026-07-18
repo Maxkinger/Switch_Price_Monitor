@@ -26,17 +26,22 @@ export type OfficialPriceIdResolution =
 const japaneseStorePath = /^\/item\/software\/D(\d+)\/?$/;
 
 /**
- * 从已确认商品链接取得日区价格 ID 后立即调用官方价格提供方二次验证。服务刻意只实现 ADR-002 已验证的日区规则，
+ * 香港 eShop 的完整游戏与追加内容分别使用 titles/aocs 路径，但公开价格 API 都接受路径中的纯数字 ID。
+ * 正则只接受精确地区、语言和资源类型，避免把相似 URL、其他服 URL 或任意数字片段作为可采集价格映射。
+ */
+const hongKongEshopPath = /^\/HK\/zh\/(?:titles|aocs)\/(\d+)\/?$/;
+
+/**
+ * 从已确认商品链接取得已准入地区的价格 ID 后立即调用官方价格提供方二次验证。JP 和 HK 各自只有一套经过 ADR-002 验证的规则，
  * 其他地区返回可解释的不可用状态并等待专用解析器，而不是根据相似 URL 猜测跨区 ID。
  */
 export class OfficialPriceIdService {
   public constructor(private readonly officialProvider: PriceProvider) {}
 
   public async resolve(candidate: OfficialPriceIdCandidate): Promise<OfficialPriceIdResolution> {
-    // 当前公开价格接口的地区/货币契约仅为 JP/JPY；先拒绝其他服可避免解析恶意或碰巧相似的 URL。
-    if (candidate.regionCode !== "JP" || candidate.currency !== "JPY") return unavailable("unsupported-region");
-
-    const officialPriceId = extractJapanesePriceId(candidate.productUrl);
+    const officialPriceId = extractOfficialPriceId(candidate);
+    // 未通过地区/货币准入时不得尝试 URL 解析或网络验证，避免未来相同格式的链接被错误解释为 JP/HK 官方价格 ID。
+    if (officialPriceId === undefined) return unavailable("unsupported-region");
     if (officialPriceId === null) return unavailable("unrecognized-url");
 
     const product: RegionalProduct = { id: "preview", ...candidate, officialPriceId };
@@ -54,6 +59,16 @@ export class OfficialPriceIdService {
 }
 
 /**
+ * 根据已经审核的地区/货币组合选择专用价格 ID 提取器。`undefined` 表示该地区尚无公开 API 准入，
+ * `null` 表示链接不是本区精确官方格式；二者必须区分，供订阅前来源预览给出安全且可操作的提示。
+ */
+function extractOfficialPriceId(candidate: OfficialPriceIdCandidate): string | null | undefined {
+  if (candidate.regionCode === "JP" && candidate.currency === "JPY") return extractJapanesePriceId(candidate.productUrl);
+  if (candidate.regionCode === "HK" && candidate.currency === "HKD") return extractHongKongPriceId(candidate.productUrl);
+  return undefined;
+}
+
+/**
  * 只接受 HTTPS 的官方日区主机和精确软件路径。URL 解析失败、子域名伪装或额外路径都不提取 ID，
  * 防止管理员粘贴的任意地址把数字片段伪装为官方商品映射。
  */
@@ -62,6 +77,20 @@ function extractJapanesePriceId(productUrl: string): string | null {
     const url = new URL(productUrl);
     if (url.protocol !== "https:" || url.hostname !== "store-jp.nintendo.com") return null;
     return url.pathname.match(japaneseStorePath)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 只接受 HTTPS 香港 eShop 的 titles/aocs 精确路径，且不接受查询或片段参数。价格 ID 是地区绑定标识，
+ * 所以即使查询参数含有数字也不能作为候选，避免管理员粘贴分享、跳转或跨服链接时误绑定错误商品价格。
+ */
+function extractHongKongPriceId(productUrl: string): string | null {
+  try {
+    const url = new URL(productUrl);
+    if (url.protocol !== "https:" || url.hostname !== "ec.nintendo.com" || url.search !== "" || url.hash !== "") return null;
+    return url.pathname.match(hongKongEshopPath)?.[1] ?? null;
   } catch {
     return null;
   }
