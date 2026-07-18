@@ -115,7 +115,7 @@ export function createDashboardApiClient(request: typeof fetch = fetch, tracker?
    * 统一 JSON 传输层只解析 Worker 明确返回的 JSON。非 2xx 都变成受控错误，
    * 401 留给应用壳层清除内存状态，422 留给表单保留草稿，429 留给刷新冷却提示。
    */
-  async function requestJson<TResponse>(path: string, method: "GET" | "POST" | "PATCH", body?: unknown): Promise<TResponse> {
+  async function requestJson<TResponse>(path: string, method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown): Promise<TResponse> {
     const finish = tracker?.begin();
     try {
       const response = await request(path, {
@@ -174,6 +174,14 @@ export function createDashboardApiClient(request: typeof fetch = fetch, tracker?
     /** 提交人工确认或明确跳过的缺失地区；服务端会原子追加并由详情重新读取结果。 */
     async completeMissingRegions(subscriptionId: string, input: MissingRegionCompletionInput): Promise<MissingRegionCompletionResult> {
       return requestJson<MissingRegionCompletionResult>(`/api/subscriptions/${encodeURIComponent(subscriptionId)}/complete-regions`, "POST", input);
+    },
+
+    /**
+     * 仅发送管理员在确认弹窗中选择的订阅 ID；Worker 会验证全部存在并原子硬删除，
+     * 浏览器不得根据成功响应自行删除价格、历史或统计，调用页面必须重新读取仪表盘模型。
+     */
+    async deleteSubscriptions(subscriptionIds: string[]): Promise<{ deletedSubscriptionIds: string[] }> {
+      return requestJson<{ deletedSubscriptionIds: string[] }>("/api/subscriptions", "DELETE", { subscriptionIds });
     },
   };
 }

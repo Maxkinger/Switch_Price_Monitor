@@ -802,8 +802,13 @@ button:focus-visible {
 .dashboard-stats p { min-height: 84px; margin: 0; padding: 16px; color: #735d50; background: #fffdf9; font-size: 13px; }
 .dashboard-stats b { display: block; margin-bottom: 5px; color: #3b2920; font-size: 25px; }
 .subscription-list { display: grid; gap: 15px; }
-.subscription-summary { width: 100%; border: 1px solid #ead9ca; border-radius: 16px; padding: 20px; color: inherit; text-align: left; background: #fffdf9; cursor: pointer; }
-.subscription-summary:hover { border-color: #c97845; box-shadow: 0 9px 24px rgb(77 48 29 / 8%); }
+/* 卡片容器不再是按钮，复选框和详情按钮并列以避免嵌套交互控件破坏键盘与读屏器语义。 */
+.subscription-summary { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; border: 1px solid #ead9ca; border-radius: 16px; padding: 14px; color: inherit; background: #fffdf9; }
+.subscription-summary__selection { display: inline-flex; align-items: flex-start; gap: 6px; padding: 7px 0 0; color: #705d52; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.subscription-summary__selection input { min-width: auto; margin: 2px 0 0; padding: 0; accent-color: #a7562b; }
+.subscription-summary__details { width: 100%; border: 0; padding: 6px; color: inherit; text-align: left; background: transparent; }
+.subscription-summary__details:hover { border-radius: 11px; background: #fff8f1; }
+.subscription-summary__details:focus-visible { border-radius: 11px; }
 .subscription-summary header, .subscription-summary footer { display: flex; justify-content: space-between; gap: 10px; }
 .subscription-summary h2 { margin: 0; color: #36251d; font-size: 20px; }
 .subscription-summary header span { color: #874825; font-size: 13px; font-weight: 700; }
@@ -813,6 +818,16 @@ button:focus-visible {
 .summary-regions span, .detail-regions b { color: #38251c; font-size: 17px; }
 .summary-regions small, .detail-regions small { color: #7b6658; line-height: 1.45; }
 .subscription-summary footer { color: #685144; font-size: 13px; }
+.dashboard-selection-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0; border: 1px solid #e6c49f; border-radius: 12px; padding: 11px 13px; color: #70452d; background: #fff1df; font-size: 14px; font-weight: 700; }
+/* 危险操作使用与普通主按钮明确不同的颜色，避免管理员将永久删除误认为暂停、保存或添加。 */
+.danger-button { border: 0; border-radius: 11px; padding: 11px 15px; color: #fffaf5; background: #a63a2a; font-weight: 750; transition: transform 140ms ease, background 140ms ease; }
+.danger-button:not(:disabled):hover { transform: translateY(-1px); background: #8d2c20; }
+/* 删除弹窗不支持点击背景关闭，管理员只能明确取消或确认；请求期间全局遮罩会位于其上层显示网络状态。 */
+.subscription-delete-dialog-backdrop { position: fixed; z-index: 15; inset: 0; display: grid; place-items: center; padding: 20px; background: rgb(52 36 26 / 38%); }
+.subscription-delete-dialog { width: min(460px, 100%); border: 1px solid #e4b894; border-radius: 18px; padding: 25px; color: #4d3023; background: #fffdf9; box-shadow: 0 20px 55px rgb(48 27 15 / 30%); }
+.subscription-delete-dialog h2, .subscription-delete-dialog p { margin: 0; }
+.subscription-delete-dialog > p:not(.eyebrow) { margin-top: 10px; color: #6d5143; line-height: 1.6; }
+.subscription-delete-dialog__actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
 .dashboard-empty, .detail-management { margin-top: 24px; border: 1px dashed #d9b79c; border-radius: 16px; padding: 28px; background: #fffdf9; }
 .detail-page > section { margin-top: 28px; }
 .detail-page h2 { color: #422d22; }

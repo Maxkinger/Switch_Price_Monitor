@@ -60,6 +60,19 @@ describe("dashboard API client", () => {
     expect(request).toHaveBeenNthCalledWith(2, "/api/subscriptions/subscription-overcooked-2/complete-regions", expect.objectContaining({ method: "POST", credentials: "same-origin", body: JSON.stringify({ regions: [], skippedRegionCodes: ["JP"] }) }));
   });
 
+  it("sends a confirmed dashboard selection to the same-origin hard-delete endpoint", async () => {
+    // 浏览器只传管理员已确认的订阅 ID；Worker 负责存在性验证和原子清理，客户端不得携带游戏、价格或外部商品链接。
+    const request = vi.fn(async () => Response.json({ deletedSubscriptionIds: ["subscription-overcooked-2"] })) as unknown as typeof fetch;
+    const client = createDashboardApiClient(request);
+
+    await expect(client.deleteSubscriptions(["subscription-overcooked-2"])).resolves.toEqual({ deletedSubscriptionIds: ["subscription-overcooked-2"] });
+    expect(request).toHaveBeenCalledWith("/api/subscriptions", expect.objectContaining({
+      method: "DELETE",
+      credentials: "same-origin",
+      body: JSON.stringify({ subscriptionIds: ["subscription-overcooked-2"] }),
+    }));
+  });
+
   it("keeps the global request count active until a dashboard request settles", async () => {
     // 仪表盘初次读取期间必须持续显示遮罩，结算后才允许用户继续操作。
     const tracker = createApiRequestTracker();
