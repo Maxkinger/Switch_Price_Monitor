@@ -5,6 +5,8 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    // 版本模块只读取受版本控制的根包清单；启用 JSON 模块解析可让类型检查与 Vite 对构建版本使用同一来源。
+    "resolveJsonModule": true,
     "jsx": "react-jsx",
     "strict": true,
     "noEmit": true,

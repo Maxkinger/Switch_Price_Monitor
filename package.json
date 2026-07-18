@@ -1,13 +1,13 @@
 {
   "name": "switch-price-monitor",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.0.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "deploy": "npm run build && wrangler deploy",
+    "deploy": "node ./scripts/deploy-production.mjs",
     "test": "vitest",
     "test:dom": "vitest --config vitest.dom.config.mts"
   },

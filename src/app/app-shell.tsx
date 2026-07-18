@@ -6,6 +6,7 @@ import { createApiRequestTracker } from "./api-request-tracker";
 import { createDashboardApiClient } from "./dashboard-api-client";
 import { DashboardPage } from "./dashboard-page";
 import { GlobalRequestOverlay } from "./global-request-overlay";
+import { releaseVersion } from "./release-version";
 import { createSettingsApiClient } from "./settings-api-client";
 import { SettingsPage } from "./settings-page";
 import { SubscriptionDetailPage } from "./subscription-detail-page";
@@ -48,6 +49,8 @@ export function AppShell({ onUnauthorized }: { onUnauthorized: () => void }) {
         <button type="button" className={route.kind === "subscription-new" ? "monitor-nav__active" : ""} onClick={() => navigate(subscriptionNewPath())}>添加订阅</button>
         <span>价格历史（即将提供）</span>
         <button type="button" className={route.kind === "settings" ? "monitor-nav__active" : ""} onClick={() => navigate(settingsPath())}>设置</button>
+        {/* 版本位于导航末尾，仅展示构建时公开版本，不包含提交号、环境变量或凭据。 */}
+        <small className="monitor-nav__version">V {releaseVersion}</small>
       </aside>
       <main className="monitor-main">
         {route.kind === "dashboard" ? <DashboardPage api={dashboardApi} onNavigate={navigate} onUnauthorized={onUnauthorized} /> : null}
