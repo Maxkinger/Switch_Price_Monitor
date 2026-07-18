@@ -27,6 +27,7 @@
 | [日区订阅确认官方 API 复核实施计划](superpowers/plans/2026-07-18-japan-confirmation-api.md) | 日区双官方接口复核、最终跨语言确认与受控验收步骤 | 已完成，待提交 |
 | [日区升级包官方关系发现设计规格](superpowers/specs/2026-07-18-japanese-upgrade-pack-relation-discovery-design.md) | 普通 Worker 排队页限制、Browser Run 三次隔离可行性探针与失败回退边界 | 三次复验通过；允许进入生产集成设计，人工兜底继续保留 |
 | [日区升级包 Browser Run 可行性验证实施计划](superpowers/plans/2026-07-18-japanese-upgrade-browser-run-feasibility.md) | 隔离临时探针、纯函数安全校验、三次真实远程探测与准入结论归档 | 启动修复后已通过三次复验；未形成持久部署 |
+| [日区升级包 Browser Run 生产集成设计规格](superpowers/specs/2026-07-19-japanese-upgrade-browser-run-production-integration-design.md) | 单 Worker Browser Binding、同步发现、保存前二次关系验证、人工链接兜底及资源/日志边界 | 已确认，待实施 |
 | [Browser Run 启动失败受控诊断设计规格](superpowers/specs/2026-07-19-browser-run-launch-failure-diagnostic-design.md) | 本地/远程 A/B 启动诊断、脱敏错误证据、阶段判断矩阵与测试边界 | 已完成；根因已确认并通过三次任天堂复验 |
 | [Browser Run 启动失败受控诊断实施计划](superpowers/plans/2026-07-19-browser-run-launch-failure-diagnostic.md) | 临时探针脱敏诊断、生命周期测试、本地/远程对照与任天堂恢复准入步骤 | 已执行；待提交结果文档 |
 | [临时发布版本号设计规格](superpowers/specs/2026-07-18-temporary-release-version-design.md) | 页面版本标识、补丁号自动递增与未来发布系统替换边界 | 已部署 V 0.0.5，待提交推送 |
