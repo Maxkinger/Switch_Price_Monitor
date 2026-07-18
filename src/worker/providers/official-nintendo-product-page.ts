@@ -1,13 +1,25 @@
 import type { OfficialProductCandidate, RegionCode } from "../../shared/domain";
 import { ProviderNetworkError, type ProductType } from "./types";
 
-/** 各已支持地区的官方货币和链接前缀。前缀白名单使管理员链接不能把 Worker 变成可访问任意主机的请求代理。 */
-const officialRegionRules: Record<RegionCode, { hostname: string; pathnamePrefix: string; currency: string }> = {
-  US: { hostname: "www.nintendo.com", pathnamePrefix: "/us/", currency: "USD" },
-  JP: { hostname: "store-jp.nintendo.com", pathnamePrefix: "/item/software/", currency: "JPY" },
-  MX: { hostname: "www.nintendo.com", pathnamePrefix: "/es-mx/", currency: "MXN" },
-  BR: { hostname: "www.nintendo.com", pathnamePrefix: "/pt-br/", currency: "BRL" },
-  HK: { hostname: "www.nintendo.com", pathnamePrefix: "/hk/", currency: "HKD" },
+/** 官方商品 URL 规则只允许精确的主机和路径组合，避免管理员输入把 Worker 变成访问任意主机的请求代理。 */
+interface OfficialProductUrlRule {
+  readonly hostname: string;
+  readonly pathnamePrefix: string;
+}
+
+/** 每区货币与其已验证的任天堂官方商品入口。港区官网搜索明确返回 ec.nintendo.com 链接，因此该入口必须单独白名单化。 */
+const officialRegionRules: Record<RegionCode, { currency: string; productUrls: readonly OfficialProductUrlRule[] }> = {
+  US: { currency: "USD", productUrls: [{ hostname: "www.nintendo.com", pathnamePrefix: "/us/" }] },
+  JP: { currency: "JPY", productUrls: [{ hostname: "store-jp.nintendo.com", pathnamePrefix: "/item/software/" }] },
+  MX: { currency: "MXN", productUrls: [{ hostname: "www.nintendo.com", pathnamePrefix: "/es-mx/" }] },
+  BR: { currency: "BRL", productUrls: [{ hostname: "www.nintendo.com", pathnamePrefix: "/pt-br/" }] },
+  HK: {
+    currency: "HKD",
+    productUrls: [
+      { hostname: "www.nintendo.com", pathnamePrefix: "/hk/" },
+      { hostname: "ec.nintendo.com", pathnamePrefix: "/HK/zh/titles/" },
+    ],
+  },
 };
 
 /** 候选只接受系统可持久化的商品类别，避免官网临时营销标签混入本体、DLC 与升级包匹配。 */
@@ -19,8 +31,8 @@ export interface OfficialNintendoProductPageResolver {
 }
 
 /**
- * 读取管理员提交的任天堂官方商品页公开 JSON-LD。解析器只在地区主机、路径前缀与币种同时吻合时返回候选，
- * 使香港等尚无官方名称搜索适配器的地区可安全使用手动官方链接，同时不会把任意网页或跨区价格当作本区商品。
+ * 读取管理员提交的任天堂官方商品页公开 JSON-LD 或港区 eShop 元数据。解析器只在地区主机、路径前缀与币种同时吻合时返回候选，
+ * 使官方搜索交回的香港 eShop 链接也可被重新验证，同时不会把任意网页或跨区价格当作本区商品。
  */
 export function createOfficialNintendoProductPageResolver(fetchPage: typeof fetch = fetch): OfficialNintendoProductPageResolver {
   return {
@@ -35,7 +47,8 @@ export function createOfficialNintendoProductPageResolver(fetchPage: typeof fetc
         throw new ProviderNetworkError(error instanceof Error ? error.message : "official Nintendo product page request failed");
       }
       if (!response.ok) return null;
-      return parseOfficialProductPage(await response.text(), regionCode, productUrl);
+      const html = await response.text();
+      return parseOfficialProductPage(html, regionCode, productUrl) ?? parseHongKongEshopProductPage(html, regionCode, productUrl);
     },
   };
 }
@@ -46,9 +59,9 @@ export function createOfficialNintendoProductPageResolver(fetchPage: typeof fetc
  */
 export function isOfficialNintendoProductUrl(regionCode: RegionCode, productUrl: string): boolean {
   try {
-    const rule = officialRegionRules[regionCode];
+    const rules = officialRegionRules[regionCode].productUrls;
     const url = new URL(productUrl);
-    return url.protocol === "https:" && url.hostname === rule.hostname && url.pathname.startsWith(rule.pathnamePrefix);
+    return url.protocol === "https:" && rules.some((rule) => url.hostname === rule.hostname && url.pathname.startsWith(rule.pathnamePrefix));
   } catch {
     return false;
   }
@@ -66,6 +79,53 @@ function parseOfficialProductPage(html: string, regionCode: RegionCode, productU
     }
   }
   return null;
+}
+
+/**
+ * 港区 eShop 的公开商品页当前暴露 `search.*` 元标签而非可用的 Product JSON-LD。
+ * 缺少官方可验证报价时仍返回 null 价格：该候选只能用于身份确认，不能伪造折扣、历史最低价或采集快照。
+ */
+function parseHongKongEshopProductPage(html: string, regionCode: RegionCode, productUrl: string): OfficialProductCandidate | null {
+  if (regionCode !== "HK" || !isHongKongEshopProductUrl(productUrl)) return null;
+  const title = readMetaContent(html, "search.name");
+  if (!title) return null;
+  return {
+    regionCode,
+    productUrl,
+    canonicalTitle: title,
+    publisher: readMetaContent(html, "search.publisher"),
+    productType: classifyProductType(title),
+    currency: officialRegionRules.HK.currency,
+    coverUrl: readCoverUrl(readMetaContent(html, "search.thumbnail")),
+    currentPriceMinor: null,
+    regularPriceMinor: null,
+  };
+}
+
+/** eShop 兜底解析只承认港区精确的大小写路径，避免同一主机上的账户、购买或其他国家页面被误作商品页。 */
+function isHongKongEshopProductUrl(productUrl: string): boolean {
+  try {
+    const url = new URL(productUrl);
+    return url.protocol === "https:" && url.hostname === "ec.nintendo.com" && /^\/HK\/zh\/titles\/\d+$/.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+/** 只从单个 meta 标签读取被命名的公开字段；避免用整页正则猜测标题、发行商或价格。 */
+function readMetaContent(html: string, name: string): string | null {
+  for (const match of html.matchAll(/<meta\b([^>]*)>/gi)) {
+    if (readHtmlAttribute(match[1], "name") !== name) continue;
+    return readNonEmptyString(readHtmlAttribute(match[1], "content"));
+  }
+  return null;
+}
+
+/** 元标签属性必须使用带引号的明确值，防止畸形 HTML 触发隐式转换或把相邻标签文本混入候选字段。 */
+function readHtmlAttribute(attributes: string, name: string): string | null {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`\\b${escapedName}\\s*=\\s*["']([^"']*)["']`, "i").exec(attributes);
+  return match?.[1] ?? null;
 }
 
 /** JSON-LD 只接受普通对象根节点，拒绝无身份字段的数组或解析失败文本，防止异常页面扩大解析面。 */

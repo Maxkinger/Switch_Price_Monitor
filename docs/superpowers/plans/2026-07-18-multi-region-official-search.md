@@ -54,7 +54,7 @@ Run: `npm test -- --run test/official-nintendo-search.test.ts test/official-prod
 
 Expected: PASS；US 行为不变，MX/BR 不再落入“官方搜索暂不可用”，非法命中不会进入发现服务。
 
-- [ ] **Step 5: 等待用户确认后提交并推送 Task 1**
+- [x] **Step 5: 等待用户确认后提交并推送 Task 1**
 
 拟提交范围：三地区官方搜索档案、受控解析、单元测试及设计状态更新。
 
@@ -74,33 +74,33 @@ git push origin main
 
 **Interfaces:**
 - HK: fetch `https://www.nintendo.com/hk/search?k=<encoded query>` and parse only the official server-rendered `software.items` payload for the `hongkong` region.
-- JP: fetch `https://www.nintendo.com/jp/search/?q=<encoded query>`; when its official search script redirects to `https://search-support.nintendo.co.jp/`, follow only that public Nintendo destination and parse only validated Nintendo Store result links.
+- JP: fetch `https://search.nintendo.jp/nintendo_soft/search.json` with fixed `q`、`limit`、`page` and `opt_search` parameters; only numeric `*_DL` download records may map to the official Store URL.
 - Both return `available` with zero candidates for a verified empty result, and `unavailable` for timeout, HTTP failure, redirect outside Nintendo hosts or unrecognised structure.
 
-- [ ] **Step 1: 写入失败测试**
+- [x] **Step 1: 写入失败测试**
 
 在 `test/official-nintendo-search.test.ts` 添加两组不联网夹具：
 
-1. HK 夹具含 Next/RSC 片段中的 `software.items`、`region: "hongkong"`、标题、商品链接、封面与受控类型。断言候选 URL 必须在 `https://www.nintendo.com/hk/`，且错误地区、非 HTTPS 链接、缺少商品链接或未知类型不产生候选。
-2. JP 夹具含官方日本搜索页的 `search-support.nintendo.co.jp` 跳转及该页的 Nintendo Store 结果链接。断言第二个请求只允许 `https://search-support.nintendo.co.jp/`，最终候选只允许 `https://store-jp.nintendo.com/item/software/` 或 `/list/software/`，并且不能把搜索摘要中的外链当商品。
+1. HK 夹具含 Next/RSC 片段中的 `software.items`、`region: "hongkong"`、标题、NSUID、官方 eShop 模板与封面。断言候选 URL 必须是 `https://ec.nintendo.com/HK/zh/titles/{NSUID}`，且错误地区、错误模板、非数字 NSUID 或缺少标题不产生候选。
+2. JP 夹具含 `search.nintendo.jp` 软件 API 的 `id`、`nsuid`、`sform`、标题、发行商和日元价格。断言请求仅带固定参数，最终候选只接受相等的数字 `id/nsuid` 与 `*_DL` 下载版，实体或聚合记录不得生成 Store URL。
 
 测试还须覆盖两种适配器的空集合、超时和结构变化：结果分别为安全空集合或 `unavailable`，不得抛出外部 HTML/JSON 原文。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/official-nintendo-search.test.ts test/official-nintendo-product-page.test.ts`
 
 Expected: FAIL，因为当前非 US 地区直接返回 `unavailable`，无 HK/JP 请求与解析契约。
 
-- [ ] **Step 3: 最小网页解析实现**
+- [x] **Step 3: 最小网页解析实现**
 
-为 HK 与 JP 添加独立、私有的请求/解析函数，不与 Algolia JSON 解析器混用。HK 只从被白名单包裹的 `software.items` 记录读取候选，并在缺失可验证商品 URL、标题或类型时丢弃该项。JP 先验证初始主机，再只允许跟随日本官网脚本明确给出的 `search-support.nintendo.co.jp` 公共搜索目的地；从结果中只抽取 `store-jp.nintendo.com` 的软件链接，随后交给既有官方商品页解析器补全标题、发行商、类型、币种、封面与价格 ID。
+为 HK 与 JP 添加独立、私有的请求/解析函数，不与 Algolia JSON 解析器混用。HK 只从被白名单包裹的 `software.items` 记录读取候选，并用实际 eShop 域名、固定模板和数字 NSUID 形成候选 URL；商品页解析器新增同一官方 eShop 域名白名单及公开 `search.*` 元数据读取。JP 只调用官方软件 API，从下载版数字 ID 形成 Store URL，并保留 API 回传的标题、发行商和日元价格。
 
-若 JP 公开搜索结果在 Worker 网络或页面结构下无法被验证，适配器必须返回 `unavailable`，从而显示“粘贴日区任天堂官方商品链接”；不得使用搜索引擎、猜测 `D` 编号或回退到第三方。
+若 HK RSC 或 JP 软件 API 在 Worker 网络或页面结构下无法被验证，适配器必须返回 `unavailable`，从而显示“粘贴本区任天堂官方商品链接”；不得使用搜索引擎、任天堂账户数据或第三方。
 
 中文注释须解释 RSC/HTML 与搜索摘要均是不可信外部输入、为何限制跳转主机、以及日区队列页不能被当作商品搜索成功。
 
-- [ ] **Step 4: 运行搜索与链接解析回归**
+- [x] **Step 4: 运行搜索与链接解析回归**
 
 Run: `npm test -- --run test/official-nintendo-search.test.ts test/official-nintendo-product-page.test.ts test/official-product-discovery-service.test.ts && npx tsc --noEmit`
 

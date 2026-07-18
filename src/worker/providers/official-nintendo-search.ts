@@ -34,51 +34,24 @@ const officialAlgoliaProfiles: readonly OfficialAlgoliaSearchProfile[] = [
 /** 所有 Algolia 命中都只允许补齐到任天堂官网主机，禁止外部索引字段诱导 Worker 访问第三方地址。 */
 const officialNintendoStoreOrigin = "https://www.nintendo.com";
 
+/** 香港官网搜索为 Next/RSC 页面；请求只携带关键词，返回的 NSUID 仍须转换并验证为 eShop 官方商品页。 */
+const officialHongKongSearchEndpoint = "https://www.nintendo.com/hk/search";
+
+/** 日本任天堂首页公开调用的软件搜索 API；它不是 My Nintendo Store 的排队页面，也不需要 Nintendo Account 会话。 */
+const officialJapaneseSearchEndpoint = "https://search.nintendo.jp/nintendo_soft/search.json";
+
 /**
- * 任天堂美、墨、巴官网公开搜索适配器。它只处理档案中已验证字段结构的地区游戏索引；其他地区一律返回官方链接确认提示，
- * 避免猜测香港/日区接口，或把一个地区的官网结果错误用于另一个地区的商品匹配。
+ * 任天堂五区官方名称搜索适配器。美、墨、巴使用各自公开索引；港、日使用已验证的官网页面/API。
+ * 任何未列明地区、网络失败或结构变化都会安全降级到官方链接确认，不会借用其他地区索引或第三方数据。
  */
 export function createOfficialNintendoSearch(fetchOfficialSearch: typeof fetch = fetch, timeoutMs = 12_000): OfficialProductSearch {
   return {
     async search(regionCode, query, signal) {
       const profile = readOfficialAlgoliaProfile(regionCode);
-      if (!profile) return unavailableSearch();
-
-      let response: Response;
-      // 公开 Algolia 索引偶发保持连接但不返回；独立控制器把超时与调用方取消合并，避免管理员页面永久停在“搜索中”。
-      const timeoutController = new AbortController();
-      let timedOut = false;
-      const timeout = setTimeout(() => { timedOut = true; timeoutController.abort(); }, timeoutMs);
-      const forwardAbort = () => timeoutController.abort();
-      signal.addEventListener("abort", forwardAbort, { once: true });
-      try {
-        // 搜索请求只发送用户输入的名称和 Worker 固定档案索引；不附带 Cookie、Nintendo Account、购买记录或浏览器会话。
-        response = await fetchOfficialSearch(officialAlgoliaSearchEndpoint, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-algolia-application-id": "U3B6GR4UA3",
-            "x-algolia-api-key": officialAlgoliaPublicSearchKey,
-          },
-          body: JSON.stringify({
-            requests: [{ indexName: profile.gameIndex, query, params: "hitsPerPage=20" }],
-          }),
-          signal: timeoutController.signal,
-        });
-      } catch (error) {
-        // 超时与 HTTP 非成功一样只能证明自动搜索不可用；返回官方链接入口能让管理员继续完成验证流程。
-        if (timedOut) return unavailableSearch();
-        // 只有连接、DNS 或中止等传输失败才作为网络错误上抛，路由可将其安全转换为官方链接确认提示。
-        throw new ProviderNetworkError(error instanceof Error ? error.message : "official Nintendo search request failed");
-      } finally {
-        // 每次请求都清理计时器和监听器，避免已完成搜索在后续无意义地触发中止或累积 Worker 资源。
-        clearTimeout(timeout);
-        signal.removeEventListener("abort", forwardAbort);
-      }
-
-      // 非成功状态无法证明候选字段可信，必须退回人工官方链接而不是把 HTTP 错误页解析成“无结果”。
-      if (!response.ok) return unavailableSearch();
-      return { status: "available", candidates: parseOfficialAlgoliaSearch(await response.json(), profile) };
+      if (profile) return searchOfficialAlgolia(fetchOfficialSearch, profile, query, signal, timeoutMs);
+      if (regionCode === "HK") return searchOfficialHongKong(fetchOfficialSearch, query, signal, timeoutMs);
+      if (regionCode === "JP") return searchOfficialJapan(fetchOfficialSearch, query, signal, timeoutMs);
+      return unavailableSearch();
     },
   };
 }
@@ -86,6 +59,85 @@ export function createOfficialNintendoSearch(fetchOfficialSearch: typeof fetch =
 /** 从已审核的地区档案中查找搜索配置；未列入档案的地区必须安全降级，不能由调用方推导请求参数。 */
 function readOfficialAlgoliaProfile(regionCode: RegionCode): OfficialAlgoliaSearchProfile | null {
   return officialAlgoliaProfiles.find((profile) => profile.regionCode === regionCode) ?? null;
+}
+
+/** 美、墨、巴的请求参数只来自不可变地区档案，避免浏览器将公开索引当作可任意检索的代理。 */
+async function searchOfficialAlgolia(
+  fetchOfficialSearch: typeof fetch,
+  profile: OfficialAlgoliaSearchProfile,
+  query: string,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<OfficialSearchResult> {
+  const response = await fetchOfficialResponse(fetchOfficialSearch, officialAlgoliaSearchEndpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-algolia-application-id": "U3B6GR4UA3",
+      "x-algolia-api-key": officialAlgoliaPublicSearchKey,
+    },
+    body: JSON.stringify({ requests: [{ indexName: profile.gameIndex, query, params: "hitsPerPage=20" }] }),
+  }, signal, timeoutMs);
+  if (!response) return unavailableSearch();
+  return { status: "available", candidates: parseOfficialAlgoliaSearch(await response.json(), profile) };
+}
+
+/** 香港官网服务端数据只通过固定搜索入口取得；RSC 字段改变或缺少 software.items 时不能伪装成“没有结果”。 */
+async function searchOfficialHongKong(
+  fetchOfficialSearch: typeof fetch,
+  query: string,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<OfficialSearchResult> {
+  const url = new URL(officialHongKongSearchEndpoint);
+  url.searchParams.set("k", query);
+  const response = await fetchOfficialResponse(fetchOfficialSearch, url.toString(), { headers: { accept: "text/html" } }, signal, timeoutMs);
+  if (!response) return unavailableSearch();
+  const candidates = parseOfficialHongKongSearch(await response.text());
+  return candidates === null ? unavailableSearch() : { status: "available", candidates };
+}
+
+/** 日本官网公开软件 API 的参数固定为下载软件的受控搜索；不访问会触发 JavaScript 排队的 My Nintendo Store 搜索页。 */
+async function searchOfficialJapan(
+  fetchOfficialSearch: typeof fetch,
+  query: string,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<OfficialSearchResult> {
+  const url = new URL(officialJapaneseSearchEndpoint);
+  url.search = new URLSearchParams({ q: query, limit: "20", page: "1", opt_search: "1" }).toString();
+  const response = await fetchOfficialResponse(fetchOfficialSearch, url.toString(), { headers: { accept: "application/json" } }, signal, timeoutMs);
+  if (!response) return unavailableSearch();
+  const candidates = parseOfficialJapaneseSearch(await response.json());
+  return candidates === null ? unavailableSearch() : { status: "available", candidates };
+}
+
+/**
+ * 所有官方搜索共用超时、调用方取消与网络错误处理。超时/非成功 HTTP 只能代表本次自动搜索不可用；
+ * 非超时传输异常保留为 ProviderNetworkError，供路由统一转换为安全提示而不回显任天堂响应正文。
+ */
+async function fetchOfficialResponse(
+  fetchOfficialSearch: typeof fetch,
+  input: RequestInfo | URL,
+  init: RequestInit,
+  signal: AbortSignal,
+  timeoutMs: number,
+): Promise<Response | null> {
+  const timeoutController = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => { timedOut = true; timeoutController.abort(); }, timeoutMs);
+  const forwardAbort = () => timeoutController.abort();
+  signal.addEventListener("abort", forwardAbort, { once: true });
+  try {
+    const response = await fetchOfficialSearch(input, { ...init, signal: timeoutController.signal });
+    return response.ok ? response : null;
+  } catch (error) {
+    if (timedOut) return null;
+    throw new ProviderNetworkError(error instanceof Error ? error.message : "official Nintendo search request failed");
+  } finally {
+    clearTimeout(timeout);
+    signal.removeEventListener("abort", forwardAbort);
+  }
 }
 
 /** 将无搜索适配器、HTTP 失败和页面变更统一为可操作的安全状态，不泄露外部响应或内部请求细节。 */
@@ -105,6 +157,184 @@ function parseOfficialAlgoliaSearch(value: unknown, profile: OfficialAlgoliaSear
       return candidate ? [candidate] : [];
     })
     : []);
+}
+
+/**
+ * 从香港官网 RSC 字符串载荷中找出 `software.items`。RSC 是外部页面数据，即使来自官网也需先 JSON 解码、
+ * 再逐项验证地区和 eShop 链接；找不到该结构表示页面契约已变，必须安全降级而不是把页面文字当候选。
+ */
+function parseOfficialHongKongSearch(html: string): OfficialProductCandidate[] | null {
+  let foundSoftwareItems = false;
+  const candidates: OfficialProductCandidate[] = [];
+  for (const script of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)) {
+    for (const software of readHongKongSoftwareValues(script[1])) {
+      if (!isRecord(software) || !Array.isArray(software.items)) continue;
+      foundSoftwareItems = true;
+      for (const item of software.items) {
+        const candidate = toOfficialHongKongCandidate(item);
+        if (candidate) candidates.push(candidate);
+      }
+    }
+  }
+  return foundSoftwareItems ? candidates : null;
+}
+
+/**
+ * 从单个 RSC script 中解码第一类页面数据 push。Next 可能把完整 JSON 对象或 RSC 文本片段放进该字符串；
+ * 两种形式都只抽取名称为 software 的完整 JSON 对象，脚本其余内容不能作为候选数据解释。
+ */
+function readHongKongSoftwareValues(script: string): unknown[] {
+  const prefix = "self.__next_f.push([1,";
+  if (!script.startsWith(prefix) || !script.endsWith("])")) return [];
+  const encodedPayload = script.slice(prefix.length, -2);
+  let decodedPayload: unknown;
+  try {
+    decodedPayload = JSON.parse(encodedPayload);
+  } catch {
+    return [];
+  }
+  if (typeof decodedPayload !== "string") return [];
+  const directPayload = parseJsonValue(decodedPayload);
+  if (directPayload !== null) return [...findNamedValues(directPayload, "software")];
+  return readRscNamedObjects(decodedPayload, "software");
+}
+
+/** 完整 JSON 载荷优先普通解析；失败仅说明它可能是 RSC 多记录文本，不能直接当作异常或候选。 */
+function parseJsonValue(value: string): unknown | null {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * RSC 多记录文本没有整体 JSON 根节点。此扫描器只接受引号字段名后紧邻的平衡对象，
+ * 并在 JSON.parse 成功后返回，避免正则跨越多个记录把外部文本拼接成伪造候选。
+ */
+function readRscNamedObjects(value: string, name: string): unknown[] {
+  const marker = `"${name}":`;
+  const results: unknown[] = [];
+  let offset = 0;
+  while (offset < value.length) {
+    const markerIndex = value.indexOf(marker, offset);
+    if (markerIndex < 0) break;
+    const start = value.indexOf("{", markerIndex + marker.length);
+    const objectText = start < 0 ? null : readBalancedJsonObject(value, start);
+    if (objectText) {
+      const object = parseJsonValue(objectText);
+      if (object !== null) results.push(object);
+      offset = start + objectText.length;
+    } else {
+      offset = markerIndex + marker.length;
+    }
+  }
+  return results;
+}
+
+/** 在保留字符串转义语义的前提下读取一个平衡 JSON 对象；未闭合内容代表页面结构变化，安全返回 null。 */
+function readBalancedJsonObject(value: string, start: number): string | null {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < value.length; index += 1) {
+    const char = value[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === "{") depth += 1;
+    else if (char === "}" && --depth === 0) return value.slice(start, index + 1);
+  }
+  return null;
+}
+
+/** 递归寻找 RSC 已解码对象中的命名字段；输入来自 JSON，仍限制为数组和普通对象以免异常结构扩大读取面。 */
+function* findNamedValues(value: unknown, name: string): Generator<unknown> {
+  if (Array.isArray(value)) {
+    for (const item of value) yield* findNamedValues(item, name);
+    return;
+  }
+  if (!isRecord(value)) return;
+  for (const [key, child] of Object.entries(value)) {
+    if (key === name) yield child;
+    yield* findNamedValues(child, name);
+  }
+}
+
+/** 香港候选只能由官方 `hongkong` 项、数字 NSUID 及精确 eShop 模板共同形成，避免 RSC 中新闻或外链混入商品结果。 */
+function toOfficialHongKongCandidate(value: unknown): OfficialProductCandidate | null {
+  if (!isRecord(value) || value.region !== "hongkong") return null;
+  const canonicalTitle = readNonEmptyString(value.title);
+  const productUrl = readOfficialHongKongProductUrl(value.pageLink, value.nsuid);
+  if (!canonicalTitle || !productUrl) return null;
+  const imageHero = isRecord(value.imageHero) ? value.imageHero.url : null;
+  return {
+    regionCode: "HK",
+    productUrl,
+    canonicalTitle,
+    publisher: readNonEmptyString(value.publisher),
+    productType: classifyOfficialProductType(canonicalTitle),
+    currency: "HKD",
+    coverUrl: readOfficialCoverUrl(imageHero),
+    // 港区搜索页不承诺返回可购买价格；保留 null 以防 UI 或历史价格逻辑把缺失数据误报为免费。
+    currentPriceMinor: null,
+    regularPriceMinor: null,
+  };
+}
+
+/** 只有香港官网实际返回的固定模板与纯数字 NSUID 才可组成 eShop 商品链接，禁止用任意模板替换占位符。 */
+function readOfficialHongKongProductUrl(template: unknown, nsuid: unknown): string | null {
+  if (template !== "https://ec.nintendo.com/HK/zh/titles/{NSUID}" || typeof nsuid !== "string" || !/^\d+$/.test(nsuid)) return null;
+  return `https://ec.nintendo.com/HK/zh/titles/${nsuid}`;
+}
+
+/**
+ * 日本官网软件 API 的结果包含下载软件标识、标题、发行商和日元价格。只有纯数字 id/nsuid 且 sform 为下载版时，
+ * 才能按官网公开的一一映射生成 My Nintendo Store URL；实体卡、聚合项和不明 ID 不得猜测成可购买下载商品。
+ */
+function parseOfficialJapaneseSearch(value: unknown): OfficialProductCandidate[] | null {
+  if (!isRecord(value) || !isRecord(value.result) || !Array.isArray(value.result.items)) return null;
+  return value.result.items.flatMap((item) => {
+    const candidate = toOfficialJapaneseCandidate(item);
+    return candidate ? [candidate] : [];
+  });
+}
+
+/** 从单条日本软件 API 记录读取可验证下载候选；标题和价格字段不完整时仍拒绝，避免后续跨区比对接受半成品身份。 */
+function toOfficialJapaneseCandidate(value: unknown): OfficialProductCandidate | null {
+  if (!isRecord(value)) return null;
+  const id = readNonEmptyString(value.id);
+  const nsuid = readNonEmptyString(value.nsuid);
+  const canonicalTitle = readNonEmptyString(value.title);
+  if (!id || !nsuid || id !== nsuid || !/^\d+$/.test(id) || !isOfficialJapaneseDownloadForm(value.sform) || !canonicalTitle) return null;
+  const regularPriceMinor = readJapaneseYenAmount(value.price);
+  const currentPriceMinor = readJapaneseYenAmount(value.current_price) ?? regularPriceMinor;
+  return {
+    regionCode: "JP",
+    productUrl: `https://store-jp.nintendo.com/item/software/D${id}/`,
+    canonicalTitle,
+    publisher: readNonEmptyString(value.maker),
+    productType: classifyOfficialProductType(canonicalTitle),
+    currency: "JPY",
+    // API 仅返回图像散列而非带格式扩展名的公开 URL；宁可使用页面占位封面，也不能猜测 CDN 地址。
+    coverUrl: null,
+    currentPriceMinor,
+    regularPriceMinor,
+  };
+}
+
+/** 日区 `*_DL` 是官网软件 API 的下载版形态；卡带、实体版和其他聚合记录没有安全的 Store 下载 URL 映射。 */
+function isOfficialJapaneseDownloadForm(value: unknown): boolean {
+  return typeof value === "string" && value.endsWith("_DL");
+}
+
+/** 日元没有小数位；API 金额必须是非负安全整数，浮点、字符串和异常值都不能参与候选价格展示。 */
+function readJapaneseYenAmount(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 /** 从单条搜索命中读取所有受控字段；只要身份、币种、价格精度或官方主机有一个不成立就拒绝该候选。 */
@@ -185,6 +415,19 @@ function readOfficialAlgoliaProductType(value: Record<string, unknown>): Product
     return value.dlcType === "Expansion Pass" || value.dlcType === "Season Pass" ? "season-pass" : "dlc";
   }
   return null;
+}
+
+/**
+ * 港日公开搜索结果未共享 Algolia 的商品枚举，只能按三语官方标题中的稳定类别词保守分类。
+ * 未识别时默认游戏而非 DLC：候选仍要经过商品页二次验证，不能仅因搜索摘要误把附加内容自动升级为本体。
+ */
+function classifyOfficialProductType(title: string): ProductType {
+  const normalized = title.toLocaleLowerCase();
+  if (normalized.includes("upgrade pack") || normalized.includes("アップグレードパス") || normalized.includes("升級通行證")) return "upgrade-pack";
+  if (normalized.includes("season pass") || normalized.includes("シーズンパス")) return "season-pass";
+  if (normalized.includes("downloadable content") || normalized.includes("追加コンテンツ") || normalized.includes("追加內容") || normalized.includes("dlc")) return "dlc";
+  if (normalized.includes("bundle") || normalized.includes("セット") || normalized.includes("組合")) return "bundle";
+  return "game";
 }
 
 /** 公开搜索文本字段只接受去除空白后仍有内容的字符串，拒绝对象、数组和空字符串的隐式转换。 */

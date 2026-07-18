@@ -131,16 +131,89 @@ describe("official Nintendo product search", () => {
     });
   });
 
-  it("does not request a non-admitted regional search adapter and provides the official-link fallback", async () => {
-    // 香港区尚无已验证的官方名称检索契约；调用方必须收到可操作的链接确认提示，而不是借用美区索引或混入第三方结果。
-    const fetchOfficialSearch = vi.fn<typeof fetch>();
+  it("parses Hong Kong official search RSC data into an eShop candidate", async () => {
+    // 港区官网搜索结果将商品页写成 ec.nintendo.com 模板；适配器只能替换同一条官方数据中的 NSUID，不能接受页面中任意外链。
+    const search = createOfficialNintendoSearch(async (request) => {
+      expect(String(request)).toBe("https://www.nintendo.com/hk/search?k=Overcooked+2");
+      return new Response(hongKongSearchHtml());
+    });
+
+    await expect(search.search("HK", "Overcooked 2", new AbortController().signal)).resolves.toEqual({
+      status: "available",
+      candidates: [{
+        regionCode: "HK",
+        productUrl: "https://ec.nintendo.com/HK/zh/titles/70010000106253",
+        canonicalTitle: "Overcooked! 2 – Nintendo Switch 2 Edition",
+        publisher: "Team17",
+        productType: "game",
+        currency: "HKD",
+        coverUrl: "https://images.ctfassets.net/example/overcooked-hk.jpg?w=320&fm=webp",
+        currentPriceMinor: null,
+        regularPriceMinor: null,
+      }],
+    });
+  });
+
+  it("uses the Japanese Nintendo public software API and constructs only a numeric Store product URL", async () => {
+    // 日区 API 的数字 nsuid 与 My Nintendo Store 的 D 前缀 URL 一一对应；带 -2 的实体版搜索 ID 不可推导为下载商品，必须丢弃。
+    const search = createOfficialNintendoSearch(async (request) => {
+      const url = new URL(String(request));
+      expect(url.origin).toBe("https://search.nintendo.jp");
+      expect(url.pathname).toBe("/nintendo_soft/search.json");
+      expect(Object.fromEntries(url.searchParams)).toEqual({ q: "Overcooked 2", limit: "20", page: "1", opt_search: "1" });
+      return Response.json({
+        result: {
+          items: [
+            {
+              id: "70010000106252",
+              nsuid: "70010000106252",
+              title: "Overcooked® 2 - オーバークック２ Nintendo Switch 2 Edition",
+              maker: "Team17",
+              sform: "BEE_DL",
+              current_price: 3740,
+              price: 3740,
+              upgrade: 1,
+            },
+            {
+              id: "70010000038868-2",
+              nsuid: "70010000038868",
+              title: "实体版不能推导为商店 URL",
+              maker: "Team17",
+              sform: "HAC_CARD",
+              current_price: 5280,
+              price: 5280,
+            },
+          ],
+        },
+      });
+    });
+
+    await expect(search.search("JP", "Overcooked 2", new AbortController().signal)).resolves.toEqual({
+      status: "available",
+      candidates: [{
+        regionCode: "JP",
+        productUrl: "https://store-jp.nintendo.com/item/software/D70010000106252/",
+        canonicalTitle: "Overcooked® 2 - オーバークック２ Nintendo Switch 2 Edition",
+        publisher: "Team17",
+        productType: "game",
+        currency: "JPY",
+        coverUrl: null,
+        currentPriceMinor: 3740,
+        regularPriceMinor: 3740,
+      }],
+    });
+  });
+
+  it("provides the official-link fallback when the Hong Kong RSC contract is unavailable", async () => {
+    // 港区搜索页结构变化时不能将空 HTML 误报为“没有商品”；必须让管理员改用同区任天堂官方链接而不是借用其他地区或第三方搜索结果。
+    const fetchOfficialSearch = vi.fn<typeof fetch>().mockResolvedValue(new Response("<html>incomplete official page</html>"));
     const search = createOfficialNintendoSearch(fetchOfficialSearch);
 
     await expect(search.search("HK", "Overcooked", new AbortController().signal)).resolves.toEqual({
       status: "unavailable",
       message: "该区官方搜索暂不可用，请粘贴任天堂官方商品链接。",
     });
-    expect(fetchOfficialSearch).not.toHaveBeenCalled();
+    expect(fetchOfficialSearch).toHaveBeenCalledOnce();
   });
 
   it("drops malformed or non-Nintendo hits instead of exposing an unverified candidate", async () => {
@@ -170,3 +243,31 @@ describe("official Nintendo product search", () => {
     });
   });
 });
+
+/** 构造官网 Next/RSC 搜索片段；夹具保留 `software.items` 的官方链接模板和地区字段，避免测试依赖真实网页或登录状态。 */
+function hongKongSearchHtml(): string {
+  const rscPayload = JSON.stringify({
+    software: {
+      items: [
+        {
+          region: "hongkong",
+          title: "Overcooked! 2 – Nintendo Switch 2 Edition",
+          nsuid: "70010000106253",
+          pageLink: "https://ec.nintendo.com/HK/zh/titles/{NSUID}",
+          publisher: "Team17",
+          hardwareCategory: "Nintendo Switch 2 Edition",
+          imageHero: { url: "https://images.ctfassets.net/example/overcooked-hk.jpg?w=320&fm=webp" },
+        },
+        {
+          // 非香港记录及非官方模板即使同处 RSC 数据，也不能越过地区和 URL 白名单。
+          region: "japan",
+          title: "必须忽略的错误地区商品",
+          nsuid: "70010000106252",
+          pageLink: "https://example.test/titles/{NSUID}",
+          publisher: "Team17",
+        },
+      ],
+    },
+  });
+  return `<script>self.__next_f.push([1,${JSON.stringify(rscPayload)}])</script>`;
+}

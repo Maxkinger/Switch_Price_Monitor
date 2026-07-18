@@ -1,6 +1,6 @@
 # 多地区任天堂官方搜索与自动监控设计规格
 
-**状态：** 实施中；US/MX/BR 官方公开索引适配已完成并通过固定夹具回归，HK/JP 与确认界面待实施
+**状态：** 实施中；五区官方搜索适配已完成并通过固定夹具回归，跨区确认分流与界面待实施
 **日期：** 2026-07-18
 
 ## 1. 目标与问题
@@ -11,7 +11,9 @@
 
 ## 实施记录
 
-- 2026-07-18：已将 US、MX、BR 的公开任天堂 Algolia 游戏索引收敛为 Worker 内不可变地区档案；档案分别绑定 `store_game_en_us`/`USD`/`/us/`、`store_game_es_mx`/`MXN`/`/es-mx/`、`store_game_pt_br`/`BRL`/`/pt-br/`。固定响应测试覆盖对应索引、币种及 URL 白名单，尚未把 HK 或 JP 标记为可搜索。
+- 2026-07-18：已将 US、MX、BR 的公开任天堂 Algolia 游戏索引收敛为 Worker 内不可变地区档案；档案分别绑定 `store_game_en_us`/`USD`/`/us/`、`store_game_es_mx`/`MXN`/`/es-mx/`、`store_game_pt_br`/`BRL`/`/pt-br/`。固定响应测试覆盖对应索引、币种及 URL 白名单。
+- 2026-07-18：已验证并实现 HK 的 `https://www.nintendo.com/hk/search?k=…` RSC `software.items` 读取。候选只允许其官方 `ec.nintendo.com/HK/zh/titles/{NSUID}` 模板和数字 NSUID；eShop 页面以公开 `search.*` 元数据二次确认，缺少可验证价格时保留空值。
+- 2026-07-18：已验证并实现 JP 的 `https://search.nintendo.jp/nintendo_soft/search.json` 公开软件 API。候选只接受 `*_DL` 下载版和相等的数字 `id/nsuid`，再按官方映射生成 `store-jp.nintendo.com/item/software/D{id}/`；实体版或聚合 ID 不生成商品链接。
 
 ## 2. 范围与非目标
 
@@ -38,8 +40,8 @@
 Worker 新增只读的 `OfficialRegionalSearchProfile` 配置。每项包含地区代码、任天堂官方请求地址、公开应用配置、索引/语言参数、货币、官方商品 URL 白名单与受控 JSON 解析器。配置只能在服务端定义，绝不由浏览器请求体提供。
 
 - US、MX、BR 的公开搜索页面采用同一任天堂动态搜索应用；它们使用各自地区、语言与货币配置，不能把 US 索引结果复用为 MX 或 BR 候选。
-- HK 使用 `https://www.nintendo.com/hk/search?k=…` 所对应的官方数据请求或页面可验证数据；其 URL 与字段白名单独立维护。
-- JP 使用 Nintendo Store 的官方检索请求或可验证商品索引；它与 `store-jp.nintendo.com` 的商品 URL 白名单绑定。
+- HK 使用 `https://www.nintendo.com/hk/search?k=…` 的 RSC `software.items`；它仅接受 `hongkong` 记录和官网实际返回的 `ec.nintendo.com/HK/zh/titles/{NSUID}` 模板，随后用该 eShop 页公开元数据二次验证。
+- JP 使用 `https://search.nintendo.jp/nintendo_soft/search.json` 的公开软件索引；只有数字下载版 ID 才能映射到 `store-jp.nintendo.com` 商品 URL。
 
 适配器遇到网络超时、非成功 HTTP、字段结构变化、货币不符、非官方链接或未知商品类型时，只返回该区的受控不可用状态，不回显外部正文。
 
