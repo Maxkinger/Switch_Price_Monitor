@@ -25,8 +25,8 @@
 | [跨语言地区商品高置信度识别设计规格](superpowers/specs/2026-07-18-localized-regional-product-identity-design.md) | 以官方标题标记、版本、发行商、类型与唯一性安全识别本地化商品 | 已部署并完成生产只读验收 |
 | [日区订阅确认官方 API 复核设计规格](superpowers/specs/2026-07-18-japan-confirmation-api-design.md) | 日区最终确认改用官方搜索 API 与价格 API，规避动态商品页解析失败 | 已部署并完成生产只读验收 |
 | [日区订阅确认官方 API 复核实施计划](superpowers/plans/2026-07-18-japan-confirmation-api.md) | 日区双官方接口复核、最终跨语言确认与受控验收步骤 | 已完成，待提交 |
-| [临时发布版本号设计规格](superpowers/specs/2026-07-18-temporary-release-version-design.md) | 页面版本标识、补丁号自动递增与未来发布系统替换边界 | 已实施，生产部署待授权 |
-| [临时发布版本号实施计划](superpowers/plans/2026-07-18-temporary-release-version.md) | 构建时版本注入、受控补丁递增发布与质量门禁 | 已实施，待提交推送 |
+| [临时发布版本号设计规格](superpowers/specs/2026-07-18-temporary-release-version-design.md) | 页面版本标识、补丁号自动递增与未来发布系统替换边界 | 已部署 V 0.0.2，待提交推送 |
+| [临时发布版本号实施计划](superpowers/plans/2026-07-18-temporary-release-version.md) | 构建时版本注入、受控补丁递增发布与质量门禁 | 已部署 V 0.0.2，待提交推送 |
 | [多地区任天堂官方搜索与自动监控实施计划](superpowers/plans/2026-07-18-multi-region-official-search.md) | 五区搜索适配器、自动/人工确认边界、前端三态与受控生产验收 | 已完成，待提交验收文档 |
 | [认证入口实施计划](superpowers/plans/2026-07-17-authentication-entry.md) | 首次设置、恢复码确认自动登录、登录、密码恢复、认证失效回退与暖色响应式表单 | 已完成 |
 | [公开偏好设置页设计规格](superpowers/specs/2026-07-17-public-settings-page-design.md) | 已登录管理员的公开偏好边界、三组表单、一次保存与秘密配置延期原则 | 已实施 |

@@ -4,6 +4,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "../src/app/app-shell";
+import { releaseVersion } from "../src/app/release-version";
 
 /**
  * 应用外壳的版本标识必须来自构建版本，而不是管理员数据或网络响应；该测试固定仪表盘读取结果，
@@ -26,7 +27,7 @@ describe("应用壳发布版本", () => {
 
     render(<AppShell onUnauthorized={vi.fn()} />);
 
-    // 项目未引入 jest-dom 断言扩展；确认元素被 Testing Library 找到即可证明导航已输出版本文本。
-    expect(await screen.findByText("V 0.0.1")).not.toBeNull();
+    // 项目未引入 jest-dom 断言扩展；确认页面文本使用当前构建模块值，避免补丁递增后测试错误地固定在首个版本。
+    expect(await screen.findByText(`V ${releaseVersion}`)).not.toBeNull();
   });
 });
