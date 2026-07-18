@@ -840,6 +840,9 @@ button:focus-visible {
 .detail-management label { display: grid; gap: 5px; color: #5e493d; font-size: 14px; }
 .detail-management label:has(input[type="checkbox"]) { display: flex; align-items: center; gap: 8px; }
 .detail-management input[type="checkbox"] { min-width: auto; padding: 0; }
+/* 详情危险区固定在管理操作末尾，并以边框和文案说明不可恢复性，避免与普通保存动作视觉混同。 */
+.detail-danger-zone { border-color: #e5b19e !important; background: #fff5ef; }
+.detail-danger-zone p { margin: 0; color: #7b4b3d; line-height: 1.55; }
 
 /* 详情补全按 Worker 三态分组：自动结果仅作只读草稿提示，候选与链接操作不会在视觉上混为一条不透明状态。 */
 .missing-region-option {

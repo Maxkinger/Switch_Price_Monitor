@@ -44,7 +44,7 @@
 | `POST /api/subscriptions/:id/resolve-regions` | 已登录管理员 | 读取既有订阅与其已确认地区商品作为身份锚点，仅针对设置中尚未映射的启用地区返回同一套官方解析结果；不存在订阅返回 `404`，全程只读。 |
 | `POST /api/subscriptions/:id/complete-regions` | 已登录管理员 | 接受该订阅缺失地区的已确认官方候选与明确跳过地区。Worker 重新验证游戏归属、官方链接和设置地区覆盖后，在单个 D1 批次中仅新增缺失地区商品与订阅关联；现有地区、历史、目标价、状态不被替换，任一项无效返回 `422` 且不部分写入。 |
 | `POST /api/subscriptions` | 已登录管理员 | 接受已确认的 `id`、`gameId` 和非空、去重的 `regionalProductIds`；每个地区商品必须属于该游戏且处于启用状态。同一 `gameId` 已存在订阅时返回既有 `subscriptionId` 与 `created: false`，不会覆盖原地区选择。匿名请求返回 `401`。 |
-| `DELETE /api/subscriptions` | 已登录管理员 | 接受 `{ subscriptionIds: string[] }`，数组必须非空、无空白值且无重复。服务端先验证全部目标存在，再在单个 D1 批次删除订阅专属的目标价、地区关联、通知事件、健康状态、价格快照、采集日志、地区商品、订阅与游戏；成功返回原输入顺序的 `deletedSubscriptionIds`。任一目标不存在返回 `404` 且零删除，输入无效返回 `422`；全局汇率、设置、认证和未选订阅不受影响。 |
+| `DELETE /api/subscriptions` | 已登录管理员 | 接受 `{ subscriptionIds: string[] }`，数组必须非空、无空白值且无重复。浏览器只能在共享确认弹窗的明确“永久删除”后发送选择的 ID，且不上传价格、游戏或外部链接。服务端先验证全部目标存在，再在单个 D1 批次删除订阅专属的目标价、地区关联、通知事件、健康状态、价格快照、采集日志、地区商品、订阅与游戏；成功返回原输入顺序的 `deletedSubscriptionIds`。仪表盘随后重新读取概览，详情页清空局部草稿并返回首页。任一目标不存在返回 `404` 且零删除，输入无效返回 `422`；全局汇率、设置、认证和未选订阅不受影响。 |
 | `POST /api/subscriptions/:id/disable` | 已登录管理员 | 软停用订阅并返回 `204`；不删除地区配置、价格历史或目标价状态，后续采集器据此停止创建新记录和通知。不存在的订阅返回 `404`。 |
 | `PATCH /api/subscriptions/:id` | 已登录管理员 | 接受启用状态、完整目标价配置，或非空且去重的 `regionalProductIds` 地区范围；地区商品必须属于订阅的同一游戏且启用，替换地区不删除既有历史。 |
 | `GET /api/settings` | 已登录管理员 | 由 `/settings` 同源页面读取单例公开设置，仅返回 `enabledRegions`、`defaultSearchRegion`、`theme`、`timezone`、`dailyReportTime`、`taxState`、`priceHistoryRetention` 和服务端创建时间；不含 Telegram、第三方来源、认证或会话秘密字段。 |

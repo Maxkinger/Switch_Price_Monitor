@@ -257,7 +257,7 @@ Run: `npm test -- --run test/dashboard-page.test.tsx test/dashboard-api-client.t
 
 Expected: PASS；多选不导航，取消不写入，成功删除只从 Worker 新概览渲染，错误不丢失选择。
 
-- [ ] **Step 5: 提交 Task 3（等待用户确认）**
+- [x] **Step 5: 提交 Task 3（已确认并推送 `6e98e09`）**
 
 拟提交范围：删除客户端、仪表盘多选、共享确认弹窗、样式和页面测试。
 
@@ -271,6 +271,7 @@ git push origin main
 
 **Files:**
 - Modify: `src/app/subscription-detail-page.tsx`
+- Modify: `src/app/styles.css`
 - Modify: `test/dashboard-page.test.tsx`
 - Modify: `docs/README.md`
 - Modify: `docs/requirements/traceability.md`
@@ -284,7 +285,7 @@ git push origin main
 - 详情页复用 `SubscriptionDeleteDialog` 与 `DetailApi.deleteSubscriptions`。
 - 成功删除单个订阅后调用 `onBack()`；父壳的仪表盘重新挂载并读取 Worker 概览。
 
-- [ ] **Step 1: 写入详情页删除后返回的失败测试**
+- [x] **Step 1: 写入详情页删除后返回的失败测试**
 
 ```tsx
 it("returns to dashboard after the detail deletion is confirmed", async () => {
@@ -296,13 +297,13 @@ it("returns to dashboard after the detail deletion is confirmed", async () => {
 });
 ```
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/dashboard-page.test.tsx`
 
 Expected: FAIL，因为详情页未提供删除入口。
 
-- [ ] **Step 3: 最小实现详情页危险操作与文档状态**
+- [x] **Step 3: 最小实现详情页危险操作与文档状态**
 
 ```tsx
 async function confirmDelete(): Promise<void> {
@@ -316,9 +317,9 @@ async function confirmDelete(): Promise<void> {
 
 把“删除订阅”置于详情管理区末尾并使用危险按钮样式，绝不与暂停/启用混同。完成后更新 API 设计中的 `DELETE /api/subscriptions`、系统设计中的硬删除依赖边界、质量文档中的原子删除/动画验收，以及追踪表状态；计划中勾选已完成步骤。所有修改代码、测试、样式与文档都需补全准确的中文注释。
 
-- [ ] **Step 4: 运行完整质量门禁**
+- [x] **Step 4: 运行完整质量门禁**
 
-Run: `npm test -- --run && npx tsc --noEmit && npm run build && git diff --check`
+Run: `npm test -- --run && npm run test:dom -- --run && npx tsc --noEmit && npm run build && git diff --check`
 
 Expected: PASS；硬删除、既有软停用、全局请求加载、仪表盘和详情页面回归均通过，构建产物无类型或空白错误。
 
@@ -327,7 +328,7 @@ Expected: PASS；硬删除、既有软停用、全局请求加载、仪表盘和
 拟提交范围：详情页删除返回、最终文档与全量质量门禁记录。
 
 ```bash
-git add src/app/subscription-detail-page.tsx test/dashboard-page.test.tsx docs/README.md docs/requirements/traceability.md docs/architecture/system-design.md docs/architecture/api-design.md docs/quality/quality-and-acceptance.md docs/superpowers/specs/2026-07-18-subscription-hard-delete-global-loading-design.md docs/superpowers/plans/2026-07-18-subscription-hard-delete-global-loading.md
+git add src/app/subscription-detail-page.tsx src/app/styles.css test/dashboard-page.test.tsx docs/README.md docs/requirements/traceability.md docs/architecture/system-design.md docs/architecture/api-design.md docs/quality/quality-and-acceptance.md docs/superpowers/specs/2026-07-18-subscription-hard-delete-global-loading-design.md docs/superpowers/plans/2026-07-18-subscription-hard-delete-global-loading.md
 git commit -m "feat: complete subscription deletion workflow"
 git push origin main
 ```

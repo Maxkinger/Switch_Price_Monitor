@@ -5,14 +5,16 @@ import { ProductApiError, createProductApiClient, type RegionResolutionResponse 
 import { DashboardApiError, type CompletedRefreshResult, type MissingRegionCompletionInput, type SubscriptionDetail, type SubscriptionUpdate } from "./dashboard-api-client";
 import { formatCnyFen, formatLocalPrice } from "./dashboard-view-model";
 import { applyAutomaticMissingResolutions, immediateRefreshNotice, missingRegionPresentation } from "./dashboard-page-state";
+import { SubscriptionDeleteDialog } from "./subscription-delete-dialog";
 
-/** 详情页只依赖受控详情读取、立即采集、编辑和地区补全接口；游戏身份与启用地区范围始终由 Worker 读取。 */
+/** 详情页只依赖受控详情读取、立即采集、编辑、地区补全和硬删除接口；游戏身份与启用地区范围始终由 Worker 读取。 */
 interface DetailApi {
   getSubscription(id: string): Promise<SubscriptionDetail>;
   refreshNow(): Promise<CompletedRefreshResult>;
   updateSubscription(id: string, update: SubscriptionUpdate): Promise<unknown>;
   resolveMissingRegions(id: string): Promise<RegionResolutionResponse[]>;
   completeMissingRegions(id: string, input: MissingRegionCompletionInput): Promise<unknown>;
+  deleteSubscriptions(subscriptionIds: string[]): Promise<{ deletedSubscriptionIds: string[] }>;
 }
 
 /**
@@ -31,6 +33,9 @@ export function SubscriptionDetailPage({ api, productApi, subscriptionId, onBack
   const [missingSkipped, setMissingSkipped] = useState<RegionCode[]>([]);
   const [isResolvingMissing, setIsResolvingMissing] = useState(false);
   const [isCompletingMissing, setIsCompletingMissing] = useState(false);
+  // 删除状态独立于其他保存状态：永久删除必须经共享弹窗二次确认，不能被暂停或目标价操作误触发。
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   async function reload(): Promise<boolean> {
     try {
@@ -103,6 +108,37 @@ export function SubscriptionDetailPage({ api, productApi, subscriptionId, onBack
     finally { setIsCompletingMissing(false); }
   }
 
+  /**
+   * 详情页只可请求当前路由订阅的单元素批量删除接口。成功后先清空敏感价格和地区草稿，
+   * 再返回仪表盘；不能在当前页保留已永久删除订阅的任何可见数据。除认证失效或目标已被其他操作删除外，
+   * 失败时保持确认弹窗，以便管理员在不丢失上下文的前提下重试。
+   */
+  async function confirmDelete(): Promise<void> {
+    setIsDeleting(true);
+    setNotice(null);
+    try {
+      await api.deleteSubscriptions([subscriptionId]);
+      setDetail(null);
+      setSelectedIds(new Set());
+      setMissingResolutions([]);
+      setMissingConfirmations({});
+      setMissingSkipped([]);
+      setIsDeleteDialogOpen(false);
+      onBack();
+    } catch (error) {
+      if (error instanceof DashboardApiError && error.status === 401) onUnauthorized();
+      else if (error instanceof DashboardApiError && error.status === 404) {
+        // 目标已被其他会话删除时，详情模型不再可信，关闭弹窗并返回由仪表盘重新读取真实集合。
+        setDetail(null);
+        setIsDeleteDialogOpen(false);
+        onBack();
+      } else setNotice(error instanceof DashboardApiError ? error.message : "订阅暂时无法删除，请稍后重试。");
+    } finally {
+      // 无论成功、认证跳转或失败都结束禁用状态，避免当前组件尚未卸载时遗留不可操作的确认按钮。
+      setIsDeleting(false);
+    }
+  }
+
   if (!detail) return <p className="page-loading">正在读取订阅详情…</p>;
   return <section className="detail-page" aria-labelledby="detail-title">
     <button type="button" className="text-button" onClick={onBack}>← 返回仪表盘</button>
@@ -130,6 +166,8 @@ export function SubscriptionDetailPage({ api, productApi, subscriptionId, onBack
       </fieldset>
       <fieldset><legend>监控地区</legend>{detail.regions.map((region) => <label key={region.regionalProductId}><input type="checkbox" checked={selectedIds.has(region.regionalProductId)} onChange={() => setSelectedIds((current) => { const next = new Set(current); if (next.has(region.regionalProductId)) next.delete(region.regionalProductId); else next.add(region.regionalProductId); return next; })} />{region.regionCode}（已确认商品）</label>)}<button className="secondary-button" type="button" disabled={selectedIds.size === 0 || [...selectedIds].every((id) => monitoredIds.has(id))} onClick={() => void save({ regionalProductIds: [...selectedIds] }, "监控地区已保存。")}>保存监控地区</button></fieldset>
       <fieldset><legend>目标价（最小货币单位）</legend><label>全局人民币分<input inputMode="numeric" value={globalTarget} onChange={(event) => setGlobalTarget(event.target.value)} placeholder="留空则不设置" /></label>{detail.regions.map((region) => <label key={region.regionCode}>{region.regionCode} 当地最小单位<input inputMode="numeric" value={regionalTargets[region.regionCode] ?? ""} onChange={(event) => setRegionalTargets((current) => ({ ...current, [region.regionCode]: event.target.value }))} placeholder="留空则不设置" /></label>)}<button className="secondary-button" type="button" onClick={() => { const regionTargets = Object.entries(regionalTargets).flatMap(([regionCode, value]) => /^\d+$/.test(value) && Number(value) > 0 ? [{ regionCode, targetAmountMinor: Number(value) }] : []); const globalTargetCnyFen = /^\d+$/.test(globalTarget) && Number(globalTarget) > 0 ? Number(globalTarget) : null; void save({ globalTargetCnyFen, regionTargets }, "目标价已保存。"); }}>保存目标价</button></fieldset>
+      <fieldset className="detail-danger-zone"><legend>危险操作</legend><p>永久删除当前订阅及其价格历史、采集日志和通知记录，无法撤销。</p><button className="danger-button" type="button" onClick={() => setIsDeleteDialogOpen(true)}>删除订阅</button></fieldset>
     </section>
+    {isDeleteDialogOpen ? <SubscriptionDeleteDialog subscriptionCount={1} isDeleting={isDeleting} onCancel={() => setIsDeleteDialogOpen(false)} onConfirm={() => void confirmDelete()} /> : null}
   </section>;
 }
