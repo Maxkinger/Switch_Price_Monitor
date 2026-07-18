@@ -170,25 +170,17 @@ function RegionalConfirmationPanel({
                 <p>{resolutionLabel(resolution)}</p>
               </div>
               {resolution.status === "automatic" ? (
-                <button
-                  type="button"
-                  className="text-button"
-                  onClick={() => onSelectCandidate(resolution.regionCode, resolution.candidate, "automatic")}
-                >
-                  {confirmed ? "已采用自动匹配" : "采用此匹配"}
-                </button>
+                <small className="regional-option__confirmed">已自动加入监控：{resolution.candidate.canonicalTitle}</small>
               ) : null}
               {resolution.status === "needs-manual-selection" ? (
                 <div className="regional-option__candidates">
                   {resolution.candidates.map((candidate) => (
-                    <button
-                      type="button"
-                      className={`compact-option${confirmed?.productUrl === candidate.productUrl ? " compact-option--selected" : ""}`}
+                    <CandidateCard
                       key={candidate.productUrl}
-                      onClick={() => onSelectCandidate(resolution.regionCode, candidate, "manual_selection")}
-                    >
-                      {candidate.canonicalTitle}
-                    </button>
+                      candidate={candidate}
+                      selected={confirmed?.productUrl === candidate.productUrl}
+                      onToggle={() => onSelectCandidate(resolution.regionCode, candidate, "manual_selection")}
+                    />
                   ))}
                 </div>
               ) : null}
@@ -233,7 +225,6 @@ export function SubscriptionWizardPage({ onUnauthorized }: { onUnauthorized: () 
   // 解析响应可能为空（例如仅启用默认区），因此单独记录已完成核验的默认区候选，不能以结果数组长度判断是否允许提交。
   const [resolvedCandidateKeys, setResolvedCandidateKeys] = useState<string[]>([]);
   const [manualLinks, setManualLinks] = useState<Record<string, string>>({});
-  const [confirmationSources, setConfirmationSources] = useState<Record<string, RegionalProductMatchSource>>({});
   const [pendingLinkKey, setPendingLinkKey] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [results, setResults] = useState<SubscriptionConfirmationResult[]>([]);
@@ -274,7 +265,6 @@ export function SubscriptionWizardPage({ onUnauthorized }: { onUnauthorized: () 
       setResolutions([]);
       setResolvedCandidateKeys([]);
       setManualLinks({});
-      setConfirmationSources({});
     } catch (error) {
       handleProductError(error, "官方搜索暂时不可用，请稍后重试。");
     } finally {
@@ -298,7 +288,6 @@ export function SubscriptionWizardPage({ onUnauthorized }: { onUnauthorized: () 
       setResolutions([]);
       setResolvedCandidateKeys([]);
       setManualLinks({});
-      setConfirmationSources({});
     } catch (error) {
       handleProductError(error, "官方链接核验未完成，请稍后重试。");
     } finally {
@@ -328,7 +317,7 @@ export function SubscriptionWizardPage({ onUnauthorized }: { onUnauthorized: () 
     }
   }
 
-  /** 写入某款游戏的一个核验地区及其来源方式，来源会随最终确认请求一并交给后端审计。 */
+  /** 写入某款游戏的一个核验地区及其来源方式；状态模块会同时撤销同区跳过，防止确认载荷冲突。 */
   function handleRegionalCandidate(
     selected: OfficialProductCandidate,
     regionCode: RegionCode,
@@ -336,9 +325,7 @@ export function SubscriptionWizardPage({ onUnauthorized }: { onUnauthorized: () 
     source: RegionalProductMatchSource,
   ) {
     const selectedKey = candidateKey(selected);
-    const confirmationKey = regionalConfirmationKey(selectedKey, regionCode);
-    setWizard((current) => setRegionalCandidate(current, selectedKey, regionCode, candidate));
-    setConfirmationSources((current) => ({ ...current, [confirmationKey]: source }));
+    setWizard((current) => setRegionalCandidate(current, selectedKey, regionCode, candidate, source));
   }
 
   /** 只让 Worker 解析和校验手动链接，成功后才把返回的官方候选绑定到当前游戏/地区。 */
@@ -375,7 +362,7 @@ export function SubscriptionWizardPage({ onUnauthorized }: { onUnauthorized: () 
         if (region.code === selected.regionCode) continue;
         const key = regionalConfirmationKey(selectedKey, region.code);
         const candidate = wizard.regionalConfirmations[key];
-        const matchSource = confirmationSources[key];
+        const matchSource = wizard.regionalConfirmationSources[key];
         if (candidate && matchSource) regions.push({ ...candidate, matchSource });
       }
 

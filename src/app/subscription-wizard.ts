@@ -1,6 +1,7 @@
 import type {
   OfficialProductCandidate,
   OfficialSearchResult,
+  RegionalProductMatchSource,
   SubscriptionRegionPreview,
 } from "../shared/domain";
 import type { RegionResolutionResponse } from "./api-client";
@@ -20,6 +21,8 @@ export interface SubscriptionWizardState {
   searchResult: OfficialSearchResult;
   selectedCandidateKeys: string[];
   regionalConfirmations: Record<string, OfficialProductCandidate>;
+  /** 自动与人工来源必须随候选保存，最终确认才能携带审计来源；该 UI 字段不会取代 Worker 对官方链接的重验。 */
+  regionalConfirmationSources: Record<string, RegionalProductMatchSource>;
   /**
    * 已明确跳过的“默认区候选:地区”键。跳过只在本次确认请求中表达管理员决定，
    * 不会伪造地区商品、价格快照或监控关联；Worker 仍以保存设置执行最终覆盖校验。
@@ -36,6 +39,7 @@ export function createSubscriptionWizardState(searchResult: OfficialSearchResult
     searchResult,
     selectedCandidateKeys: [],
     regionalConfirmations: {},
+    regionalConfirmationSources: {},
     skippedRegionalKeys: [],
     sourcePreviews: {},
     submitState: "idle",
@@ -59,6 +63,11 @@ export function applyAutomaticRegionResolutions(
       ...state.regionalConfirmations,
       ...Object.fromEntries(automatic.map((resolution) => [regionalConfirmationKey(resolution.candidateKey, resolution.regionCode), resolution.candidate])),
     },
+    // 只有 Worker 的唯一严格匹配可写入 automatic；浏览器不得按标题、价格或候选顺序自行推断来源。
+    regionalConfirmationSources: {
+      ...state.regionalConfirmationSources,
+      ...Object.fromEntries(automatic.map((resolution) => [regionalConfirmationKey(resolution.candidateKey, resolution.regionCode), "automatic" as const])),
+    },
     skippedRegionalKeys: state.skippedRegionalKeys.filter((key) => !confirmationKeys.has(key)),
   };
 }
@@ -77,7 +86,8 @@ export function skipRegionalConfirmation(
     ? state.skippedRegionalKeys.filter((entry) => entry !== key)
     : [...state.skippedRegionalKeys, key];
   const { [key]: _removed, ...regionalConfirmations } = state.regionalConfirmations;
-  return { ...state, regionalConfirmations, skippedRegionalKeys: nextSkipped };
+  const { [key]: _removedSource, ...regionalConfirmationSources } = state.regionalConfirmationSources;
+  return { ...state, regionalConfirmations, regionalConfirmationSources, skippedRegionalKeys: nextSkipped };
 }
 
 /**
@@ -96,7 +106,8 @@ export function canConfirmConfiguredRegions(
       .filter((resolution) => resolution.candidateKey === selectedKey)
       .every((resolution) => {
         const key = regionalConfirmationKey(selectedKey, resolution.regionCode);
-        return state.regionalConfirmations[key] !== undefined || state.skippedRegionalKeys.includes(key);
+        return (state.regionalConfirmations[key] !== undefined && state.regionalConfirmationSources[key] !== undefined)
+          || state.skippedRegionalKeys.includes(key);
       });
   });
 }
@@ -121,21 +132,29 @@ export function toggleCandidate(state: SubscriptionWizardState, candidateKey: st
 }
 
 /**
- * 将一个地区商品绑定到指定默认区游戏。键必须带上默认区候选而不是仅用地区代码，
- * 因为同时订阅两款游戏时它们都可以拥有香港区映射，单独使用 `HK` 会导致后一项覆盖前一项。
+ * 将一个地区商品绑定到指定默认区游戏并保存可审计来源。键必须带上默认区候选而不是仅用地区代码，
+ * 因为同时订阅两款游戏时它们都可以拥有香港区映射，单独使用 `HK` 会导致后一项覆盖前一项；
+ * 新候选会撤销同区跳过，防止最终载荷同时声明“已确认商品”和“跳过”。
  */
 export function setRegionalCandidate(
   state: SubscriptionWizardState,
   selectedCandidateKey: string,
   regionCode: OfficialProductCandidate["regionCode"],
   candidate: OfficialProductCandidate,
+  source: RegionalProductMatchSource = "manual_selection",
 ): SubscriptionWizardState {
+  const key = regionalConfirmationKey(selectedCandidateKey, regionCode);
   return {
     ...state,
     regionalConfirmations: {
       ...state.regionalConfirmations,
-      [regionalConfirmationKey(selectedCandidateKey, regionCode)]: candidate,
+      [key]: candidate,
     },
+    regionalConfirmationSources: {
+      ...state.regionalConfirmationSources,
+      [key]: source,
+    },
+    skippedRegionalKeys: state.skippedRegionalKeys.filter((skippedKey) => skippedKey !== key),
   };
 }
 

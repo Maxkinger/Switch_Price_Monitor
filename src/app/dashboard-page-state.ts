@@ -1,4 +1,6 @@
 import { DashboardApiError, type CompletedRefreshResult } from "./dashboard-api-client";
+import type { ConfirmedRegionalProduct } from "../shared/domain";
+import type { RegionResolutionResponse } from "./api-client";
 
 /**
  * 详情页在内存中保留的目标价草稿。金额继续使用 Worker 的最小货币单位，
@@ -40,4 +42,28 @@ export function applyDetailRequestFailure(state: DetailRequestState, error: Dash
  */
 export function immediateRefreshNotice(result: CompletedRefreshResult): string {
   return `已完成本次采集：成功 ${result.collected} 个地区，待确认 ${result.stale} 个地区。`;
+}
+
+/** 详情页只呈现三种由 Worker 返回的地区状态，不能由浏览器根据数组长度、标题或价格自行猜测。 */
+export type MissingRegionPresentation = "automatic-readonly" | "candidate-list" | "link-input";
+
+/** 只有 `needs-manual-link` 可显示链接输入，避免已有官方候选时诱导管理员绕过候选选择。 */
+export function missingRegionPresentation(status: RegionResolutionResponse["status"]): MissingRegionPresentation {
+  if (status === "automatic") return "automatic-readonly";
+  if (status === "needs-manual-selection") return "candidate-list";
+  return "link-input";
+}
+
+/**
+ * 唯一严格匹配在详情页打开后直接成为补全草稿，但绝不触发写入；管理员仍须点击“确认补全”。
+ * 本地化候选和链接兜底刻意不加入草稿，防止浏览器误把非唯一官方结果自动加入监控。
+ */
+export function applyAutomaticMissingResolutions(
+  resolutions: RegionResolutionResponse[],
+): Record<string, ConfirmedRegionalProduct> {
+  return Object.fromEntries(
+    resolutions
+      .filter((resolution): resolution is Extract<RegionResolutionResponse, { status: "automatic" }> => resolution.status === "automatic")
+      .map((resolution) => [resolution.regionCode, { ...resolution.candidate, matchSource: "automatic" }]),
+  );
 }

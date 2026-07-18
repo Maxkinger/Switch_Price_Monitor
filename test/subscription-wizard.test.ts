@@ -65,11 +65,26 @@ describe("subscription wizard state", () => {
 
     // 自动匹配仅在 Worker 已返回唯一安全候选时写入；香港仍必须由管理员核验链接或明确跳过，不能静默遗漏。
     expect(automatic.regionalConfirmations[`${selectedKey}:JP`]).toEqual(overcookedJp());
+    expect(automatic).toMatchObject({ regionalConfirmationSources: { [`${selectedKey}:JP`]: "automatic" } });
     expect(canConfirmConfiguredRegions(automatic, selected, resolutions)).toBe(false);
 
     const skipped = skipRegionalConfirmation(automatic, selectedKey, "HK");
     expect(skipped.skippedRegionalKeys).toEqual([`${selectedKey}:HK`]);
     expect(canConfirmConfiguredRegions(skipped, selected, resolutions)).toBe(true);
+  });
+
+  it("turns a manually selected regional candidate into a confirmation and clears its prior skip", () => {
+    // 同一地区不能同时提交候选与跳过：管理员点击官方候选卡后，应以 `manual_selection` 取代旧跳过，
+    // 让最终载荷完整记录人工审计来源，而不是依赖页面是否刚好显示过某个按钮。
+    const selectedKey = `US:${overcooked().productUrl}`;
+    const skipped = skipRegionalConfirmation(createSubscriptionWizardState({ status: "available", candidates: [overcooked()] }), selectedKey, "MX");
+    const selected = setRegionalCandidate(skipped, selectedKey, "MX", mexicanOvercooked());
+
+    expect(selected.skippedRegionalKeys).not.toContain(`${selectedKey}:MX`);
+    expect(selected).toMatchObject({
+      regionalConfirmations: { [`${selectedKey}:MX`]: mexicanOvercooked() },
+      regionalConfirmationSources: { [`${selectedKey}:MX`]: "manual_selection" },
+    });
   });
 });
 
@@ -91,4 +106,9 @@ function hongKongKirby(): OfficialProductCandidate {
 /** 日区候选与美区标题/类型/发行商一致，代表 Worker 可以安全自动采用的跨区官方映射。 */
 function overcookedJp(): OfficialProductCandidate {
   return { regionCode: "JP", productUrl: "https://store-jp.nintendo.com/item/software/D70050000064985/", canonicalTitle: "Overcooked! 2", publisher: "Team17", productType: "game", currency: "JPY", coverUrl: null, currentPriceMinor: 1000, regularPriceMinor: null };
+}
+
+/** 墨西哥区候选标题可与默认区不同；点击该官方候选应被标记为人工选择而非系统自动匹配。 */
+function mexicanOvercooked(): OfficialProductCandidate {
+  return { regionCode: "MX", productUrl: "https://www.nintendo.com/es-mx/store/products/overcooked-2-switch/", canonicalTitle: "Overcooked! 2", publisher: "Team17", productType: "game", currency: "MXN", coverUrl: null, currentPriceMinor: 24900, regularPriceMinor: null };
 }

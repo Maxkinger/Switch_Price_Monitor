@@ -204,7 +204,7 @@ Run: `npm test -- --run test/subscription-confirmation-service.test.ts test/subs
 
 Expected: PASS；本地化候选能在人工操作后保存，自动匹配与非同类商品仍严格拒绝，失败不会留下部分地区商品。
 
-- [ ] **Step 5: 等待用户确认后提交并推送 Task 4**
+- [x] **Step 5: 已确认并提交 Task 4**
 
 拟提交范围：新建/补全服务的来源分级校验与原子性测试。
 
@@ -228,23 +228,23 @@ git push origin main
 - Automatic rows render a non-interactive “已自动加入监控” state; no “采用自动匹配” button.
 - `needs-manual-selection` renders selectable official candidate cards; `needs-manual-link` alone renders the official link input and skip action.
 
-- [ ] **Step 1: 写入失败测试**
+- [x] **Step 1: 写入失败测试**
 
 在向导状态/组件测试中给出一个 automatic JP、一个 localised MX candidate list 和一个 unavailable HK：断言 JP 已在确认载荷中且页面没有接受按钮；MX 显示候选，点击后形成 `manual_selection`；HK 才显示官方链接输入。详情补全面板用同样三种状态断言，并确保自动结果仍须由最终“确认补全”写入。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/subscription-wizard.test.ts test/dashboard-page-state.test.ts`
 
 Expected: FAIL，因为现有页面将 automatic 显示为可重复点击的“采用自动匹配”，且发现服务不会为本地化候选返回候选卡。
 
-- [ ] **Step 3: 最小前端实现**
+- [x] **Step 3: 最小前端实现**
 
 复用现有候选卡的封面、标题、类型、发行商、原价/折扣价布局。把 automatic 行改为只读状态文字；人工候选卡点击后加现有选中边框并更新同一 `candidateKey + regionCode` 的确认项。只有 `needs-manual-link` 渲染链接输入框；用户仍可对任何未确认地区显式跳过。详情页以相同语义展示，但不允许自动结果绕过最终补全按钮。
 
 新增或修改的状态注释说明：前端仅表现 Worker 已验证的解析结果，不能把点击状态当作官方商品验证或地区范围授权。
 
-- [ ] **Step 4: 运行前端回归与构建**
+- [x] **Step 4: 运行前端回归与构建**
 
 Run: `npm test -- --run test/subscription-wizard.test.ts test/dashboard-page-state.test.ts && npx tsc --noEmit && npm run build`
 
