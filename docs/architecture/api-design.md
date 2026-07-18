@@ -40,7 +40,7 @@
 | `POST /api/products/search` | 已登录管理员 | 仅接受去除首尾空白后长度为 1–100 的名称，默认搜索区只由服务端保存的 `settings.defaultSearchRegion` 决定，浏览器不能覆盖。Worker 仅调用该区不可变的任天堂官方搜索档案，返回受控候选；外部数据不可验证时返回安全的空结果/补充提示，不写入任何订阅数据。 |
 | `POST /api/products/resolve-link` | 已登录管理员 | 接受一个支持地区及 HTTPS 商品链接，由 Worker 按该地区任天堂官方主机和路径白名单验证并解析公开商品信息。无效链接返回 `422`，外部网络或页面解析失败统一返回安全的 `500` 摘要；不回显原始页面、Cookie 或网络细节。 |
 | `POST /api/products/resolve-regions` | 已登录管理员 | 接受一个或多个完整默认区官方候选；Worker 读取保存的 `enabledRegions` 而非信任浏览器地区数组，逐区使用本区任天堂官方搜索档案。唯一严格身份匹配返回 `automatic`；同类型官方候选返回 `needs-manual-selection`；已验证空集合或不可用返回 `needs-manual-link`。全程只读，不创建游戏、地区商品或订阅。 |
-| `POST /api/products/confirm-subscriptions` | 已登录管理员 | 接受非空商品数组；每项必须有默认区官方候选、已确认地区映射、受控匹配来源及明确跳过的地区。Worker 按保存的 `enabledRegions` 验证每个启用地区均已确认或跳过，重新解析每个官方链接并二次验证本区官方价格 ID：`automatic` 必须保持严格身份，人工选择/链接至少必须是同类型的本区官方商品。随后以单个 D1 批次创建所有新游戏、地区商品、订阅和关联。任一项无效返回 `422` 且不写入。 |
+| `POST /api/products/confirm-subscriptions` | 已登录管理员 | 接受非空商品数组；每项必须有默认区官方候选、已确认地区映射、受控匹配来源及明确跳过的地区。Worker 按保存的 `enabledRegions` 验证每个启用地区均已确认或跳过：US、MX、BR、HK 重新解析官方链接；JP 重新查询官方软件搜索 API 并要求 URL 标题 ID 精确命中，再由官方价格 API 确认 JP/JPY/在售状态。`automatic` 必须保持严格身份或已确认的高置信度本地化身份，人工选择/链接至少必须是同类型的本区官方商品。随后以单个 D1 批次创建所有新游戏、地区商品、订阅和关联。任一项无效返回安全 `422` 且不写入。 |
 | `POST /api/subscriptions/:id/resolve-regions` | 已登录管理员 | 读取既有订阅与其已确认地区商品作为身份锚点，仅针对设置中尚未映射的启用地区返回同一套官方解析结果；不存在订阅返回 `404`，全程只读。 |
 | `POST /api/subscriptions/:id/complete-regions` | 已登录管理员 | 接受该订阅缺失地区的已确认官方候选与明确跳过地区。Worker 重新验证游戏归属、官方链接和设置地区覆盖后，在单个 D1 批次中仅新增缺失地区商品与订阅关联；现有地区、历史、目标价、状态不被替换，任一项无效返回 `422` 且不部分写入。 |
 | `POST /api/subscriptions` | 已登录管理员 | 接受已确认的 `id`、`gameId` 和非空、去重的 `regionalProductIds`；每个地区商品必须属于该游戏且处于启用状态。同一 `gameId` 已存在订阅时返回既有 `subscriptionId` 与 `created: false`，不会覆盖原地区选择。匿名请求返回 `401`。 |

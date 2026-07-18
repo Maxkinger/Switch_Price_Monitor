@@ -132,7 +132,11 @@ export function officialCandidateKey(candidate: Pick<OfficialProductCandidate, "
 }
 
 /** 标题比较忽略大小写及重复空白；发行商只有双方都有时才作为防止同名商品误配的附加约束。 */
-function hasSameOfficialIdentity(left: OfficialProductCandidate, right: OfficialProductCandidate): boolean {
+/**
+ * 比较两个任天堂官方候选的严格身份。该规则只适合标题未本地化的场景；发行商缺失时不把缺失误判为冲突，
+ * 但调用方仍须先确认 URL、地区和类型来自本区官方搜索，不能把这个纯文本比较当作链接验证器。
+ */
+export function hasSameOfficialIdentity(left: OfficialProductCandidate, right: OfficialProductCandidate): boolean {
   if (normalizeTitle(left.canonicalTitle) !== normalizeTitle(right.canonicalTitle) || left.productType !== right.productType) return false;
   return left.publisher === null || right.publisher === null || normalizeTitle(left.publisher) === normalizeTitle(right.publisher);
 }
@@ -147,6 +151,30 @@ function localizedIdentityRelevance(anchor: OfficialProductCandidate, option: Of
   if (anchorTitle === null || anchorTitle !== latinTitleMarker(option.canonicalTitle)) return 0;
   const anchorEdition = editionMarker(anchor.canonicalTitle);
   return anchorEdition !== null && anchorEdition === editionMarker(option.canonicalTitle) ? 2 : 1;
+}
+
+/**
+ * 仅判断两条已验证官方候选是否拥有完整的本地化自动身份信号。返回 true 不代表可自动写入：
+ * 调用方还必须在同一次本区官方搜索结果中确认该候选唯一，防止两个同名版本按结果顺序被任选一个。
+ */
+export function hasHighConfidenceLocalizedIdentity(anchor: OfficialProductCandidate, option: OfficialProductCandidate): boolean {
+  return localizedIdentityRelevance(anchor, option) === 2;
+}
+
+/**
+ * 在一批同区官方搜索候选中重新证明自动匹配唯一。最终订阅确认不能信任浏览器提交的 `automatic` 字符串，
+ * 因而必须以当次官方结果重新计算严格或本地化身份，并要求目标 URL 是唯一匹配项。
+ */
+export function isUniqueAutomaticRegionalCandidate(
+  anchor: OfficialProductCandidate,
+  candidate: OfficialProductCandidate,
+  regionalCandidates: OfficialProductCandidate[],
+): boolean {
+  const automaticMatches = regionalCandidates.filter((option) => option.regionCode === candidate.regionCode
+    && option.productType === anchor.productType
+    && isOfficialNintendoProductUrl(candidate.regionCode, option.productUrl)
+    && (hasSameOfficialIdentity(anchor, option) || hasHighConfidenceLocalizedIdentity(anchor, option)));
+  return automaticMatches.length === 1 && automaticMatches[0].productUrl === candidate.productUrl;
 }
 
 /**

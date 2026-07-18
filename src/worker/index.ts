@@ -36,6 +36,7 @@ import { runPendingNotificationDelivery, runScheduled, runSixHourCollection } fr
 import { defaultFallbackSources, SubscriptionPreviewService } from "./services/subscription-preview-service";
 import { SubscriptionConfirmationService } from "./services/subscription-confirmation-service";
 import { SubscriptionRegionCompletionService } from "./services/subscription-region-completion-service";
+import { JapaneseSubscriptionConfirmationService } from "./services/japanese-subscription-confirmation-service";
 import { TelegramService } from "./services/telegram-service";
 
 export interface Env {
@@ -94,9 +95,16 @@ const worker: ExportedHandler<Env> = {
         createOfficialNintendoSearch(),
         officialPages,
       ),
-      // 最终确认复用同一个官方页面解析器、日区价格 ID 二次验证器和持久化设置，
+      // 最终确认复用本区页面解析器、日区双官方接口确认器与持久化设置，
       // 确保发现时与写入前使用同一地区安全范围，旧浏览器页面也不能绕过启用地区覆盖校验。
-      new SubscriptionConfirmationService(new SubscriptionConfirmationRepository(env.DB), officialPages, officialPriceIds, new SettingsRepository(env.DB)),
+      new SubscriptionConfirmationService(
+        new SubscriptionConfirmationRepository(env.DB),
+        officialPages,
+        officialPriceIds,
+        new SettingsRepository(env.DB),
+        // 日区最终确认不再解析可能返回排队外壳的 Store 页面；两项任天堂官方接口分别证明身份字段与在售价格状态。
+        new JapaneseSubscriptionConfirmationService(createOfficialNintendoSearch(), officialPriceIds),
+      ),
     );
     if (productResponse) return productResponse;
 

@@ -196,7 +196,7 @@ Expected: 全部 PASS，且无 TypeScript、构建、格式或空白错误。
 
 将规格状态改为“已实施，待生产只读验收”，记录严格匹配未放宽、唯一高置信度本地化匹配才自动确认、候选折叠只影响展示。将实施计划的 Task 1 和 Task 2 勾选为完成，并在需求追踪表和质量文档增加对应的回归命令与结果。
 
-- [ ] **Step 2: 以已登录生产页面只读核验**
+- [x] **Step 2: 以已登录生产页面只读核验**
 
 搜索 `Overcooked! 2`，选定 `Overcooked! 2 – Nintendo Switch 2 Edition`，点击“核验其他地区”。确认日区自动显示 `Overcooked® 2 - オーバークック２ Nintendo Switch 2 Edition`，或在存在歧义时其出现在第一屏；不得点击“确认订阅”。
 

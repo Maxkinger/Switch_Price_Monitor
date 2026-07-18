@@ -13,9 +13,17 @@ import {
   type ValidatedSubscriptionConfirmation,
 } from "../repositories/subscription-confirmation-repository";
 import type { OfficialPriceIdResolution, OfficialPriceIdService } from "./official-price-id-service";
+import {
+  hasHighConfidenceLocalizedIdentity,
+  hasSameOfficialIdentity,
+} from "./official-product-discovery-service";
+import type { JapaneseSubscriptionConfirmationService } from "./japanese-subscription-confirmation-service";
 
 /** 服务仅需要官方价格 ID 的只读解析能力，窄接口使测试不必创建真实官方网络适配器。 */
 type OfficialPriceIdResolver = Pick<OfficialPriceIdService, "resolve">;
+
+/** 日区双官方接口确认器的窄依赖；最终订阅服务不应了解搜索或价格 API 的 URL、字段和超时细节。 */
+type JapaneseCandidateResolver = Pick<JapaneseSubscriptionConfirmationService, "resolve">;
 
 /**
  * 最终确认只读取启用地区，不读取默认搜索区或展示偏好。确认时重新读取设置，
@@ -29,8 +37,9 @@ export interface EnabledRegionSettingsReader {
 export class SubscriptionConfirmationError extends Error {}
 
 /**
- * 最终确认服务是“瞬时发现 DTO”到“可采集订阅记录”的唯一业务闸门。它始终重读官方商品页，
- * 用重新验证的标题、币种、类型、发行商和价格 ID 生成写入数据，绝不把浏览器自报的候选身份直接持久化。
+ * 最终确认服务是“瞬时发现 DTO”到“可采集订阅记录”的唯一业务闸门。除日区使用搜索与价格双官方接口外，
+ * 它重读本区官方商品页，以重新验证的标题、币种、类型、发行商和价格 ID 生成写入数据，
+ * 绝不把浏览器自报的候选身份直接持久化。
  */
 export class SubscriptionConfirmationService {
   public constructor(
@@ -38,6 +47,7 @@ export class SubscriptionConfirmationService {
     private readonly pages: OfficialNintendoProductPageResolver,
     private readonly officialPriceIds: OfficialPriceIdResolver,
     private readonly settings: EnabledRegionSettingsReader,
+    private readonly japanese: JapaneseCandidateResolver,
     private readonly createId: () => string = () => crypto.randomUUID(),
   ) {}
 
@@ -80,7 +90,8 @@ export class SubscriptionConfirmationService {
     if (!Array.isArray(input.skippedRegionCodes)) throw new SubscriptionConfirmationError("跳过地区设置无效。");
     const settings = await this.settings.get();
     if (!settings) throw new SubscriptionConfirmationError("应用尚未完成初始化。");
-    const selected = await this.resolveOfficialCandidate(input.selected);
+    // 默认区是整项订阅的可信锚点，日区作为默认区时也必须经过其专用双 API 复核，而不能保留浏览器的候选字段。
+    const selected = await this.resolveOfficialCandidate(input.selected, input.selected, "manual_selection");
     const regions = await Promise.all(input.regions.map((region) => this.validateRegion(region, selected)));
     if (new Set(regions.map((region) => region.regionCode)).size !== regions.length) {
       throw new SubscriptionConfirmationError("每个游戏在每区只能确认一个商品。");
@@ -126,8 +137,20 @@ export class SubscriptionConfirmationService {
     }
   }
 
-  /** 重新请求官方链接并只采用其返回字段；浏览器提交的价格、封面和发行商均被刻意忽略。 */
-  private async resolveOfficialCandidate(candidate: OfficialProductCandidate): Promise<OfficialProductCandidate> {
+  /**
+   * 重新确认官方候选并只采用服务器取得的字段。日区商品页可能返回 JavaScript 排队或动态外壳，
+   * 因而只对 JP 使用官方搜索 + 官方价格 API；其它地区继续经页面解析器复核，浏览器价格、封面和发行商始终被忽略。
+   */
+  private async resolveOfficialCandidate(
+    anchor: OfficialProductCandidate,
+    candidate: OfficialProductCandidate,
+    matchSource: RegionalProductMatchSource,
+  ): Promise<OfficialProductCandidate> {
+    if (candidate.regionCode === "JP") {
+      const verifiedJapanese = await this.japanese.resolve(anchor, candidate, matchSource);
+      if (!verifiedJapanese) throw new SubscriptionConfirmationError("日区官方商品确认暂时失败，请重新核验其他地区后再试。");
+      return verifiedJapanese;
+    }
     const verified = await this.pages.resolve(candidate.regionCode, candidate.productUrl, new AbortController().signal);
     if (!verified) throw new SubscriptionConfirmationError("商品链接不是该区任天堂官方链接，或公开商品信息无法验证。");
     return verified;
@@ -139,7 +162,7 @@ export class SubscriptionConfirmationService {
    */
   private async validateRegion(region: ConfirmedRegionalProduct, selected: OfficialProductCandidate): Promise<UnidentifiedValidatedRegion> {
     if (!isMatchSource(region.matchSource)) throw new SubscriptionConfirmationError("地区商品匹配来源无效。");
-    const verified = await this.resolveOfficialCandidate(region);
+    const verified = await this.resolveOfficialCandidate(selected, region, region.matchSource);
     if (!hasConfirmedRegionIdentity(selected, verified, region.matchSource)) throw new SubscriptionConfirmationError("地区商品与默认区商品身份不一致。");
     const officialPrice = await this.officialPriceIds.resolve(verified);
     return {
@@ -175,14 +198,9 @@ function isMatchSource(value: unknown): value is RegionalProductMatchSource {
   return value === "automatic" || value === "manual_selection" || value === "manual_link";
 }
 
-/** 同一逻辑游戏的确认比较忽略大小写和多余空白；发行商仅在双方都有时作为同名商品的附加防线。 */
-function hasSameLogicalIdentity(left: OfficialProductCandidate, right: OfficialProductCandidate): boolean {
-  if (normalize(left.canonicalTitle) !== normalize(right.canonicalTitle) || left.productType !== right.productType) return false;
-  return left.publisher === null || right.publisher === null || normalize(left.publisher) === normalize(right.publisher);
-}
-
 /**
- * 按来源决定最终确认的身份强度。`automatic` 没有管理员逐项选择，必须保持标题、类型和发行商的严格比较；
+ * 按来源决定最终确认的身份强度。`automatic` 没有管理员逐项选择，必须保持严格身份，
+ * 或使用发现与日区复核都已验证的高置信度本地化身份；后者不依据翻译或模糊语义。
  * `manual_selection`/`manual_link` 则允许地区语言和发行商写法不同，但在 Worker 已重验本区官方 URL 的前提下，
  * 仍必须是与默认区相同的受控商品类型。这样不会把人工确认误扩展为任意链接或本体/DLC/升级包之间的混配。
  */
@@ -192,7 +210,7 @@ function hasConfirmedRegionIdentity(
   matchSource: RegionalProductMatchSource,
 ): boolean {
   return matchSource === "automatic"
-    ? hasSameLogicalIdentity(anchor, verified)
+    ? hasSameOfficialIdentity(anchor, verified) || hasHighConfidenceLocalizedIdentity(anchor, verified)
     : anchor.productType === verified.productType;
 }
 
