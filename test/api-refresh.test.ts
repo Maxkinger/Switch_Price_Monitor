@@ -14,7 +14,7 @@ interface ImmediateRefreshRunnerStub {
 
 describe("manual refresh HTTP route", () => {
   beforeEach(async () => {
-    // 刷新队列与认证单例都跨请求持久化；清理它们可证明本轮的 429 只来自用例内的首次请求。
+    // 刷新时间与认证单例都跨请求持久化；清理它们可证明两次同步执行完全由本用例的认证请求触发。
     await env.DB.exec("DELETE FROM manual_refresh_requests; DELETE FROM sessions; DELETE FROM login_attempts; DELETE FROM admin_credentials; DELETE FROM settings;");
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-16T01:00:00.000Z"));
@@ -25,8 +25,8 @@ describe("manual refresh HTTP route", () => {
     vi.useRealTimers();
   });
 
-  it("runs one administrator refresh immediately and rejects another request during the fifteen-minute cooldown", async () => {
-    // 冷却必须在 Worker 服务端持久化，而非仅靠前端禁用按钮；首次请求获得名额后应在响应前恰好执行一次统一采集。
+  it("runs every authenticated administrator refresh immediately while cooldown is temporarily disabled", async () => {
+    // 临时验证阶段不依赖前端按钮状态或 429 限流；每个已认证请求都必须在响应前同步执行一次统一采集。
     const cookie = await initializeAndLogin();
     const runner: ImmediateRefreshRunnerStub = { run: vi.fn().mockResolvedValue({ attempted: 3, collected: 2, stale: 1 }) };
     const first = await call(cookie, runner);
@@ -44,17 +44,19 @@ describe("manual refresh HTTP route", () => {
     vi.setSystemTime(new Date("2026-07-16T01:10:00.000Z"));
     const repeated = await call(cookie, runner);
 
-    expect(repeated.status).toBe(429);
+    expect(repeated.status).toBe(200);
     await expect(repeated.json()).resolves.toEqual({
-      code: "REFRESH_COOLDOWN",
-      error: "请在冷却结束后再次刷新。",
-      nextAllowedAt: "2026-07-16T01:15:00.000Z",
+      status: "completed",
+      executedAt: "2026-07-16T01:10:00.000Z",
+      attempted: 3,
+      collected: 2,
+      stale: 1,
     });
-    expect(runner.run).toHaveBeenCalledTimes(1);
+    expect(runner.run).toHaveBeenNthCalledWith(2, "2026-07-16T01:10:00.000Z");
   });
 
   it("returns a safe error when the immediate collection runner fails", async () => {
-    // 来源或汇率异常不得把内部 URL、SQL 或堆栈回传到已登录浏览器；冷却名额仍已消耗，防止失败时高频重试压垮官方商店。
+    // 来源或汇率异常不得把内部 URL、SQL 或堆栈回传到已登录浏览器；临时无冷却不改变认证和安全错误边界。
     const cookie = await initializeAndLogin();
     const runner: ImmediateRefreshRunnerStub = { run: vi.fn().mockRejectedValue(new Error("private upstream failure")) };
 
@@ -79,7 +81,7 @@ async function initializeAndLogin(): Promise<string> {
 }
 
 async function call(cookie: string, runner: ImmediateRefreshRunnerStub): Promise<Response> {
-  // 直接注入无网络采集替身，验证路由在认证、原子冷却通过后等待采集完成；静态资源层不应参与此 API。
+  // 直接注入无网络采集替身，验证路由在认证后每次等待同步采集完成；静态资源层不应参与此 API。
   const response = await handleManualRefreshRoute(
     new Request("https://example.test/api/refresh", { method: "POST", headers: { cookie } }),
     env.DB,

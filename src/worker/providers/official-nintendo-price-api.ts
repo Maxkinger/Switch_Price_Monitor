@@ -70,8 +70,14 @@ function parseNintendoPrice(payload: unknown, product: RegionalProduct, profile:
   if (!isRecord(currentPrice)) return null;
   const currency = currentPrice.currency;
   const rawValue = currentPrice.raw_value;
-  const amountMinor = typeof rawValue === "string" && /^\d+$/.test(rawValue) ? Number(rawValue) : Number.NaN;
-  // API 的 raw_value 已按货币最小单位给出；先确认外部币种字段为字符串，再接受本区受控币种与非负安全整数，避免对象、浮点、异常字符串或溢出金额进入不可变历史。
+  const rawAmount = typeof rawValue === "string" && /^\d+$/.test(rawValue) ? Number(rawValue) : Number.NaN;
+  /**
+   * 任天堂公开接口的 raw_value 不是统一的最小货币单位：JPY 是整日元，HKD 是整港元。
+   * 快照、汇率和历史最低价则统一使用最小单位，所以只允许已审核币种按明确倍率转换，避免人民币估算少两个数量级。
+   */
+  const minorFactor = profile.currency === "HKD" ? 100 : 1;
+  const amountMinor = rawAmount * minorFactor;
+  // 先确认外部币种字段为字符串，再接受本区受控币种与非负安全整数，避免对象、浮点、异常字符串或转换溢出金额进入不可变历史。
   if (typeof currency !== "string" || currency !== profile.currency || !Number.isSafeInteger(amountMinor) || amountMinor < 0) return null;
 
   return {

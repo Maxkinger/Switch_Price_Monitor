@@ -75,7 +75,7 @@ describe("Nintendo official price API provider", () => {
       return Response.json(hongKongPriceResponse());
     });
 
-    // 任天堂公开接口同时返回原价和促销价时，实际可购买的折后价才是应写入当前价格历史的金额。
+    // 香港接口的 raw_value 是整港元；系统快照统一用最小货币单位，因此 HK$52 必须转换为 5,200 分后再写入历史。
     await expect(provider.fetch(hongKongProduct, new AbortController().signal)).resolves.toMatchObject({
       source: "official",
       amountMinor: 5200,
@@ -132,8 +132,9 @@ function hongKongPriceResponse(overrides: {
     prices: [{
       title_id: overrides.titleId ?? 70050000065163,
       sales_status: overrides.salesStatus ?? "onsale",
-      regular_price: { amount: "HKD 75", currency: overrides.currency ?? "HKD", raw_value: "7500" },
-      discount_price: { amount: "HKD 52", currency: overrides.currency ?? "HKD", raw_value: overrides.rawValue ?? "5200" },
+      // 这是任天堂香港接口的真实数值口径：raw_value 是整港元，不是分；测试必须防止未来误把 52 写成 52 分。
+      regular_price: { amount: "HKD 75", currency: overrides.currency ?? "HKD", raw_value: "75" },
+      discount_price: { amount: "HKD 52", currency: overrides.currency ?? "HKD", raw_value: overrides.rawValue ?? "52" },
     }],
   };
 }

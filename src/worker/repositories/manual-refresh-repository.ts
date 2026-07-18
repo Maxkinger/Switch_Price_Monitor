@@ -1,12 +1,4 @@
-/** 手动刷新请求的最小行模型；不记录浏览器、IP 或会话标识，避免为冷却功能增加不必要的个人数据。 */
-interface ManualRefreshRequestRow {
-  requestedAt: string;
-}
-
-/** 手动刷新冷却由产品固定为十五分钟；服务器以毫秒计算，再将结果返回给前端展示倒计时。 */
-export const manualRefreshCooldownMs = 15 * 60 * 1000;
-
-/** 已接受或仍处于冷却中的结果都包含下一次允许时间，客户端无需自行猜测服务器时钟。 */
+/** 临时无冷却阶段每次请求都会被接受；nextAllowedAt 等于本次时间，避免客户端显示不存在的倒计时。 */
 export interface ManualRefreshRequestResult {
   accepted: boolean;
   requestedAt: string;
@@ -14,43 +6,26 @@ export interface ManualRefreshRequestResult {
 }
 
 /**
- * 手动刷新冷却的 D1 边界。表只保留一条最近执行时间，服务在获得名额后立即采集，
- * 因而不能再保存 queued/running 任务状态，以免管理员误以为点击仍需等待 Cron。
+ * 临时无冷却手动刷新的 D1 边界。表只保留一条最近执行时间，服务每次请求后立即采集，
+ * 因而不能保存 queued/running 任务状态，以免管理员误以为点击仍需等待 Cron 或积累队列。
  */
 export class ManualRefreshRepository {
   public constructor(private readonly database: D1Database) {}
 
   /**
-   * 通过带条件的 UPSERT 原子地申请冷却名额。不能先 SELECT 再 UPDATE，
-   * 否则两个并发标签页都可能读到旧时间并绕过限流，造成外部来源请求突增。
+   * 临时验证期间无条件原子写入最近刷新时间。并发请求都可以进入采集是产品明确授权的后果；
+   * 仍使用单行 UPSERT 而非追加记录，避免为刷新频率收集不必要的浏览行为数据。恢复 15 分钟限流时必须另行确认并恢复条件 UPSERT。
    */
   public async request(now: string): Promise<ManualRefreshRequestResult> {
-    const nowMillis = Date.parse(now);
-    const cutoff = new Date(nowMillis - manualRefreshCooldownMs).toISOString();
-    const result = await this.database
+    await this.database
       .prepare(
         `INSERT INTO manual_refresh_requests (id, requested_at)
          VALUES (1, ?)
-         ON CONFLICT(id) DO UPDATE SET requested_at = excluded.requested_at
-         WHERE manual_refresh_requests.requested_at <= ?`,
+         ON CONFLICT(id) DO UPDATE SET requested_at = excluded.requested_at`,
       )
-      .bind(now, cutoff)
+      .bind(now)
       .run();
-
-    if (result.meta.changes === 1) {
-      return { accepted: true, requestedAt: now, nextAllowedAt: new Date(nowMillis + manualRefreshCooldownMs).toISOString() };
-    }
-
-    // 未写入说明已有请求仍在冷却；读取数据库的真实时间，避免客户端时钟与 Worker 时钟不同导致倒计时错误。
-    const existing = await this.database
-      .prepare("SELECT requested_at AS requestedAt FROM manual_refresh_requests WHERE id = 1")
-      .first<ManualRefreshRequestRow>();
-    if (!existing) throw new Error("手动刷新冷却状态异常。");
-    return {
-      accepted: false,
-      requestedAt: existing.requestedAt,
-      nextAllowedAt: new Date(Date.parse(existing.requestedAt) + manualRefreshCooldownMs).toISOString(),
-    };
+    return { accepted: true, requestedAt: now, nextAllowedAt: now };
   }
 
 }

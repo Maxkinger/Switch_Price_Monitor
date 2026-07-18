@@ -25,15 +25,17 @@
 | [跨语言地区商品高置信度识别设计规格](superpowers/specs/2026-07-18-localized-regional-product-identity-design.md) | 以官方标题标记、版本、发行商、类型与唯一性安全识别本地化商品 | 已部署并完成生产只读验收 |
 | [日区订阅确认官方 API 复核设计规格](superpowers/specs/2026-07-18-japan-confirmation-api-design.md) | 日区最终确认改用官方搜索 API 与价格 API，规避动态商品页解析失败 | 已部署并完成生产只读验收 |
 | [日区订阅确认官方 API 复核实施计划](superpowers/plans/2026-07-18-japan-confirmation-api.md) | 日区双官方接口复核、最终跨语言确认与受控验收步骤 | 已完成，待提交 |
-| [临时发布版本号设计规格](superpowers/specs/2026-07-18-temporary-release-version-design.md) | 页面版本标识、补丁号自动递增与未来发布系统替换边界 | 已部署 V 0.0.2，待提交推送 |
-| [临时发布版本号实施计划](superpowers/plans/2026-07-18-temporary-release-version.md) | 构建时版本注入、受控补丁递增发布与质量门禁 | 已部署 V 0.0.2，待提交推送 |
-| [香港区任天堂官方价格 API 设计规格](superpowers/specs/2026-07-18-hong-kong-official-price-api-design.md) | 日区回归、香港 `titles/aocs` 官方价格 ID、HKD 公开 API 与严格响应校验 | 已实现，待生产受控验收 |
-| [香港区任天堂官方价格 API 实施计划](superpowers/plans/2026-07-18-hong-kong-official-price-api.md) | JP/HK API 适配、HK URL 验证、注册顺序与质量门禁 | 已完成，待提交与生产受控验收 |
+| [临时发布版本号设计规格](superpowers/specs/2026-07-18-temporary-release-version-design.md) | 页面版本标识、补丁号自动递增与未来发布系统替换边界 | 已部署 V 0.0.5，待提交推送 |
+| [临时发布版本号实施计划](superpowers/plans/2026-07-18-temporary-release-version.md) | 构建时版本注入、受控补丁递增发布与质量门禁 | 已部署 V 0.0.5，待提交推送 |
+| [香港区任天堂官方价格 API 设计规格](superpowers/specs/2026-07-18-hong-kong-official-price-api-design.md) | 日区回归、香港 `titles/aocs` 官方价格 ID、HKD 公开 API 与严格响应校验 | 已部署并完成生产验收 |
+| [香港区任天堂官方价格 API 实施计划](superpowers/plans/2026-07-18-hong-kong-official-price-api.md) | JP/HK API 适配、HK URL 验证、注册顺序与质量门禁 | 已完成，待提交 |
 | [多地区任天堂官方搜索与自动监控实施计划](superpowers/plans/2026-07-18-multi-region-official-search.md) | 五区搜索适配器、自动/人工确认边界、前端三态与受控生产验收 | 已完成，待提交验收文档 |
 | [认证入口实施计划](superpowers/plans/2026-07-17-authentication-entry.md) | 首次设置、恢复码确认自动登录、登录、密码恢复、认证失效回退与暖色响应式表单 | 已完成 |
 | [公开偏好设置页设计规格](superpowers/specs/2026-07-17-public-settings-page-design.md) | 已登录管理员的公开偏好边界、三组表单、一次保存与秘密配置延期原则 | 已实施 |
 | [公开偏好设置页实施计划](superpowers/plans/2026-07-17-public-settings-page.md) | 同源设置客户端、`/settings` 路由、响应式页面、文档追踪与质量门禁 | 已完成 |
 | [立即手动刷新设计规格](superpowers/specs/2026-07-17-immediate-manual-refresh-design.md) | 手动采集立即执行、15 分钟冷却与六小时 Cron 独立运行边界 | 已实现，生产美区样本验收已通过 |
+| [临时取消手动刷新冷却设计规格](superpowers/specs/2026-07-18-temporary-manual-refresh-no-cooldown-design.md) | 取消手动刷新冷却、保留最近刷新时间与六小时 Cron 隔离 | 已部署并完成生产香港区验证 |
+| [临时取消手动刷新冷却实施计划](superpowers/plans/2026-07-18-temporary-manual-refresh-no-cooldown.md) | 无条件最近时间写入、连续刷新路由回归与质量门禁 | 已完成，待提交 |
 | [仪表盘与订阅详情设计规格](superpowers/specs/2026-07-17-dashboard-subscription-detail-design.md) | 概览优先仪表盘、单页订阅详情、趋势与安全编辑边界 | 已确认，待实施 |
 | [订阅硬删除与全局请求加载设计规格](superpowers/specs/2026-07-18-subscription-hard-delete-global-loading-design.md) | 仪表盘多选永久删除、详情删除返回及全局网络加载动画 | 已部署；公开可用性与两条生产删除路径均已验证 |
 | [订阅硬删除与全局请求加载实施计划](superpowers/plans/2026-07-18-subscription-hard-delete-global-loading.md) | 请求计数器、批量原子删除、仪表盘/详情入口与最终质量验收 | 已完成，已推送 `cb11066` |
