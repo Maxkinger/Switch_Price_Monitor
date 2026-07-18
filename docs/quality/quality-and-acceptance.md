@@ -106,6 +106,14 @@
 - 只读“价格来源预览”确认 JP 与 HK 显示“任天堂官方价格”；US、MX、BR 对该组合商品仍明确显示官方价格 ID 暂不可用，不以其他地区 ID 或推测金额冒充官方价格。
 - 验收没有点击最终“确认订阅”、刷新或删除，未创建或修改订阅、地区映射、价格快照、目标价或通知，也未读取、输出或记录 Cookie、密码、恢复码或 Telegram 凭据。V 0.0.12 因此通过港区美食家版自动发现与官方价格链只读验收。
 
+### 3.13 日区升级包 Browser Run 隔离可行性验证（2026-07-18）
+
+- 探针在 `/tmp/switch-price-monitor-jp-browser-probe` 独立创建，临时 Worker 名为 `switch-price-monitor-jp-upgrade-probe`，只声明 Browser Binding 并通过 `wrangler dev --remote` 监听本机 `127.0.0.1:8791`；没有 D1、Cron、Static Assets、Secrets 或生产路由。执行结束后 Cloudflare API 返回该 Worker 不存在，确认未形成持久部署。
+- 临时纯函数与 HTTP 适配器先经历预期 RED，再通过 2 个测试文件、13 项测试和 TypeScript 严格检查。为避免 Node 单元测试加载 `cloudflare:workers` 协议，纯 HTTP 适配器与 Cloudflare 专用装配入口保持文件隔离；该调整只存在于临时目录，未并入生产代码。
+- 三次独立探测分别开始于 UTC `2026-07-18T15:45:23Z`、`15:46:05Z`、`15:46:42Z`，结果依次为 `{ status: "browser-launch-failed", elapsedMs: 4431 }`、`{ status: "browser-launch-failed", elapsedMs: 5532 }`、`{ status: "browser-launch-failed", elapsedMs: 4991 }`。相邻实例至少间隔 20 秒，没有追加第四次样本或覆盖失败结果。
+- 机械验收结果为 `passed: false`。失败发生在 Browser Run 启动阶段，三次都没有进入任天堂页面导航，因此本记录不能证明任天堂日区详情页可达或不可达；它只证明当前 Wrangler 远程预览与账号环境没有达到已批准的三次成功门槛。
+- 本轮不准进入 Browser Run 生产集成，日区搜索不到独立升级包时继续使用管理员手工粘贴任天堂官方链接。过程没有读取或保存页面 HTML、Cookie、localStorage、IndexedDB、排队令牌、截图、网络归档、异常堆栈或任何凭据，也没有修改生产 Worker、D1、Cron、订阅、价格历史或版本号。
+
 ## 4. 验收原则
 
 - 不把“请求成功”当作“价格正确”：必须通过商品身份校验。
