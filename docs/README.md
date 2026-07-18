@@ -21,8 +21,8 @@
 | [官方订阅发现与批量确认实施计划](superpowers/plans/2026-07-17-official-subscription-discovery.md) | 默认区官方检索、官方链接确认、跨区处理、原子批量订阅与候选卡界面的实施步骤 | 已完成 |
 | [设置驱动的地区补全设计规格](superpowers/specs/2026-07-17-settings-driven-region-completion-design.md) | 设置决定跨区范围、自动安全匹配、显式跳过与既有订阅地区补全 | 已实施；生产环境已验证入口与只读解析，最终写入由管理员逐区确认 |
 | [设置驱动的地区补全实施计划](superpowers/plans/2026-07-17-settings-driven-region-completion.md) | 服务端地区范围、新建覆盖校验、已有订阅补全、页面和生产验收步骤 | 已完成，验收记录见质量与验收策略 |
-| [多地区任天堂官方搜索与自动监控设计规格](superpowers/specs/2026-07-18-multi-region-official-search-design.md) | 五区官方搜索、自动加入监控、候选选择与官方链接兜底 | 已确认，待实施 |
-| [多地区任天堂官方搜索与自动监控实施计划](superpowers/plans/2026-07-18-multi-region-official-search.md) | 五区搜索适配器、自动/人工确认边界、前端三态与受控生产验收 | 已编写，待确认提交 |
+| [多地区任天堂官方搜索与自动监控设计规格](superpowers/specs/2026-07-18-multi-region-official-search-design.md) | 五区官方搜索、自动加入监控、候选选择与官方链接兜底 | 实施中；US/MX/BR 官方索引已实现，待 HK/JP |
+| [多地区任天堂官方搜索与自动监控实施计划](superpowers/plans/2026-07-18-multi-region-official-search.md) | 五区搜索适配器、自动/人工确认边界、前端三态与受控生产验收 | 已批准，Task 1 待提交 |
 | [认证入口实施计划](superpowers/plans/2026-07-17-authentication-entry.md) | 首次设置、恢复码确认自动登录、登录、密码恢复、认证失效回退与暖色响应式表单 | 已完成 |
 | [公开偏好设置页设计规格](superpowers/specs/2026-07-17-public-settings-page-design.md) | 已登录管理员的公开偏好边界、三组表单、一次保存与秘密配置延期原则 | 已实施 |
 | [公开偏好设置页实施计划](superpowers/plans/2026-07-17-public-settings-page.md) | 同源设置客户端、`/settings` 路由、响应式页面、文档追踪与质量门禁 | 已完成 |

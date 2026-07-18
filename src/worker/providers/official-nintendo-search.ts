@@ -1,32 +1,48 @@
-import type { OfficialProductCandidate, OfficialProductSearch, OfficialSearchResult } from "../../shared/domain";
+import type { OfficialProductCandidate, OfficialProductSearch, OfficialSearchResult, RegionCode } from "../../shared/domain";
 import { ProviderNetworkError, type ProductType } from "./types";
 
-/** 任天堂美区官网公开搜索页当前使用的只读搜索端点；该端点只承载官网公开商品索引，不是价格回退来源。 */
-const officialUsSearchEndpoint = "https://U3B6GR4UA3-dsn.algolia.net/1/indexes/*/queries";
+/** 任天堂美、墨、巴官网公开搜索页共用的只读搜索端点；它只承载官网商品索引，绝不是价格回退来源。 */
+const officialAlgoliaSearchEndpoint = "https://U3B6GR4UA3-dsn.algolia.net/1/indexes/*/queries";
 
 /**
  * 此值来自任天堂美区公开搜索页面的浏览器配置，属于公开检索配置而非本系统或用户的秘密。
  * 它只允许在 Worker 内请求官网同一公开索引，绝不返回浏览器、写入 D1、记录日志或用于任何第三方价格站。
  */
-const officialUsPublicSearchKey = "a29c6927638bfd8cee23993e51e721c9";
+const officialAlgoliaPublicSearchKey = "a29c6927638bfd8cee23993e51e721c9";
 
-/** 美区游戏候选索引按官网约定附加语言和国家后缀，禁止借此索引搜索其他地区。 */
-const officialUsGameIndex = "store_game_en_us";
-
-/** 官方候选只使用本区主机上的相对或绝对商品地址，阻止公开搜索返回的意外外链进入管理员确认流程。 */
-const officialUsStoreOrigin = "https://www.nintendo.com";
-
-/** 与现有订阅确认路由保持一致的受控商品类别；未知类别不能被当作游戏、本体或升级包保存。 */
-const supportedProductTypes: readonly ProductType[] = ["game", "upgrade-pack", "dlc", "season-pass", "bundle", "other"];
+/** 同一公开搜索端点下，只有这三个任天堂官网游戏索引已逐项验证；未知地区不能猜测索引或复用相邻地区结果。 */
+type OfficialAlgoliaRegionCode = Extract<RegionCode, "US" | "MX" | "BR">;
 
 /**
- * 任天堂美区官网公开搜索适配器。它只处理已经验证字段结构的美区游戏索引；其他地区一律返回官方链接确认提示，
- * 避免把美区索引或任何第三方数据错误用于香港、日区、墨西哥区和巴西区的商品匹配。
+ * 每个地区档案把公开索引、币种与官方 URL 前缀绑定在 Worker 源码中。
+ * 这是地区隔离边界：浏览器只能提交搜索词，不能改变索引、币种或把一个地区的商品地址伪装成另一区商品。
+ */
+interface OfficialAlgoliaSearchProfile {
+  readonly regionCode: OfficialAlgoliaRegionCode;
+  readonly gameIndex: string;
+  readonly currency: string;
+  readonly officialPathPrefix: string;
+}
+
+/** 美区、墨西哥区、巴西区均使用任天堂各自公开语言/国家索引；路径前缀同时约束搜索命中的官方商品地址。 */
+const officialAlgoliaProfiles: readonly OfficialAlgoliaSearchProfile[] = [
+  { regionCode: "US", gameIndex: "store_game_en_us", currency: "USD", officialPathPrefix: "/us/" },
+  { regionCode: "MX", gameIndex: "store_game_es_mx", currency: "MXN", officialPathPrefix: "/es-mx/" },
+  { regionCode: "BR", gameIndex: "store_game_pt_br", currency: "BRL", officialPathPrefix: "/pt-br/" },
+];
+
+/** 所有 Algolia 命中都只允许补齐到任天堂官网主机，禁止外部索引字段诱导 Worker 访问第三方地址。 */
+const officialNintendoStoreOrigin = "https://www.nintendo.com";
+
+/**
+ * 任天堂美、墨、巴官网公开搜索适配器。它只处理档案中已验证字段结构的地区游戏索引；其他地区一律返回官方链接确认提示，
+ * 避免猜测香港/日区接口，或把一个地区的官网结果错误用于另一个地区的商品匹配。
  */
 export function createOfficialNintendoSearch(fetchOfficialSearch: typeof fetch = fetch, timeoutMs = 12_000): OfficialProductSearch {
   return {
     async search(regionCode, query, signal) {
-      if (regionCode !== "US") return unavailableSearch();
+      const profile = readOfficialAlgoliaProfile(regionCode);
+      if (!profile) return unavailableSearch();
 
       let response: Response;
       // 公开 Algolia 索引偶发保持连接但不返回；独立控制器把超时与调用方取消合并，避免管理员页面永久停在“搜索中”。
@@ -36,16 +52,16 @@ export function createOfficialNintendoSearch(fetchOfficialSearch: typeof fetch =
       const forwardAbort = () => timeoutController.abort();
       signal.addEventListener("abort", forwardAbort, { once: true });
       try {
-        // 搜索请求只发送用户输入的名称和官网固定索引；不附带 Cookie、Nintendo Account、购买记录或浏览器会话。
-        response = await fetchOfficialSearch(officialUsSearchEndpoint, {
+        // 搜索请求只发送用户输入的名称和 Worker 固定档案索引；不附带 Cookie、Nintendo Account、购买记录或浏览器会话。
+        response = await fetchOfficialSearch(officialAlgoliaSearchEndpoint, {
           method: "POST",
           headers: {
             "content-type": "application/json",
             "x-algolia-application-id": "U3B6GR4UA3",
-            "x-algolia-api-key": officialUsPublicSearchKey,
+            "x-algolia-api-key": officialAlgoliaPublicSearchKey,
           },
           body: JSON.stringify({
-            requests: [{ indexName: officialUsGameIndex, query, params: "hitsPerPage=20" }],
+            requests: [{ indexName: profile.gameIndex, query, params: "hitsPerPage=20" }],
           }),
           signal: timeoutController.signal,
         });
@@ -62,9 +78,14 @@ export function createOfficialNintendoSearch(fetchOfficialSearch: typeof fetch =
 
       // 非成功状态无法证明候选字段可信，必须退回人工官方链接而不是把 HTTP 错误页解析成“无结果”。
       if (!response.ok) return unavailableSearch();
-      return { status: "available", candidates: parseUsOfficialSearch(await response.json()) };
+      return { status: "available", candidates: parseOfficialAlgoliaSearch(await response.json(), profile) };
     },
   };
+}
+
+/** 从已审核的地区档案中查找搜索配置；未列入档案的地区必须安全降级，不能由调用方推导请求参数。 */
+function readOfficialAlgoliaProfile(regionCode: RegionCode): OfficialAlgoliaSearchProfile | null {
+  return officialAlgoliaProfiles.find((profile) => profile.regionCode === regionCode) ?? null;
 }
 
 /** 将无搜索适配器、HTTP 失败和页面变更统一为可操作的安全状态，不泄露外部响应或内部请求细节。 */
@@ -76,32 +97,32 @@ function unavailableSearch(): OfficialSearchResult {
  * 将任天堂官网公开搜索响应收窄为商品候选。响应是外部数据，即使来自官网也不能信任其字段类型、价格或链接；
  * 每条命中独立拒绝，保留其余可验证候选，避免一条异常记录阻断管理员查看正常搜索结果。
  */
-function parseUsOfficialSearch(value: unknown): OfficialProductCandidate[] {
+function parseOfficialAlgoliaSearch(value: unknown, profile: OfficialAlgoliaSearchProfile): OfficialProductCandidate[] {
   if (!isRecord(value) || !Array.isArray(value.results)) return [];
   return value.results.flatMap((result) => isRecord(result) && Array.isArray(result.hits)
     ? result.hits.flatMap((hit) => {
-      const candidate = toUsCandidate(hit);
+      const candidate = toOfficialAlgoliaCandidate(hit, profile);
       return candidate ? [candidate] : [];
     })
     : []);
 }
 
 /** 从单条搜索命中读取所有受控字段；只要身份、币种、价格精度或官方主机有一个不成立就拒绝该候选。 */
-function toUsCandidate(value: unknown): OfficialProductCandidate | null {
+function toOfficialAlgoliaCandidate(value: unknown, profile: OfficialAlgoliaSearchProfile): OfficialProductCandidate | null {
   if (!isRecord(value)) return null;
   // 任天堂 2026 年公开索引以 url/title/eshopDetails 表示商品；不可回退读取旧字段，避免结构变化时误把不完整命中写入确认流程。
-  const productUrl = readOfficialUsProductUrl(value.url);
+  const productUrl = readOfficialAlgoliaProductUrl(value.url, profile);
   const canonicalTitle = readNonEmptyString(value.title);
-  const productType = readUsProductType(value);
-  const price = readUsPrice(value.eshopDetails);
+  const productType = readOfficialAlgoliaProductType(value);
+  const price = readOfficialAlgoliaPrice(value.eshopDetails, profile);
   if (!productUrl || !canonicalTitle || !productType || !price) return null;
   return {
-    regionCode: "US",
+    regionCode: profile.regionCode,
     productUrl,
     canonicalTitle,
     publisher: readNonEmptyString(value.softwarePublisher),
     productType,
-    currency: "USD",
+    currency: profile.currency,
     coverUrl: readOfficialCoverUrl(value.productImageSquare),
     currentPriceMinor: price.currentPriceMinor,
     regularPriceMinor: price.regularPriceMinor,
@@ -109,14 +130,14 @@ function toUsCandidate(value: unknown): OfficialProductCandidate | null {
 }
 
 /**
- * 只接受 Nintendo 美区商店链接。相对链接会补齐固定官网主机，绝对链接则必须精确匹配主机与 `/us/` 前缀，
+ * 只接受地区档案对应的 Nintendo 商店链接。相对链接会补齐固定官网主机，绝对链接则必须精确匹配主机与该区路径前缀，
  * 防止搜索索引的错误字段把外部页面带入下一阶段的 Worker 解析请求。
  */
-function readOfficialUsProductUrl(value: unknown): string | null {
+function readOfficialAlgoliaProductUrl(value: unknown, profile: OfficialAlgoliaSearchProfile): string | null {
   if (typeof value !== "string" || !value.trim()) return null;
   try {
-    const url = new URL(value, officialUsStoreOrigin);
-    if (url.protocol !== "https:" || url.origin !== officialUsStoreOrigin || !url.pathname.startsWith("/us/")) return null;
+    const url = new URL(value, officialNintendoStoreOrigin);
+    if (url.protocol !== "https:" || url.origin !== officialNintendoStoreOrigin || !url.pathname.startsWith(profile.officialPathPrefix)) return null;
     return url.toString();
   } catch {
     return null;
@@ -135,14 +156,14 @@ function readOfficialCoverUrl(value: unknown): string | null {
 }
 
 /**
- * 美区公开索引把价格放在 eshopDetails 且以美元主单位（例如 9.99）返回；系统内部统一使用分，
- * 因此必须先验证精确到美分的安全数值。常规价是候选身份核对所需的基线，缺失时不伪造当前价。
+ * 这三个公开索引都把价格放在 eshopDetails 且以本区货币主单位返回；系统内部统一以最小两位小数单位保存，
+ * 因此必须验证金额精度和档案币种。常规价是候选页原价展示的基线，缺失时不伪造当前价。
  */
-function readUsPrice(value: unknown): { currentPriceMinor: number; regularPriceMinor: number | null } | null {
-  if (!isRecord(value) || value.currency !== "USD") return null;
-  const regularPriceMinor = readUsdMajorAmount(value.regularPrice);
+function readOfficialAlgoliaPrice(value: unknown, profile: OfficialAlgoliaSearchProfile): { currentPriceMinor: number; regularPriceMinor: number | null } | null {
+  if (!isRecord(value) || value.currency !== profile.currency) return null;
+  const regularPriceMinor = readTwoDecimalMajorAmount(value.regularPrice);
   if (regularPriceMinor === null) return null;
-  const discountPriceMinor = value.discountPrice === null ? null : readUsdMajorAmount(value.discountPrice);
+  const discountPriceMinor = value.discountPrice === null ? null : readTwoDecimalMajorAmount(value.discountPrice);
   if (discountPriceMinor === null && value.discountPrice !== null) return null;
   const currentPriceMinor = discountPriceMinor ?? regularPriceMinor;
   // 任天堂公开折扣价不应高于常规价；相反值表示响应异常，不能进入后续历史最低价或折扣展示。
@@ -154,7 +175,7 @@ function readUsPrice(value: unknown): { currentPriceMinor: number; regularPriceM
  * 官网索引使用商城枚举而不是持久化商品类别。升级标记优先于 TITLE，随后把受控商城类型映射到领域枚举；
  * 未知值一律拒绝，防止把临时营销分类、DLC 或本体混淆后保存为错误订阅。
  */
-function readUsProductType(value: Record<string, unknown>): ProductType | null {
+function readOfficialAlgoliaProductType(value: Record<string, unknown>): ProductType | null {
   if (value.isUpgrade === true) return "upgrade-pack";
   const details = value.eshopDetails;
   if (!isRecord(details) || typeof details.productType !== "string") return null;
@@ -171,8 +192,8 @@ function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-/** 将任天堂美元主单位安全转换为分；超过两位小数或超出安全整数范围的金额不可信，不能参与价格比较。 */
-function readUsdMajorAmount(value: unknown): number | null {
+/** 将任天堂各区索引的两位小数主单位安全转换为内部最小单位；超过精度或安全整数范围的金额不能参与价格比较。 */
+function readTwoDecimalMajorAmount(value: unknown): number | null {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
   const minor = Math.round(value * 100);
   return Number.isSafeInteger(minor) && Math.abs(value - minor / 100) < 0.000_001 ? minor : null;

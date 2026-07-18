@@ -32,23 +32,23 @@
 - Keeps `OfficialProductSearch.search(regionCode, query, signal)` unchanged.
 - Uses `store_game_en_us`/`USD`、`store_game_es_mx`/`MXN`、`store_game_pt_br`/`BRL` respectively against `https://U3B6GR4UA3-dsn.algolia.net/1/indexes/*/queries`.
 
-- [ ] **Step 1: 写入失败测试**
+- [x] **Step 1: 写入失败测试**
 
 扩展 `test/official-nintendo-search.test.ts` 的固定公开响应夹具。对 MX 和 BR 分别调用 `search("MX", "Overcooked 2", signal)`、`search("BR", "Overcooked 2", signal)`，断言请求体只包含对应的 `indexName`，返回候选的 `regionCode`、货币、URL 路径分别为 `MX`/`MXN`/`/es-mx/` 与 `BR`/`BRL`/`/pt-br/`。再断言货币不符、越区 URL、未知类型和金额精度错误的命中会被丢弃。
 
-- [ ] **Step 2: 运行测试确认失败**
+- [x] **Step 2: 运行测试确认失败**
 
 Run: `npm test -- --run test/official-nintendo-search.test.ts`
 
 Expected: FAIL，因为现有适配器仅接受 `US`，并固定读取美元与 `/us/` URL。
 
-- [ ] **Step 3: 最小适配器实现**
+- [x] **Step 3: 最小适配器实现**
 
 将当前 US 常量替换为不可变地区档案表。共享请求函数只接收已查表得到的档案，绝不读取浏览器提供的索引或货币；共享 JSON 解析函数把 `eshopDetails.currency`、官方相对 URL 前缀和金额小数位同档案逐项校验。保留现有请求超时、调用方取消、非成功 HTTP 和 `ProviderNetworkError` 语义。
 
 代码中的中文注释必须明确：公开 Algolia key 不是秘密，但只可用于任天堂官网固定索引；地区档案防止把美区搜索结果误写成墨西哥或巴西商品；外部价格只用于候选展示，最终价格采集仍走既有官方价格解析器。
 
-- [ ] **Step 4: 运行适配器回归**
+- [x] **Step 4: 运行适配器回归**
 
 Run: `npm test -- --run test/official-nintendo-search.test.ts test/official-product-discovery-service.test.ts && npx tsc --noEmit`
 

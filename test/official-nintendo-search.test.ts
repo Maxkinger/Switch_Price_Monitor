@@ -41,6 +41,96 @@ describe("official Nintendo product search", () => {
     });
   });
 
+  it("uses the dedicated Mexican official index and rejects a currency-mismatched hit", async () => {
+    // 墨西哥区必须查询任天堂西语墨西哥索引，不能重用美区索引；货币与地区不一致的命中即使链接看似正确也不能成为跨区订阅候选。
+    const search = createOfficialNintendoSearch(async (_request, init) => {
+      expect(JSON.parse(String(init?.body))).toEqual({
+        requests: [{ indexName: "store_game_es_mx", query: "Overcooked", params: "hitsPerPage=20" }],
+      });
+      return Response.json({
+        results: [{
+          hits: [
+            {
+              title: "Overcooked! 2 - Gourmet Edition",
+              url: "/es-mx/store/products/overcooked-2-gourmet-edition-switch/",
+              softwarePublisher: "Team17",
+              productImageSquare: "https://assets.nintendo.com/overcooked-mx.jpg",
+              isUpgrade: false,
+              eshopDetails: { productType: "TITLE", regularPrice: 499, discountPrice: 249.5, currency: "MXN" },
+            },
+            {
+              title: "Currency mismatch",
+              url: "/es-mx/store/products/not-mexican-switch/",
+              softwarePublisher: "Team17",
+              isUpgrade: false,
+              eshopDetails: { productType: "TITLE", regularPrice: 99, discountPrice: null, currency: "USD" },
+            },
+          ],
+        }],
+      });
+    });
+
+    await expect(search.search("MX", "Overcooked", new AbortController().signal)).resolves.toEqual({
+      status: "available",
+      candidates: [{
+        regionCode: "MX",
+        productUrl: "https://www.nintendo.com/es-mx/store/products/overcooked-2-gourmet-edition-switch/",
+        canonicalTitle: "Overcooked! 2 - Gourmet Edition",
+        publisher: "Team17",
+        productType: "game",
+        currency: "MXN",
+        coverUrl: "https://assets.nintendo.com/overcooked-mx.jpg",
+        currentPriceMinor: 24950,
+        regularPriceMinor: 49900,
+      }],
+    });
+  });
+
+  it("uses the dedicated Brazilian official index and rejects an out-of-region URL", async () => {
+    // 巴西区的公开索引与墨西哥区不同；解析器还必须核验 URL 前缀，避免索引异常时把另一服或外站地址交给后续官方页面验证。
+    const search = createOfficialNintendoSearch(async (_request, init) => {
+      expect(JSON.parse(String(init?.body))).toEqual({
+        requests: [{ indexName: "store_game_pt_br", query: "Overcooked", params: "hitsPerPage=20" }],
+      });
+      return Response.json({
+        results: [{
+          hits: [
+            {
+              title: "Overcooked! 2 - Gourmet Edition",
+              url: "/pt-br/store/products/overcooked-2-gourmet-edition-switch/",
+              softwarePublisher: "Team17",
+              productImageSquare: "https://assets.nintendo.com/overcooked-br.jpg",
+              isUpgrade: false,
+              eshopDetails: { productType: "TITLE", regularPrice: 124.9, discountPrice: null, currency: "BRL" },
+            },
+            {
+              title: "Wrong regional URL",
+              url: "/us/store/products/not-brazilian-switch/",
+              softwarePublisher: "Team17",
+              isUpgrade: false,
+              eshopDetails: { productType: "TITLE", regularPrice: 124.9, discountPrice: null, currency: "BRL" },
+            },
+          ],
+        }],
+      });
+    });
+
+    await expect(search.search("BR", "Overcooked", new AbortController().signal)).resolves.toEqual({
+      status: "available",
+      candidates: [{
+        regionCode: "BR",
+        productUrl: "https://www.nintendo.com/pt-br/store/products/overcooked-2-gourmet-edition-switch/",
+        canonicalTitle: "Overcooked! 2 - Gourmet Edition",
+        publisher: "Team17",
+        productType: "game",
+        currency: "BRL",
+        coverUrl: "https://assets.nintendo.com/overcooked-br.jpg",
+        currentPriceMinor: 12490,
+        regularPriceMinor: 12490,
+      }],
+    });
+  });
+
   it("does not request a non-admitted regional search adapter and provides the official-link fallback", async () => {
     // 香港区尚无已验证的官方名称检索契约；调用方必须收到可操作的链接确认提示，而不是借用美区索引或混入第三方结果。
     const fetchOfficialSearch = vi.fn<typeof fetch>();
