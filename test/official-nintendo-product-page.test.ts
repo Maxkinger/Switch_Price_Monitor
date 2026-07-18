@@ -101,6 +101,34 @@ describe("official Nintendo product page resolver", () => {
     ]);
   });
 
+  it("extracts Hong Kong relations from the current serverFragment RSC field", async () => {
+    // 2026-07-18 的港区生产页面把已服务端解析的 ApplicationItem 放在 serverFragment，而不是早期夹具使用的 fragment。
+    // 两个字段都来自同一任天堂 RSC 契约；解析器必须绑定 URL 中的根 ID 后再读取关系，不能因为字段改名而静默退回手工链接。
+    const resolver = createOfficialNintendoProductPageResolver(async () => new Response(hongKongRelatedProductsHtml({ rscFieldName: "serverFragment" })));
+
+    await expect(resolver.resolveRelated("HK", "https://ec.nintendo.com/HK/zh/titles/70010000033098", new AbortController().signal)).resolves.toContainEqual({
+      regionCode: "HK",
+      productUrl: "https://ec.nintendo.com/HK/zh/bundles/70070000010913",
+      canonicalTitle: "Overcooked! 2 - Gourmet Edition",
+      productType: "bundle",
+      coverUrl: "https://img-eshop.cdn.nintendo.net/i/gourmet.jpg",
+    });
+  });
+
+  it("preserves a BundleItem published inside the Hong Kong dlcItems relation list", async () => {
+    // Switch 2 本体的真实港区页面会把 Additional Content Bundle 放进 dlcItems.items；其 __typename 仍明确证明它是组合商品。
+    // 解析器应按官方类型生成 bundles URL，而不能将其误标成 DLC，也不能因一个合法混合项让同页所有关系整批失效。
+    const resolver = createOfficialNintendoProductPageResolver(async () => new Response(hongKongRelatedProductsHtml({ includeBundleInDlcItems: true })));
+
+    await expect(resolver.resolveRelated("HK", "https://ec.nintendo.com/HK/zh/titles/70010000033098", new AbortController().signal)).resolves.toContainEqual({
+      regionCode: "HK",
+      productUrl: "https://ec.nintendo.com/HK/zh/bundles/70070000010886",
+      canonicalTitle: "Overcooked! 2 - Additional Content Bundle",
+      productType: "bundle",
+      coverUrl: null,
+    });
+  });
+
   it("does not expand second-hop Hong Kong relations", async () => {
     // 一层 bundle 自身即使携带看似合法的 DLC 数组也不得继续展开；否则一个本体详情可把抓取范围递归扩大到不可控数量。
     const resolver = createOfficialNintendoProductPageResolver(async () => new Response(hongKongRelatedProductsHtml({ includeNestedRelation: true })));
@@ -213,6 +241,10 @@ function hongKongRelatedProductsHtml(input: {
   includeNestedRelation?: boolean;
   malformedRelationId?: boolean;
   relationCount?: number;
+  /** 港区真实页面允许 dlcItems.items 同时包含 BundleItem，用于覆盖官方混合关系列表。 */
+  includeBundleInDlcItems?: boolean;
+  /** 任天堂当前页面使用 serverFragment，保留 fragment 默认值以覆盖两代官方 RSC 字段。 */
+  rscFieldName?: "fragment" | "serverFragment";
 } = {}): string {
   const bundle = {
     __typename: "BundleItem",
@@ -225,6 +257,12 @@ function hongKongRelatedProductsHtml(input: {
   };
   const generatedDlcItems = input.relationCount === undefined
     ? [
+        ...(input.includeBundleInDlcItems ? [{
+          __typename: "BundleItem",
+          nsUid: "70070000010886",
+          formalName: "Overcooked! 2 - Additional Content Bundle",
+          heroBannerUrl: null,
+        }] : []),
         { __typename: "DlcItem", nsUid: "70050000021623", formalName: "Overcooked! 2 - Carnival of Chaos", heroBannerUrl: null },
         { __typename: "DlcItem", nsUid: "70050000065163", formalName: "Overcooked! 2 – Nintendo Switch 2 Edition升級通行證", heroBannerUrl: null },
       ]
@@ -250,7 +288,8 @@ function hongKongRelatedProductsHtml(input: {
       },
     }] : [],
   };
-  return `<script>self.__next_f.push([1,${JSON.stringify(`0:{\"fragment\":${JSON.stringify(fragment)}}`)}])</script>`;
+  const rscFieldName = input.rscFieldName ?? "fragment";
+  return `<script>self.__next_f.push([1,${JSON.stringify(`0:{\"${rscFieldName}\":${JSON.stringify(fragment)}}`)}])</script>`;
 }
 
 /** 构造港区 aocs 详情的 DlcItem 片段；解析时必须用 URL ID 绑定该对象，并从对象自身读取发行商。 */

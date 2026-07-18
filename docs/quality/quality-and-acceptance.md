@@ -91,6 +91,21 @@
 - 在已登录管理员会话中重新搜索 `Overcooked! 2`，选中美区 `Overcooked! 2 – Nintendo Switch 2 Edition` 后点击“核验其他地区”。日区显示“已自动匹配官方商品”及 `Overcooked® 2 - オーバークック２ Nintendo Switch 2 Edition`；MX、BR、HK 同时保持各自官方自动匹配结果。
 - 验收止于只读搜索与跨区核验；未点击“确认订阅”、未执行刷新或删除，因而没有创建或修改订阅、地区映射、价格快照、目标价或通知，也未读取、输出或记录 Cookie、密码、恢复码或 Telegram 凭据。
 
+### 3.11 港区官方关系 V 0.0.11 生产诊断与本地回归（2026-07-18）
+
+- 已部署页面版本 V 0.0.11、Worker 版本 `08f90483-a06d-4ef2-8b51-5cb9bdcf1c76`；生产地址、D1 绑定和每分钟/六小时两条 Cron 均保持不变，公开健康接口返回正常。
+- 在已登录管理员会话搜索 `Overcooked! 2`，选择美区 `Overcooked! 2 - Gourmet Edition` 并执行跨区核验。JP、MX、BR 自动匹配成功，但 HK 回退手工官方链接，因此 V 0.0.11 不能作为港区美食家版验收通过记录。
+- 无 Cookie 只读检查确认，港区本体页面当前用 `serverFragment` 承载 `ApplicationItem`；Switch 2 本体的 `dlcItems.items` 还包含官方 `BundleItem`。旧实现只读 `fragment` 且把该列表全部当作 `DlcItem`，触发“任一根关系不完整则整批回退”的预期安全行为。
+- 本地以测试先行新增两条回归：`serverFragment` 根解析和 `dlcItems.items` 混合 `BundleItem` 均先失败，最小修复后定向商品页测试 12 项全部通过。完整门禁随后通过 Worker 56 个文件、202 项测试，DOM 4 个文件、8 项测试，以及 TypeScript 严格检查、Vite 生产构建和 `git diff --check`。修复仍要求精确 HK URL、URL/NSUID 一致、明确 `DlcItem/BundleItem` 类型、唯一根、发行商、单层关系和每根最多 50 项；未知结构继续回退且零写入。
+- 生产验收止于读取候选状态，没有点击“确认订阅”、刷新或删除，未创建或修改订阅、地区映射、价格快照、目标价或通知，也未读取、输出或记录 Cookie、密码、恢复码或 Telegram 凭据。修复需在提交、重新部署并复现同一只读流程后才能标记港区通过。
+
+### 3.12 港区官方关系 V 0.0.12 生产只读验收（2026-07-18）
+
+- 已部署页面版本 V 0.0.12、Worker 版本 `c7597121-c742-4d1b-8745-b07395b5c6ce`，生产地址保持为 `https://switch-price-monitor.cchccp.workers.dev`；D1 `DB` 绑定、每分钟调度与固定六小时采集 Cron 均未改变，公开健康接口返回正常。
+- 在已登录管理员会话搜索 `Overcooked! 2`，选择美区 `Overcooked! 2 - Gourmet Edition` 并执行跨区核验。JP 自动匹配 `Overcooked® 2 - オーバークック２：真の食通エディション`，MX、BR、HK 均自动匹配 `Overcooked! 2 - Gourmet Edition`；HK 不再回退手工链接。
+- 只读“价格来源预览”确认 JP 与 HK 显示“任天堂官方价格”；US、MX、BR 对该组合商品仍明确显示官方价格 ID 暂不可用，不以其他地区 ID 或推测金额冒充官方价格。
+- 验收没有点击最终“确认订阅”、刷新或删除，未创建或修改订阅、地区映射、价格快照、目标价或通知，也未读取、输出或记录 Cookie、密码、恢复码或 Telegram 凭据。V 0.0.12 因此通过港区美食家版自动发现与官方价格链只读验收。
+
 ## 4. 验收原则
 
 - 不把“请求成功”当作“价格正确”：必须通过商品身份校验。

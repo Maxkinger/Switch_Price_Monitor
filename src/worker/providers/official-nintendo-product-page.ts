@@ -145,7 +145,7 @@ function parseHongKongEshopAddOnPage(html: string, productUrl: string): Official
   const expectedId = readHongKongEshopAddOnId(productUrl);
   if (expectedId === null) return null;
   for (const script of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)) {
-    for (const fragment of readHongKongRscNamedObjects(script[1], "fragment")) {
+    for (const fragment of readHongKongProductFragments(script[1])) {
       if (!isRecord(fragment) || fragment.__typename !== "DlcItem" || readIdentifier(fragment.nsUid) !== expectedId) continue;
       const title = readNonEmptyString(fragment.formalName);
       const publisher = readPublisher(fragment.publisher);
@@ -175,7 +175,7 @@ function parseHongKongRelatedProducts(html: string, productUrl: string): Officia
   if (expectedRootId === null) return null;
   const roots: JsonRecord[] = [];
   for (const script of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)) {
-    for (const fragment of readHongKongRscNamedObjects(script[1], "fragment")) {
+    for (const fragment of readHongKongProductFragments(script[1])) {
       if (isRecord(fragment) && fragment.__typename === "ApplicationItem" && readIdentifier(fragment.nsUid) === expectedRootId) roots.push(fragment);
     }
   }
@@ -199,7 +199,10 @@ function readHongKongDirectRelations(root: JsonRecord): OfficialNintendoRelatedP
     references.set(reference.productUrl, reference);
   }
   for (const item of dlcs) {
-    const reference = toHongKongRelatedReference(item, "DlcItem", "dlc", "aocs");
+    // 港区会把附加内容组合包以 BundleItem 放入 dlcItems.items；必须遵从官方 __typename 选择 bundles 路径，未知类型仍整批拒绝。
+    const reference = isRecord(item) && item.__typename === "BundleItem"
+      ? toHongKongRelatedReference(item, "BundleItem", "bundle", "bundles")
+      : toHongKongRelatedReference(item, "DlcItem", "dlc", "aocs");
     if (reference === null) return null;
     references.set(reference.productUrl, reference);
   }
@@ -248,7 +251,7 @@ function parseHongKongEshopBundlePage(html: string, productUrl: string): Officia
   const expectedId = readHongKongEshopBundleId(productUrl);
   if (expectedId === null) return null;
   for (const script of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)) {
-    for (const fragment of readHongKongRscNamedObjects(script[1], "fragment")) {
+    for (const fragment of readHongKongProductFragments(script[1])) {
       if (!isRecord(fragment) || fragment.__typename !== "BundleItem" || readIdentifier(fragment.nsUid) !== expectedId) continue;
       const title = readNonEmptyString(fragment.formalName);
       const publisher = readPublisher(fragment.publisher);
@@ -323,6 +326,17 @@ function readHongKongRscNamedObjects(script: string, name: string): unknown[] {
     return [];
   }
   return typeof payload === "string" ? readRscNamedObjects(payload, name) : [];
+}
+
+/**
+ * 港区 eShop 的 Next RSC 在不同构建版本中分别使用 `fragment` 与 `serverFragment` 承载已解析商品对象。
+ * 这里只接受这两个已在任天堂公开页面观察并由测试固定的精确字段名，不递归扫描任意对象；重复同 ID 根仍交由调用方的唯一性校验安全拒绝。
+ */
+function readHongKongProductFragments(script: string): unknown[] {
+  return [
+    ...readHongKongRscNamedObjects(script, "fragment"),
+    ...readHongKongRscNamedObjects(script, "serverFragment"),
+  ];
 }
 
 /** RSC 记录没有共同 JSON 根节点；该扫描器只解析字段名之后紧邻的单个平衡对象，保证提取边界可审计。 */
