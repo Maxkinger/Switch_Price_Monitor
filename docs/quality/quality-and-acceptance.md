@@ -142,6 +142,13 @@
 - 每次请求都在返回前等待 page、context 与请求级 browser 的关闭链；生产使用 `launch` 会话且未配置 keep-alive 或跨请求复用，符合 Cloudflare Playwright 对 `browser.close()` 关闭 launch 会话的语义。验收仅记录关闭结论，不记录 HTML、Cookie、队列信息、会话标识、响应正文、截图、Trace、网络归档或异常堆栈。
 - 业务验收没有调用最终确认、创建订阅、手动刷新、价格采集、Telegram 或部署端点，因此没有修改游戏、地区商品、订阅、价格快照、目标价或通知数据。管理员为访问受保护只读端点手动登录时创建了认证会话；该认证写入不扩大为任何业务数据授权。生产仍保持 V 0.0.12，下一步必须先提交本节文档，再单独取得 V 0.0.13 部署确认。
 
+### 3.17 日区升级包 Browser Run V 0.0.13 生产部署验收（2026-07-19）
+
+- 管理员单独确认生产发布后执行固定 `npm run deploy` 流程；脚本先把页面版本从 V 0.0.12 递增至 V 0.0.13，再完成生产构建与 Cloudflare 部署。生产 Worker 版本为 `dc31798e-7d40-4f4e-aadd-7b365246b7f1`，地址保持 `https://switch-price-monitor.cchccp.workers.dev`；D1 `DB`、Browser Run `BROWSER`、每分钟调度和固定六小时采集 Cron 均存在，未执行 D1 迁移。
+- 发布前重新运行 Worker 59 个测试文件、293 项测试，DOM 4 个测试文件、10 项测试，以及 2 项 Browser Binding/发布契约测试，全部通过；TypeScript 严格检查、生产构建与 `git diff --check` 也以退出码 0 完成。发布后公开 `/api/health` 返回正常服务状态，公开前端资源和左侧导航均显示 0.0.13。
+- 在已登录管理员会话中搜索美区 `Overcooked! 2 - Nintendo Switch 2 Edition Upgrade Pack` 并执行只读跨区核验。MX、BR、HK 首次均自动匹配；JP 首次按设计独立降级为“暂不可用”，页面没有在同一请求内自动重试。管理员显式点击一次“重新核验”后，JP 返回 `automatic`，标题为 `Overcooked® 2 - オーバークック２ Nintendo Switch 2 Edition アップグレードパス`，同时保留其他三区的自动结果。
+- 部署后验收共启动两次日区 Browser Run 请求；每次请求均由既有请求生命周期负责关闭，不启用 keep-alive 或跨请求复用。验收没有点击“确认订阅”、价格来源写入、手动刷新、删除或 Telegram，因此没有创建或修改订阅、地区映射、价格快照、目标价或通知；也没有读取或记录 Cookie、密码、恢复码、Browser Session 标识、页面正文、截图、Trace、网络归档或异常堆栈。
+
 ## 4. 验收原则
 
 - 不把“请求成功”当作“价格正确”：必须通过商品身份校验。

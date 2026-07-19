@@ -976,7 +976,7 @@ Expected: 日区返回 `automatic`，URL 为 `https://store-jp.nintendo.com/item
 
 在质量文档只记录允许字段：执行日期、测试数量、`status`、规范化日区 URL、价格来源为官方、耗时区间和 Session 正常关闭结论。不记录 HTML、Cookie、队列信息、响应正文或异常堆栈。README/追踪表状态改为“已实现、远程只读验收通过、待生产部署”。
 
-- [ ] **Step 5: 最终提交门禁**
+- [x] **Step 5: 最终提交门禁**
 
 向管理员列出 Task 8 文档与任何质量修正的准确范围；取得明确确认后执行：
 
@@ -986,9 +986,11 @@ git commit -m "docs: record Japanese upgrade Browser Run acceptance"
 git push origin main
 ```
 
-- [ ] **Step 6: 生产部署门禁**
+- [x] **Step 6: 生产部署门禁**
 
 报告当前提交、全量测试、远程只读结果和 Cloudflare Browser Run 用量；单独询问是否允许运行 `npm run deploy`。未取得部署确认时保持生产 V0.0.12 不变；获得确认后部署脚本自动递增到 V0.0.13，并在部署后只验证健康检查和已认证只读地区核验，任何订阅写入仍由管理员页面明确触发。
+
+执行记录：管理员已单独确认生产发布。固定脚本把版本递增至 V0.0.13，部署 Worker `dc31798e-7d40-4f4e-aadd-7b365246b7f1`；公开健康接口和页面版本均通过。已认证向导只读核验中，JP 首次受控降级、管理员显式重试后自动匹配升级通行证，MX、BR、HK 保持自动结果；部署后共使用两次 Browser Run 请求，没有最终确认订阅、手动刷新或其他业务写入。
 
 ---
 
