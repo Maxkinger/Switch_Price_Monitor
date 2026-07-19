@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { createNintendoPriceApiProvider } from "../src/worker/providers/official-nintendo-price-api";
-import type { RegionalProduct } from "../src/worker/providers/types";
+import { createNintendoOfficialPriceQuoteResolver, createNintendoPriceApiProvider } from "../src/worker/providers/official-nintendo-price-api";
+import { ProviderNetworkError, type RegionalProduct } from "../src/worker/providers/types";
 
 /**
  * 任天堂公开价格接口测试只使用内存响应，既验证 JP/HK 请求中的地区与价格 ID 绑定，
@@ -103,6 +103,112 @@ describe("Nintendo official price API provider", () => {
     }
   });
 });
+
+/**
+ * 报价解析器直接服务于日区升级包关系复核，因此只接受注入的内存 fetch，既证明当前价与常规价的业务边界，
+ * 也确保测试不会访问任天堂网络、泄漏管理员会话或因商店实时促销变化而失去确定性。
+ */
+describe("Nintendo official price quote resolver", () => {
+  const validInput = { titleId: 70050000064985, regularRawValue: "1000", discountRawValue: "700" };
+
+  it("returns the current and regular JPY quote for an onsale matching title id", async () => {
+    const quotes = createNintendoOfficialPriceQuoteResolver(async () => Response.json(pricePayload(validInput)));
+
+    // 日元 raw_value 已是最小可比较单位；有效促销必须同时保留常规价，供后续关系校验拒绝“免费”或串区候选。
+    await expect(quotes.resolve("JP", "JPY", "70050000064985", new AbortController().signal)).resolves.toEqual({
+      officialPriceId: "70050000064985",
+      currency: "JPY",
+      currentPriceMinor: 700,
+      regularPriceMinor: 1000,
+    });
+  });
+
+  it.each([
+    ["country", { ...pricePayload(validInput), country: "US" }],
+    ["title id", pricePayload({ ...validInput, titleId: 70050000064986 })],
+    ["non-primitive title id", { country: "JP", prices: [{ ...pricePayload(validInput).prices[0], title_id: ["70050000064985"] }] }],
+    ["sales status", { country: "JP", prices: [{ ...pricePayload(validInput).prices[0], sales_status: "notonsale" }] }],
+    ["currency", { country: "JP", prices: [{ ...pricePayload(validInput).prices[0], discount_price: { currency: "USD", raw_value: "700" } }] }],
+    ["non-integer", { country: "JP", prices: [{ ...pricePayload(validInput).prices[0], discount_price: { currency: "JPY", raw_value: "7.00" } }] }],
+    ["discount above regular", pricePayload({ titleId: 70050000064985, regularRawValue: "700", discountRawValue: "1000" })],
+  ])("rejects invalid %s evidence", async (_name, payload) => {
+    const quotes = createNintendoOfficialPriceQuoteResolver(async () => Response.json(payload));
+
+    // 外部地区、ID、在售状态、货币或金额证据任一不完整即失败闭合，不能把异常促销伪造成零价或常规价。
+    await expect(quotes.resolve("JP", "JPY", "70050000064985", new AbortController().signal)).resolves.toBeNull();
+  });
+
+  it("normalizes an undiscounted HKD regular price to minor units without inventing a regular quote", async () => {
+    const quotes = createNintendoOfficialPriceQuoteResolver(async () => Response.json({
+      country: "HK",
+      prices: [{ title_id: 70050000065163, sales_status: "onsale", regular_price: { currency: "HKD", raw_value: "75" } }],
+    }));
+
+    // 港元 raw_value 是整港元，快照比较必须换算为分；没有折扣证据时只返回当前可购价，不能虚构“原价”展示。
+    await expect(quotes.resolve("HK", "HKD", "70050000065163", new AbortController().signal)).resolves.toEqual({
+      officialPriceId: "70050000065163",
+      currency: "HKD",
+      currentPriceMinor: 7500,
+      regularPriceMinor: null,
+    });
+  });
+
+  it.each([
+    ["missing", { country: "JP", prices: [{ title_id: validInput.titleId, sales_status: "onsale", discount_price: { currency: "JPY", raw_value: validInput.discountRawValue } }] }],
+    ["malformed", { country: "JP", prices: [{ ...pricePayload(validInput).prices[0], regular_price: { currency: "JPY", raw_value: "10.00" } }] }],
+  ])("rejects %s regular-price evidence even with a valid discount", async (_name, payload) => {
+    const quotes = createNintendoOfficialPriceQuoteResolver(async () => Response.json(payload));
+
+    // 常规价是判定折扣是否真实的锚点；缺失或小数格式异常时，即使折扣字段可解析也不能把它写成安全报价。
+    await expect(quotes.resolve("JP", "JPY", "70050000064985", new AbortController().signal)).resolves.toBeNull();
+  });
+
+  it("rejects a discount equal to the regular price", async () => {
+    const quotes = createNintendoOfficialPriceQuoteResolver(async () => Response.json(pricePayload({
+      titleId: validInput.titleId,
+      regularRawValue: "700",
+      discountRawValue: "700",
+    })));
+
+    // 同价不是促销，返回 null 可阻止后续升级包关系校验把格式存在但无折扣的证据误当作有效报价。
+    await expect(quotes.resolve("JP", "JPY", "70050000064985", new AbortController().signal)).resolves.toBeNull();
+  });
+
+  it("wraps fetch rejection as ProviderNetworkError for provider-chain retry", async () => {
+    const quotes = createNintendoOfficialPriceQuoteResolver(async () => {
+      throw new Error("temporary Nintendo transport failure");
+    });
+
+    // 注入 fetch 的拒绝会被规范化为可重试错误；测试不读取或断言任何远端响应正文，避免将外部内容带入错误边界。
+    await expect(quotes.resolve("JP", "JPY", "70050000064985", new AbortController().signal)).rejects.toBeInstanceOf(ProviderNetworkError);
+  });
+
+  it("rejects HKD multiplication overflow instead of producing an unsafe price", async () => {
+    const quotes = createNintendoOfficialPriceQuoteResolver(async () => Response.json({
+      country: "HK",
+      prices: [{ title_id: 70050000065163, sales_status: "onsale", regular_price: { currency: "HKD", raw_value: String(Number.MAX_SAFE_INTEGER) } }],
+    }));
+
+    // 港元换算乘以 100 后若越过安全整数范围，必须拒绝该外部金额，不能因精度截断产生错误快照或提醒。
+    await expect(quotes.resolve("HK", "HKD", "70050000065163", new AbortController().signal)).resolves.toBeNull();
+  });
+});
+
+/**
+ * 构造报价解析器的最小日区促销响应。夹具刻意只含公开价格字段，验证解析器不会依赖标题或用户购买数据；
+ * `raw_value` 以字符串表达，覆盖任天堂 API 的整数金额约束而不向测试引入真实网络价格。
+ */
+function pricePayload(input: { titleId: number; regularRawValue: string; discountRawValue: string }): { country: string; prices: Array<Record<string, unknown>> } {
+  return {
+    country: "JP",
+    prices: [{
+      title_id: input.titleId,
+      sales_status: "onsale",
+      regular_price: { currency: "JPY", raw_value: input.regularRawValue },
+      discount_price: { currency: "JPY", raw_value: input.discountRawValue },
+    }],
+  };
+}
 
 /** 构造任天堂价格接口的最小公开响应，调用方可仅替换会影响身份校验的字段。 */
 function japanesePriceResponse(overrides: { titleId?: number; currency?: string } = {}) {
