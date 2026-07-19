@@ -46,14 +46,16 @@ export interface DashboardSubscription {
 }
 
 /**
- * 首页顶部统计与订阅卡集合。最后采集和下次日报都是 ISO 时间，前端只根据管理员界面需求格式化，
- * 不用浏览器时钟猜测 Worker 的采集执行时刻。
+ * 首页顶部统计与订阅卡集合。最后采集和下次日报都是 ISO 时间，前端使用同时返回的管理员时区格式化，
+ * 不用浏览器时钟猜测 Worker 的采集执行时刻或日报口径。
  */
 export interface DashboardOverview {
   stats: {
     monitoredSubscriptionCount: number;
     availableRegionPriceCount: number;
     lastCapturedAt: string | null;
+    /** 只公开已验证的 IANA 时区，供前端把 UTC 传输值转成与日报设置一致的可读时间。 */
+    timezone: string | null;
     nextDailyReportAt: string | null;
   };
   subscriptions: DashboardSubscription[];
@@ -221,6 +223,8 @@ export class DashboardService {
         monitoredSubscriptionCount: monitoredSubscriptions.length,
         availableRegionPriceCount: currentPrices.length,
         lastCapturedAt,
+        // 设置尚未初始化时不得伪造管理员时区；正常受认证仪表盘会带回 SettingsRepository 已校验的 IANA 值。
+        timezone: settings?.timezone ?? null,
         nextDailyReportAt: settings ? nextDailyReportAt(now, settings.timezone, settings.dailyReportTime) : null,
       },
       subscriptions: dashboardSubscriptions,

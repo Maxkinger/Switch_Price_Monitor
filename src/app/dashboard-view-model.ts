@@ -30,6 +30,26 @@ export function formatCnyFen(cnyFen: number | null): string {
 }
 
 /**
+ * 把 Worker 统一传输的 UTC ISO 时刻转成管理员保存时区中的固定中文可读格式。
+ * 使用 formatToParts 而非浏览器默认 locale，避免不同设备把日期顺序、12 小时制或秒数展示成不同结果；
+ * timezone 来自服务端已验证的 IANA 设置，调用方在设置尚未初始化时显式传入 UTC，不依赖浏览器本地时区。
+ */
+export function formatDashboardDateTime(value: string, timezone: string): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(value));
+  const part = (type: Intl.DateTimeFormatPartTypes): string => parts.find((item) => item.type === type)?.value ?? "00";
+  return `${part("year")}-${part("month")}-${part("day")} ${part("hour")}:${part("minute")}:${part("second")}（${timezone}）`;
+}
+
+/**
  * 生成趋势曲线可用点。全部地区模式只收录有人民币换算的快照，具体地区模式同样排除缺失换算，
  * 因而折线永远比较同一货币口径，而本币历史仍可由详情中的原始快照文字单独展示。
  */

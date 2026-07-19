@@ -15,6 +15,7 @@ const overviewWithSubscription: DashboardOverview = {
     monitoredSubscriptionCount: 1,
     availableRegionPriceCount: 1,
     lastCapturedAt: "2026-07-18T00:00:00.000Z",
+    timezone: "Asia/Shanghai",
     nextDailyReportAt: "2026-07-19T01:00:00.000Z",
   },
   subscriptions: [{
@@ -42,6 +43,7 @@ const overviewWithoutSubscription: DashboardOverview = {
     monitoredSubscriptionCount: 0,
     availableRegionPriceCount: 0,
     lastCapturedAt: null,
+    timezone: "Asia/Shanghai",
     nextDailyReportAt: "2026-07-19T01:00:00.000Z",
   },
   subscriptions: [],
@@ -87,6 +89,20 @@ describe("仪表盘订阅硬删除", () => {
 
     expect(onNavigate).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "删除已选（1）" }).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("renders collection and report times in the saved administrator timezone", async () => {
+    // 浏览器时区可能与日报时区不同；页面必须使用 Worker 明确返回的 IANA 时区，让两个时间的阅读口径保持一致。
+    const api = {
+      getDashboard: vi.fn(async () => overviewWithSubscription),
+      refreshNow: vi.fn(),
+      deleteSubscriptions: vi.fn(),
+    };
+
+    render(<DashboardPage api={api} onNavigate={vi.fn()} onUnauthorized={vi.fn()} />);
+
+    expect(await screen.findByText("最近采集：2026-07-18 08:00:00（Asia/Shanghai）")).toBeTruthy();
+    expect(screen.getByText("下次日报：2026-07-19 09:00:00（Asia/Shanghai）")).toBeTruthy();
   });
 
   it("sends deletion only after confirmation and then re-reads the dashboard", async () => {

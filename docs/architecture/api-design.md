@@ -50,7 +50,7 @@
 | `GET /api/settings` | 已登录管理员 | 由 `/settings` 同源页面读取单例公开设置，仅返回 `enabledRegions`、`defaultSearchRegion`、`theme`、`timezone`、`dailyReportTime`、`taxState`、`priceHistoryRetention` 和服务端创建时间；不含 Telegram、第三方来源、认证或会话秘密字段。 |
 | `PATCH /api/settings` | 已登录管理员 | `/settings` 仅提交现有公开字段 `enabledRegions`、`defaultSearchRegion`、`theme`、`timezone`、`dailyReportTime`、`taxState`、`priceHistoryRetention`；默认搜索区必须属于启用地区，更新不会改写既有订阅。浏览器没有 Telegram、第三方来源或认证秘密字段的请求入口。 |
 | `POST /api/refresh` | 已登录管理员 | 通过 15 分钟原子冷却后，在当前请求内执行一次与六小时 Cron 相同的统一采集链并返回本轮 `attempted`、`collected`、`stale` 与执行时间；冷却内返回 `429 REFRESH_COOLDOWN` 及下一次允许时间。接口不再创建等待 Cron 消费的队列。 |
-| `GET /api/dashboard` | 已登录管理员 | 返回按创建顺序排列的订阅概览，包括游戏名称、启用状态、已确认地区商品、各区最新快照及当地货币历史最低价，并提供仅由已完成汇率换算快照计算的全区人民币历史最低价；最新快照保留原始来源标记，首次尚未订阅时稳定返回空数组。`POST /api/refresh` 成功后浏览器会重新读取此接口，不从完成统计自行拼接价格。 |
+| `GET /api/dashboard` | 已登录管理员 | 返回按创建顺序排列的订阅概览，包括游戏名称、启用状态、已确认地区商品、各区最新快照及当地货币历史最低价，并提供仅由已完成汇率换算快照计算的全区人民币历史最低价；统计同时返回已验证的管理员 IANA `timezone`，浏览器据此格式化 UTC 的最近采集与下次日报时间，不依赖设备时区。最新快照保留原始来源标记，首次尚未订阅时稳定返回空数组。`POST /api/refresh` 成功后浏览器会重新读取此接口，不从完成统计自行拼接价格。 |
 | `GET /api/history?subscriptionId=&region=` | 已登录管理员 | 按采集时间升序返回指定订阅的不可变价格快照；可选 `region` 在服务端筛选地区，响应保留原始货币、人民币金额、来源与采集时间。 |
 | `GET /api/export?kind=subscriptions\|prices\|fetch-logs` | 已登录管理员 | 下载订阅配置、价格历史或采集日志 CSV；每种类型使用独立字段白名单，不包含认证、会话、恢复码或 Telegram 字段。 |
 

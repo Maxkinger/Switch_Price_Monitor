@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatCnyFen, formatLocalPrice, trendPointsFor, type HistorySnapshot } from "../src/app/dashboard-view-model";
+import { formatCnyFen, formatDashboardDateTime, formatLocalPrice, trendPointsFor, type HistorySnapshot } from "../src/app/dashboard-view-model";
 
 /** 展示纯函数测试防止组件因货币小数位或缺失汇率而擅自制造不可比较的价格趋势。 */
 describe("dashboard view model", () => {
@@ -10,6 +10,11 @@ describe("dashboard view model", () => {
     expect(formatLocalPrice(999, "USD")).toBe("US$9.99");
     expect(formatCnyFen(4174)).toBe("约 ¥41.74");
     expect(formatCnyFen(null)).toBe("人民币待换算");
+  });
+
+  it("formats UTC timestamps in the administrator's saved timezone", () => {
+    // 采集和日报接口统一传输 UTC ISO 字符串；仪表盘必须按已保存时区显示，不能泄露 Z 后缀或依赖浏览器所在地区。
+    expect(formatDashboardDateTime("2026-07-19T04:25:41.038Z", "Asia/Shanghai")).toBe("2026-07-19 12:25:41（Asia/Shanghai）");
   });
 
   it("keeps only CNY-comparable snapshots for an all-region trend", () => {

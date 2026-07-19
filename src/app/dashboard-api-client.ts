@@ -37,6 +37,8 @@ export interface DashboardOverview {
     monitoredSubscriptionCount: number;
     availableRegionPriceCount: number;
     lastCapturedAt: string | null;
+    /** Worker 从公开设置返回的 IANA 时区；时间显示必须与日报调度保持同一阅读口径。 */
+    timezone: string | null;
     nextDailyReportAt: string | null;
   };
   subscriptions: DashboardSubscription[];

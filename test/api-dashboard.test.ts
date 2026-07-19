@@ -21,6 +21,8 @@ describe("dashboard HTTP route", () => {
         monitoredSubscriptionCount: 0,
         availableRegionPriceCount: 0,
         lastCapturedAt: null,
+        // 公开时区让浏览器按管理员保存的日报口径格式化 UTC 时间，避免把传输层 ISO 直接展示给用户。
+        timezone: "Asia/Shanghai",
         nextDailyReportAt: expect.any(String),
       },
       subscriptions: [],
@@ -39,6 +41,7 @@ describe("dashboard HTTP route", () => {
         monitoredSubscriptionCount: 1,
         availableRegionPriceCount: 0,
         lastCapturedAt: null,
+        timezone: "Asia/Shanghai",
         nextDailyReportAt: expect.any(String),
       },
       subscriptions: [
@@ -125,7 +128,7 @@ describe("dashboard HTTP route", () => {
 
     const response = await call("/api/dashboard", cookie);
     const body = await response.json<{
-      stats: { monitoredSubscriptionCount: number; availableRegionPriceCount: number; lastCapturedAt: string | null; nextDailyReportAt: string | null };
+      stats: { monitoredSubscriptionCount: number; availableRegionPriceCount: number; lastCapturedAt: string | null; timezone: string; nextDailyReportAt: string | null };
       subscriptions: Array<{ regions: Array<{ isStale: boolean }> }>;
     }>();
 
@@ -134,6 +137,7 @@ describe("dashboard HTTP route", () => {
       monitoredSubscriptionCount: 1,
       availableRegionPriceCount: 1,
       lastCapturedAt: "2026-07-17T00:00:00.000Z",
+      timezone: "Asia/Shanghai",
       nextDailyReportAt: expect.any(String),
     });
     expect(body.subscriptions[0].regions[0].isStale).toBe(true);
