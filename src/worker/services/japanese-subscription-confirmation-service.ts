@@ -11,9 +11,9 @@ type OfficialPriceIdResolver = Pick<OfficialPriceIdService, "resolve">;
 const japaneseDownloadUrl = /^https:\/\/store-jp\.nintendo\.com\/item\/software\/D(\d+)\/$/;
 
 /**
- * 日区最终确认专用的双官方接口适配层。My Nintendo Store 商品页可能向 Worker 返回排队或动态外壳，
- * 因而此服务以官方软件搜索 API 取得身份字段，并以官方价格 API 证明同一标题 ID 当前在 JP/JPY 上架；
- * 任一证据缺失都返回 null，调用方必须拒绝整个 D1 批次，绝不能回退采信浏览器候选。
+ * 普通日区游戏、组合商品与 DLC 的双官方接口适配层。My Nintendo Store 商品页可能向 Worker 返回排队或动态外壳，
+ * 因而此服务以官方软件搜索 API 取得身份字段，并以官方价格 API 证明同一标题 ID 当前在 JP/JPY 上架。
+ * 升级包必须由上层关系服务复核根商品与 Browser URL，本服务在任何外部调用前拒绝，防止旧双 API 绕过关系证明。
  */
 export class JapaneseSubscriptionConfirmationService {
   public constructor(
@@ -30,6 +30,7 @@ export class JapaneseSubscriptionConfirmationService {
     candidate: OfficialProductCandidate,
     matchSource: RegionalProductMatchSource,
   ): Promise<OfficialProductCandidate | null> {
+    if (candidate.productType === "upgrade-pack") return null;
     const titleId = candidate.regionCode === "JP" ? extractJapaneseTitleId(candidate.productUrl) : null;
     if (titleId === null) return null;
 

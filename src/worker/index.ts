@@ -10,7 +10,9 @@ import { handleManualRefreshRoute } from "./routes/manual-refresh-routes";
 import { handleProductRoute } from "./routes/product-routes";
 import { handleSettingsRoute } from "./routes/settings-routes";
 import { handleSubscriptionRoute } from "./routes/subscription-routes";
-import { createNintendoPriceApiProvider } from "./providers/official-nintendo-price-api";
+import { createNintendoOfficialPriceQuoteResolver, createNintendoPriceApiProvider } from "./providers/official-nintendo-price-api";
+import { createOfficialJapaneseUpgradeRootSearch } from "./providers/official-japanese-upgrade-root";
+import { createJapaneseUpgradeBrowserBatch } from "./providers/japanese-upgrade-browser";
 import { createOfficialProviderRegistry } from "./providers/official-provider-registry";
 import { ProviderChain } from "./providers/provider-chain";
 import { createFrankfurterExchangeRateProvider } from "./providers/frankfurter-exchange-rate";
@@ -37,6 +39,7 @@ import { defaultFallbackSources, SubscriptionPreviewService } from "./services/s
 import { SubscriptionConfirmationService } from "./services/subscription-confirmation-service";
 import { SubscriptionRegionCompletionService } from "./services/subscription-region-completion-service";
 import { JapaneseSubscriptionConfirmationService } from "./services/japanese-subscription-confirmation-service";
+import { createJapaneseUpgradeRelationService } from "./services/japanese-upgrade-relation-service";
 import { TelegramService } from "./services/telegram-service";
 
 export interface Env {
@@ -87,12 +90,20 @@ const worker: ExportedHandler<Env> = {
     // 商品发现与最终确认必须在会话守卫前由路由统一保护；每个请求构造无状态服务，避免在 Worker 实例间缓存候选 URL 或外部响应。
     const officialPages = createOfficialNintendoProductPageResolver();
     const officialSearch = createOfficialNintendoSearch();
+    // 每个进入商品路由分发阶段的请求只构造一个无状态关系服务；只有认证后的相关端点才会实际启动 Browser，不进入采集、Cron、通知或 D1 层。
+    const japaneseUpgradeRelations = createJapaneseUpgradeRelationService(
+      createOfficialJapaneseUpgradeRootSearch(),
+      createJapaneseUpgradeBrowserBatch(env.BROWSER),
+      createNintendoOfficialPriceQuoteResolver(),
+    );
     // 同一个官方解析器同时提供详情复核与港区一层关系能力；发现服务仍通过两个窄接口消费，避免把递归展开权限泄漏给普通详情调用方。
     const officialDiscovery = new OfficialProductDiscoveryService(
       new SettingsRepository(env.DB),
       officialSearch,
       officialPages,
       officialPages,
+      // 发现阶段与保存前确认共享同一请求级服务对象，保证一次请求内使用相同的三项 Browser Run 上限且不复用跨请求会话。
+      japaneseUpgradeRelations,
     );
     const officialPriceIds = new OfficialPriceIdService(createNintendoPriceApiProvider());
     const productResponse = await handleProductRoute(
@@ -108,8 +119,10 @@ const worker: ExportedHandler<Env> = {
         officialPages,
         officialPriceIds,
         new SettingsRepository(env.DB),
-        // 日区最终确认不再解析可能返回排队外壳的 Store 页面；两项任天堂官方接口分别证明身份字段与在售价格状态。
+        // 普通日区商品不再解析可能返回排队外壳的 Store 页面；两项任天堂官方接口分别证明身份字段与在售价格状态。
         new JapaneseSubscriptionConfirmationService(createOfficialNintendoSearch(), officialPriceIds),
+        // 所有日区升级包在查询既有订阅或写 D1 前，必须由与发现阶段相同的关系服务整批重新签发证据。
+        japaneseUpgradeRelations,
         // 非日区 automatic 候选写入前复用同一请求内的官方发现实例，重新证明 URL 仍唯一，不能信任浏览器保存的旧状态。
         officialDiscovery,
       ),

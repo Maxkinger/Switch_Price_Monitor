@@ -1,8 +1,13 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { OfficialProductCandidate } from "../src/shared/domain";
+import type { ConfirmedSubscriptionInput, OfficialProductCandidate, RegionalProductMatchSource } from "../src/shared/domain";
 import { SubscriptionConfirmationRepository } from "../src/worker/repositories/subscription-confirmation-repository";
+import {
+  japaneseUpgradeConfirmationKey,
+  type JapaneseUpgradeConfirmationItem,
+  type JapaneseUpgradeRelationService,
+} from "../src/worker/services/japanese-upgrade-relation-service";
 import { SubscriptionConfirmationService } from "../src/worker/services/subscription-confirmation-service";
 
 /**
@@ -15,6 +20,121 @@ describe("subscription confirmation service", () => {
   beforeEach(async () => {
     // 依赖顺序倒序清理，保证每个用例都从“尚未最终确认”的空业务数据开始，外键不会遮蔽原子性断言。
     await env.DB.exec("DELETE FROM subscription_regions; DELETE FROM subscriptions; DELETE FROM regional_products; DELETE FROM games;");
+  });
+
+  it("verifies all Japanese upgrade regions once before the atomic confirmation batch", async () => {
+    // 两款升级包必须在任何设置读取、既有订阅查询或 D1 写入前组成一个受限批次；逐游戏调用会绕过三项 Browser Run 总上限。
+    const first = japaneseUpgradeCase("overcooked-2", "70050000064985");
+    const second = japaneseUpgradeCase("kirby-2", "70050000064986");
+    const japaneseUpgrades = {
+      verifyForConfirmation: vi.fn().mockResolvedValue(new Map([
+        [japaneseUpgradeConfirmationKey(first.item), { status: "verified-automatic", candidate: first.item.candidate }],
+        [japaneseUpgradeConfirmationKey(second.item), { status: "verified-automatic", candidate: second.item.candidate }],
+      ])),
+    };
+    const service = createServiceWithJapaneseUpgradeVerifier(japaneseUpgrades, [first, second]);
+
+    await expect(service.confirm([first.input, second.input], now)).resolves.toHaveLength(2);
+    expect(japaneseUpgrades.verifyForConfirmation).toHaveBeenCalledExactlyOnceWith([first.item, second.item]);
+    await expect(counts()).resolves.toEqual({ games: 2, products: 4, subscriptions: 2, regions: 4 });
+  });
+
+  it("writes zero rows when one automatic Japanese upgrade relation is rejected", async () => {
+    // 自动关系只要一项缺少本次 Browser 与价格证据，整个确认请求就必须在生成 ID 和 D1 批次之前失败，不能部分保存第一款游戏。
+    const first = japaneseUpgradeCase("overcooked-2", "70050000064985");
+    const second = japaneseUpgradeCase("kirby-2", "70050000064986");
+    const japaneseUpgrades = {
+      verifyForConfirmation: vi.fn().mockResolvedValue(new Map([
+        [japaneseUpgradeConfirmationKey(first.item), { status: "verified-automatic", candidate: first.item.candidate }],
+        [japaneseUpgradeConfirmationKey(second.item), { status: "rejected" }],
+      ])),
+    };
+
+    await expect(createServiceWithJapaneseUpgradeVerifier(japaneseUpgrades, [first, second]).confirm([first.input, second.input], now))
+      .rejects.toThrow("日区升级包自动匹配已失效");
+    await expect(counts()).resolves.toEqual({ games: 0, products: 0, subscriptions: 0, regions: 0 });
+  });
+
+  it("accepts a manually linked Japanese upgrade only after batch relation verification", async () => {
+    // 人工链接只是 Browser 安全失败时的受控兜底；保存前仍需关系服务以根商品、官方 URL 与 JP/JPY 报价重新签发 verified-manual。
+    const fixture = japaneseUpgradeCase("overcooked-2", "70050000064985", "manual_link");
+    const japaneseUpgrades = { verifyForConfirmation: vi.fn().mockResolvedValue(new Map([
+      [japaneseUpgradeConfirmationKey(fixture.item), { status: "verified-manual", candidate: fixture.item.candidate }],
+    ])) };
+
+    await expect(createServiceWithJapaneseUpgradeVerifier(japaneseUpgrades, [fixture]).confirm([fixture.input], now))
+      .resolves.toEqual([expect.objectContaining({ status: "created" })]);
+    expect(japaneseUpgrades.verifyForConfirmation).toHaveBeenCalledExactlyOnceWith([fixture.item]);
+  });
+
+  it("rejects a manually linked Japanese upgrade before every D1 write when relation evidence is missing", async () => {
+    // 人工 URL 不能降低最终安全门槛；关系服务拒绝时必须返回与自动失效不同的可操作文案，并保持四张业务表为空。
+    const fixture = japaneseUpgradeCase("overcooked-2", "70050000064985", "manual_link");
+    const japaneseUpgrades = { verifyForConfirmation: vi.fn().mockResolvedValue(new Map([
+      [japaneseUpgradeConfirmationKey(fixture.item), { status: "rejected" }],
+    ])) };
+
+    await expect(createServiceWithJapaneseUpgradeVerifier(japaneseUpgrades, [fixture]).confirm([fixture.input], now))
+      .rejects.toThrow("日区升级包官方链接无法确认，请重新核验。");
+    await expect(counts()).resolves.toEqual({ games: 0, products: 0, subscriptions: 0, regions: 0 });
+  });
+
+  it("uses the freshly resolved default-region anchor for Japanese upgrade relation verification", async () => {
+    // 浏览器可保留真实美区 URL 却篡改标题和发行商；若关系服务先消费该文本，manual_link 的同类型规则可能把另一游戏的日区升级包错误绑定到真实订阅。
+    const actualAnchor = japaneseUpgradeCase("actual-game-2", "70050000064985").input.selected;
+    const spoofedAnchor = { ...actualAnchor, canonicalTitle: "spoofed-game-2 Nintendo Switch 2 Edition Upgrade Pack", publisher: "Spoofed Publisher" };
+    const japaneseCandidate: OfficialProductCandidate = {
+      ...spoofedAnchor,
+      regionCode: "JP",
+      productUrl: "https://store-jp.nintendo.com/item/software/D70050000064985/",
+      currency: "JPY",
+      currentPriceMinor: 1000,
+    };
+    const input: ConfirmedSubscriptionInput = {
+      selected: spoofedAnchor,
+      regions: [
+        { ...spoofedAnchor, matchSource: "manual_selection" },
+        { ...japaneseCandidate, matchSource: "manual_link" },
+      ],
+      skippedRegionCodes: [],
+    };
+    const japaneseUpgrades = {
+      verifyForConfirmation: vi.fn(async (items: JapaneseUpgradeConfirmationItem[]) => {
+        const item = items[0];
+        // 真实关系服务会按锚点官方身份重新搜索根商品：只有仍使用伪造文本时才模拟错误成功，官方重读后的真实锚点必须拒绝这条日区关系。
+        return new Map([[japaneseUpgradeConfirmationKey(item), item.anchor.canonicalTitle === spoofedAnchor.canonicalTitle
+          ? { status: "verified-manual" as const, candidate: japaneseCandidate }
+          : { status: "rejected" as const }]]);
+      }),
+    };
+    const service = new SubscriptionConfirmationService(
+      new SubscriptionConfirmationRepository(env.DB),
+      { resolve: async (regionCode, productUrl) => regionCode === "US" && productUrl === actualAnchor.productUrl ? actualAnchor : null },
+      { resolve: async (candidate) => candidate.regionCode === "JP"
+        ? { status: "official-available" as const, officialPriceId: "70050000064985" }
+        : { status: "official-id-unavailable" as const, officialPriceId: null, reason: "unsupported-region" as const },
+      },
+      { get: async () => ({ enabledRegions: ["US" as const, "JP" as const] }) },
+      { resolve: async () => null },
+      japaneseUpgrades,
+    );
+
+    await expect(service.confirm([input], now)).rejects.toThrow("日区升级包官方链接无法确认，请重新核验。");
+    expect(japaneseUpgrades.verifyForConfirmation).toHaveBeenCalledWith([
+      expect.objectContaining({ anchor: actualAnchor, candidate: japaneseCandidate, matchSource: "manual_link" }),
+    ]);
+    await expect(counts()).resolves.toEqual({ games: 0, products: 0, subscriptions: 0, regions: 0 });
+  });
+
+  it("keeps ordinary Japanese games on the existing double-official resolver", async () => {
+    // 普通日区游戏没有升级关系页，不得消耗 Browser Run；确认服务仍应以空升级批次调用关系验证器，并把 JP 游戏交给既有双官方 API。
+    const japaneseUpgrades = { verifyForConfirmation: vi.fn().mockResolvedValue(new Map()) };
+    const japaneseResolver = { resolve: vi.fn(async (_anchor, candidate) => candidate) };
+    const service = createServiceWithJapaneseUpgradeVerifier(japaneseUpgrades, [], japaneseResolver, [overcookedUs()]);
+
+    await expect(service.confirm([overcookedSubscription()], now)).resolves.toEqual([expect.objectContaining({ status: "created" })]);
+    expect(japaneseUpgrades.verifyForConfirmation).toHaveBeenCalledExactlyOnceWith([]);
+    expect(japaneseResolver.resolve).toHaveBeenCalledWith(overcookedUs(), expect.objectContaining(overcookedJp()), "automatic");
   });
 
   it("writes no business records when one selected game repeats a regional mapping", async () => {
@@ -67,32 +187,12 @@ describe("subscription confirmation service", () => {
     await expect(counts()).resolves.toEqual({ games: 1, products: 1, subscriptions: 1, regions: 1 });
   });
 
-  it("accepts a manually selected localized Japanese upgrade pack after official revalidation", async () => {
-    // 管理员在日区候选卡中已审计了本地化标题；Worker 仍以重读后的官方 URL 和相同升级包类型为准，
-    // 因此不能因为中日标题不同而拒绝这条合法映射，也不能采信浏览器自报的价格或发行商。
-    const input = localizedUpgradeSubscription("manual_selection");
-    const service = createService([overcookedUpgradeUs(), localizedOvercookedUpgradeJp()]);
-
-    await expect(service.confirm([input], now)).resolves.toEqual([expect.objectContaining({ status: "created" })]);
-    await expect(counts()).resolves.toEqual({ games: 1, products: 2, subscriptions: 1, regions: 2 });
-  });
-
-  it("accepts a manually linked localized Japanese upgrade pack after official revalidation", async () => {
-    // 手动链接同样需要 Worker 成功重读本区任天堂页面，区别只在管理员提供 URL 而非点击候选卡；
-    // 它可接受标题本地化，但仍必须与默认区保持同一升级包类型，不能成为绕过官方链接验证的路径。
-    const input = localizedUpgradeSubscription("manual_link");
-    const service = createService([overcookedUpgradeUs(), localizedOvercookedUpgradeJp()]);
-
-    await expect(service.confirm([input], now)).resolves.toEqual([expect.objectContaining({ status: "created" })]);
-    await expect(counts()).resolves.toEqual({ games: 1, products: 2, subscriptions: 1, regions: 2 });
-  });
-
   it("rejects a manually selected localized candidate with a different product type before writing", async () => {
     // 手动选择仅放宽语言化标题与发行商，不是绕过商品分类的通行证；把游戏本体混入升级包订阅时，
     // 所有 D1 写入必须整体取消，避免后续价格采集把不同商品当成同一订阅地区。
     const invalidJapaneseGame = { ...localizedOvercookedUpgradeJp(), productType: "game" as const };
     const input = {
-      ...localizedUpgradeSubscription("manual_selection"),
+      ...localizedManualSelectionUpgradeSubscription(),
       regions: [
         { ...overcookedUpgradeUs(), matchSource: "manual_selection" as const },
         { ...invalidJapaneseGame, matchSource: "manual_selection" as const },
@@ -101,48 +201,6 @@ describe("subscription confirmation service", () => {
     const service = createService([overcookedUpgradeUs(), invalidJapaneseGame]);
 
     await expect(service.confirm([input], now)).rejects.toThrow("地区商品与默认区商品身份不一致。");
-    await expect(counts()).resolves.toEqual({ games: 0, products: 0, subscriptions: 0, regions: 0 });
-  });
-
-  it("confirms one automatic localized Japanese candidate through official APIs without requesting the dynamic Store page", async () => {
-    // `automatic` 只能来自当次唯一的官方跨语言匹配。日区 Store 页面在 Worker 中可能是动态外壳，
-    // 因此本用例锁定最终确认必须改走日区双 API，且不能把页面解析器当作 JP 回退路径。
-    const us = overcookedUpgradeUs();
-    const japanese = localizedAutomaticOvercookedUpgradeJp();
-    const pageResolver = { resolve: vi.fn(async (regionCode: string, productUrl: string) => regionCode === "US" && productUrl === us.productUrl ? us : null) };
-    const japaneseResolver = { resolve: vi.fn(async () => japanese) };
-    const service = new SubscriptionConfirmationService(
-      new SubscriptionConfirmationRepository(env.DB),
-      pageResolver,
-      { resolve: async (candidate) => candidate.regionCode === "JP"
-        ? { status: "official-available" as const, officialPriceId: "70010000106252" }
-        : { status: "official-id-unavailable" as const, officialPriceId: null, reason: "unsupported-region" as const },
-      },
-      { get: async () => ({ enabledRegions: ["US" as const, "JP" as const] }) },
-      japaneseResolver,
-    );
-    const input = localizedAutomaticUpgradeSubscription(us, japanese);
-
-    await expect(service.confirm([input], now)).resolves.toEqual([expect.objectContaining({ status: "created" })]);
-    // 地区候选在最终确认时还带有审计用的 matchSource；身份字段必须仍与管理员已选的日区官方候选一致。
-    expect(japaneseResolver.resolve).toHaveBeenCalledWith(us, expect.objectContaining(japanese), "automatic");
-    expect(pageResolver.resolve).not.toHaveBeenCalledWith("JP", expect.any(String), expect.any(AbortSignal));
-    await expect(counts()).resolves.toEqual({ games: 1, products: 2, subscriptions: 1, regions: 2 });
-  });
-
-  it("rejects an automatic localized Japanese candidate when official API confirmation fails and writes no rows", async () => {
-    // 搜索或价格 API 任一失败都不能降级为浏览器候选或动态页面解析；整批写入必须在 D1 批次前取消。
-    const us = overcookedUpgradeUs();
-    const japanese = localizedAutomaticOvercookedUpgradeJp();
-    const service = new SubscriptionConfirmationService(
-      new SubscriptionConfirmationRepository(env.DB),
-      { resolve: async (regionCode, productUrl) => regionCode === "US" && productUrl === us.productUrl ? us : null },
-      { resolve: async () => ({ status: "official-id-unavailable" as const, officialPriceId: null, reason: "official-verification-failed" as const }) },
-      { get: async () => ({ enabledRegions: ["US" as const, "JP" as const] }) },
-      { resolve: async () => null },
-    );
-
-    await expect(service.confirm([localizedAutomaticUpgradeSubscription(us, japanese)], now)).rejects.toThrow("日区官方商品确认暂时失败");
     await expect(counts()).resolves.toEqual({ games: 0, products: 0, subscriptions: 0, regions: 0 });
   });
 
@@ -189,8 +247,84 @@ function createHongKongBundleService(automaticVerifier: { verifyAutomaticRegiona
     { resolve: async () => ({ status: "official-id-unavailable" as const, officialPriceId: null, reason: "unsupported-region" as const }) },
     { get: async () => ({ enabledRegions: ["US" as const, "HK" as const] }) },
     { resolve: async () => null },
+    // 港区用例不包含日区升级包；空 Map 证明新依赖不会改变非日区 automatic 的独立唯一性门禁。
+    { verifyForConfirmation: async () => new Map() },
     automaticVerifier,
   );
+}
+
+/**
+ * 构造任务 7 的真实 D1 确认服务，只替换外部官方边界。页面解析器仅允许夹具中的美区锚点，
+ * 日区升级候选必须来自批量关系 Map；价格 ID 从严格 D 数字 URL 导出，避免测试以固定单一 ID 掩盖多商品串项。
+ */
+function createServiceWithJapaneseUpgradeVerifier(
+  japaneseUpgrades: Pick<JapaneseUpgradeRelationService, "verifyForConfirmation">,
+  fixtures: JapaneseUpgradeTestCase[],
+  japaneseResolver: { resolve(anchor: OfficialProductCandidate, candidate: OfficialProductCandidate, matchSource: RegionalProductMatchSource): Promise<OfficialProductCandidate | null> } = { resolve: async () => null },
+  ordinaryPageCandidates: OfficialProductCandidate[] = [],
+): SubscriptionConfirmationService {
+  const anchors = [...fixtures.map((fixture) => fixture.input.selected), ...ordinaryPageCandidates];
+  return new SubscriptionConfirmationService(
+    new SubscriptionConfirmationRepository(env.DB),
+    { resolve: async (regionCode, productUrl) => anchors.find((candidate) => candidate.regionCode === regionCode && candidate.productUrl === productUrl) ?? null },
+    {
+      resolve: async (candidate) => {
+        if (candidate.regionCode !== "JP") return { status: "official-id-unavailable" as const, officialPriceId: null, reason: "unsupported-region" as const };
+        const priceId = /^https:\/\/store-jp\.nintendo\.com\/item\/software\/D(\d+)\/$/.exec(candidate.productUrl)?.[1];
+        return priceId
+          ? { status: "official-available" as const, officialPriceId: priceId }
+          : { status: "official-id-unavailable" as const, officialPriceId: null, reason: "official-verification-failed" as const };
+      },
+    },
+    { get: async () => ({ enabledRegions: ["US" as const, "JP" as const] }) },
+    japaneseResolver,
+    japaneseUpgrades,
+  );
+}
+
+/** 一个升级包夹具同时提供浏览器确认载荷和关系服务精确键输入，防止测试分别手写后发生 URL、来源或锚点漂移。 */
+interface JapaneseUpgradeTestCase {
+  input: ConfirmedSubscriptionInput;
+  item: JapaneseUpgradeConfirmationItem;
+}
+
+/**
+ * 为多商品批量生成互不相同的美区锚点、日区升级 URL 与标题；相同标题跨区可让本测试聚焦关系证据，
+ * 而不把跨语言标题算法重复混入保存前批处理断言。
+ */
+function japaneseUpgradeCase(
+  slug: string,
+  priceId: string,
+  matchSource: Extract<RegionalProductMatchSource, "automatic" | "manual_link"> = "automatic",
+): JapaneseUpgradeTestCase {
+  const title = `${slug} Nintendo Switch 2 Edition Upgrade Pack`;
+  const anchor: OfficialProductCandidate = {
+    regionCode: "US",
+    productUrl: `https://www.nintendo.com/us/store/products/${slug}-nintendo-switch-2-edition-upgrade-pack/`,
+    canonicalTitle: title,
+    publisher: "Nintendo Test Publisher",
+    productType: "upgrade-pack",
+    currency: "USD",
+    coverUrl: null,
+    currentPriceMinor: 999,
+    regularPriceMinor: null,
+  };
+  const candidate: OfficialProductCandidate = {
+    ...anchor,
+    regionCode: "JP",
+    productUrl: `https://store-jp.nintendo.com/item/software/D${priceId}/`,
+    currency: "JPY",
+    currentPriceMinor: 1000,
+  };
+  const input: ConfirmedSubscriptionInput = {
+    selected: anchor,
+    regions: [
+      { ...anchor, matchSource: "manual_selection" },
+      { ...candidate, matchSource },
+    ],
+    skippedRegionCodes: [],
+  };
+  return { input, item: { anchor, candidate, matchSource } };
 }
 
 /** 用真实仓储连接 D1；官方页面与日区价格 ID 使用固定验证结果，使测试只覆盖最终确认业务规则。 */
@@ -209,6 +343,8 @@ function createService(candidates: OfficialProductCandidate[], enabledRegions: A
     { get: async () => ({ enabledRegions }) },
     // 默认日区替身只返回同 URL 的已验证官方候选；专项用例会单独替换它，以覆盖动态页面绕过和 API 失败边界。
     { resolve: async (_anchor, candidate) => candidates.find((option) => option.regionCode === "JP" && option.productUrl === candidate.productUrl) ?? null },
+    // 普通游戏夹具没有日区升级包；显式空批次依赖锁定构造参数顺序，避免 automatic verifier 被错位注入。
+    { verifyForConfirmation: async () => new Map() },
   );
 }
 
@@ -267,34 +403,13 @@ function localizedOvercookedUpgradeJp(): OfficialProductCandidate {
   return { regionCode: "JP", productUrl: "https://store-jp.nintendo.com/item/software/D70010000106252/", canonicalTitle: "オーバークック２ Nintendo Switch 2 Edition アップグレードパス", publisher: "Team17 Japan", productType: "upgrade-pack", currency: "JPY", coverUrl: null, currentPriceMinor: 1000, regularPriceMinor: null };
 }
 
-/** 自动日区候选保留共同的拉丁主标题、版本标记、发行商和升级包类型，作为唯一高置信度身份的测试夹具。 */
-function localizedAutomaticOvercookedUpgradeJp(): OfficialProductCandidate {
-  return {
-    ...localizedOvercookedUpgradeJp(),
-    canonicalTitle: "Overcooked® 2 - オーバークック２ Nintendo Switch 2 Edition アップグレードパス",
-    publisher: "Team17",
-  };
-}
-
-/** 默认区和日区均需出现在确认载荷中；来源由调用方控制，用于分别锁定人工与自动的信任边界。 */
-function localizedUpgradeSubscription(matchSource: "automatic" | "manual_selection" | "manual_link") {
+/** 手动候选类型不一致用例保留完整两区载荷；关系服务只收集仍为 upgrade-pack 的日区项，不会替错误 game 候选背书。 */
+function localizedManualSelectionUpgradeSubscription() {
   return {
     selected: overcookedUpgradeUs(),
     regions: [
       { ...overcookedUpgradeUs(), matchSource: "manual_selection" as const },
-      { ...localizedOvercookedUpgradeJp(), matchSource },
-    ],
-    skippedRegionCodes: [],
-  };
-}
-
-/** 默认区始终保留管理员点击的手动选择来源；日区条目才代表系统在跨区搜索中形成的自动证据。 */
-function localizedAutomaticUpgradeSubscription(us: OfficialProductCandidate, japanese: OfficialProductCandidate) {
-  return {
-    selected: us,
-    regions: [
-      { ...us, matchSource: "manual_selection" as const },
-      { ...japanese, matchSource: "automatic" as const },
+      { ...localizedOvercookedUpgradeJp(), matchSource: "manual_selection" as const },
     ],
     skippedRegionCodes: [],
   };

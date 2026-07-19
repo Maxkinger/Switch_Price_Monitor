@@ -5,11 +5,24 @@ import type { OfficialPriceIdResolution } from "../src/worker/services/official-
 import { JapaneseSubscriptionConfirmationService } from "../src/worker/services/japanese-subscription-confirmation-service";
 
 /**
- * 日区最终确认测试只替换两个任天堂官方接口，不访问真实 My Nintendo Store 页面。
+ * 普通日区商品最终确认测试只替换两个任天堂官方接口，不访问真实 My Nintendo Store 页面。
  * 这能证明动态或排队页面不可解析时，系统仍只接受搜索记录与价格 ID 两项官方证据的交集，
  * 而不会回退相信浏览器提交的标题、价格或发行商。
  */
 describe("JapaneseSubscriptionConfirmationService", () => {
+  it("refuses upgrade packs before calling the ordinary Japanese search and price APIs", async () => {
+    // 升级包必须由上层关系服务重新验证根商品与唯一 Browser URL；旧双 API 只能确认普通商品，不能成为绕过关系证明的替代路径。
+    const anchor = { ...usSwitch2EditionCandidate(), productType: "upgrade-pack" as const };
+    const candidate = { ...localizedJapaneseSwitch2EditionCandidate(), productType: "upgrade-pack" as const };
+    const search = { search: vi.fn<OfficialProductSearch["search"]>() };
+    const prices = { resolve: vi.fn() };
+    const service = new JapaneseSubscriptionConfirmationService(search, prices);
+
+    await expect(service.resolve(anchor, candidate, "manual_link")).resolves.toBeNull();
+    expect(search.search).not.toHaveBeenCalled();
+    expect(prices.resolve).not.toHaveBeenCalled();
+  });
+
   it("rebuilds an automatic localized Japanese candidate only when official search and price APIs agree on one onsale JPY title ID", async () => {
     const anchor = usSwitch2EditionCandidate();
     const candidate = localizedJapaneseSwitch2EditionCandidate();

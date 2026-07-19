@@ -192,6 +192,30 @@ describe("product discovery HTTP routes", () => {
     await expect(response?.json()).resolves.toEqual({ subscriptions: [{ gameId: "game-overcooked", subscriptionId: "subscription-overcooked", status: "created" }] });
     expect(confirm).toHaveBeenCalledWith([input], expect.any(String));
   });
+
+  it("maps the final Japanese upgrade reverification limit to the same safe validation response", async () => {
+    // 保存前关系服务与发现阶段共享三项上限；确认端点必须沿用受控 422，不能把配额错误误报成 500 或暴露 Browser 内部信息。
+    const discovery = {
+      searchDefaultRegion: async () => ({ status: "available" as const, candidates: [candidate()] }),
+      resolveOfficialLink: async () => candidate(),
+      resolveRegions: async () => [],
+    };
+    const confirmation = {
+      confirm: vi.fn(async () => { throw new JapaneseUpgradeBatchLimitError("一次最多核验 3 个日区升级包，请分批处理。"); }),
+    };
+    const cookie = await initializeAndLogin();
+
+    const response = await handleProductRoute(
+      request("/api/products/confirm-subscriptions", { subscriptions: [confirmedSubscription()] }, cookie),
+      env.DB,
+      fixedPreview(),
+      discovery,
+      confirmation,
+    );
+
+    expect(response?.status).toBe(422);
+    await expect(response?.json()).resolves.toEqual({ code: "VALIDATION_ERROR", error: "一次最多核验 3 个日区升级包，请分批处理。" });
+  });
 });
 
 /** 发现测试不需要价格 ID 网络验证，固定预览让路由的旧端点依然可被隔离地构造。 */
