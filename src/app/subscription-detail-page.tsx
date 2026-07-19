@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { ConfirmedRegionalProduct, OfficialProductCandidate, RegionCode, RegionalProductMatchSource } from "../shared/domain";
 import { ProductApiError, createProductApiClient, type RegionResolutionResponse } from "./api-client";
 import { DashboardApiError, type CompletedRefreshResult, type MissingRegionCompletionInput, type SubscriptionDetail, type SubscriptionUpdate } from "./dashboard-api-client";
-import { formatCnyFen, formatLocalPrice } from "./dashboard-view-model";
+import { formatCnyFen, formatRegionalPrice, formatRegionName } from "./dashboard-view-model";
 import { applyAutomaticMissingResolutions, immediateRefreshNotice, missingRegionPresentation } from "./dashboard-page-state";
 import { SubscriptionDeleteDialog } from "./subscription-delete-dialog";
 
@@ -144,7 +144,7 @@ export function SubscriptionDetailPage({ api, productApi, subscriptionId, onBack
     <button type="button" className="text-button" onClick={onBack}>← 返回仪表盘</button>
     <header className="detail-header"><div><h1 id="detail-title">{detail.game.nameZh}</h1><p>{detail.game.nameEn} · {detail.game.productType}</p></div><div><button className="secondary-button" type="button" onClick={() => void refreshNow()}>立即刷新</button><button className="primary-button" type="button" onClick={() => void save({ enabled: !detail.enabled }, detail.enabled ? "订阅已暂停。" : "订阅已启用。")}>{detail.enabled ? "暂停订阅" : "启用订阅"}</button></div></header>
     {notice ? <p className="notice" role="status">{notice}</p> : null}
-    <section><h2>地区价格</h2><div className="detail-regions">{detail.regions.map((region) => <article key={region.regionalProductId}><h3>{region.regionCode} · {region.currency}</h3>{region.current ? <p><b>{formatLocalPrice(region.current.amountMinor, region.currency)}</b><small>{formatCnyFen(region.current.cnyFen)} · {region.current.source} · {region.current.capturedAt}{region.isStale ? " · 过期" : ""}</small></p> : <p>等待首笔价格</p>}<small>地区历史最低：{region.historicalLow ? `${formatLocalPrice(region.historicalLow.amountMinor, region.currency)}（${formatCnyFen(region.historicalLow.cnyFen)}）` : "暂无"}</small></article>)}</div></section>
+    <section><h2>地区价格</h2><div className="detail-regions">{/* 本区现价和历史最低价必须同时带入地区代码，才能应用与仪表盘一致的官网文字；不能仅按币种猜测地区。 */}{detail.regions.map((region) => <article key={region.regionalProductId}><h3>{formatRegionName(region.regionCode)}</h3>{region.current ? <p><b>{formatRegionalPrice(region.current.amountMinor, region.currency, region.regionCode)}</b><small>{formatCnyFen(region.current.cnyFen)} · {region.current.source} · {region.current.capturedAt}{region.isStale ? " · 过期" : ""}</small></p> : <p>等待首笔价格</p>}<small>地区历史最低：{region.historicalLow ? `${formatRegionalPrice(region.historicalLow.amountMinor, region.currency, region.regionCode)}（${formatCnyFen(region.historicalLow.cnyFen)}）` : "暂无"}</small></article>)}</div></section>
     <section className="detail-management">
       <h2>管理订阅</h2>
       <fieldset>

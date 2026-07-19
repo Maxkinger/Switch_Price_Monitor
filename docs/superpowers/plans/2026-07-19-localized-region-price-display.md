@@ -29,7 +29,7 @@
 - Produces: `formatRegionName(regionCode: string): string`。
 - Produces: `formatRegionalPrice(amountMinor: number, currency: string, regionCode: string): string`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `test/dashboard-view-model.test.ts` 新增：
 
@@ -52,12 +52,12 @@ it("uses confirmed Chinese names and official price copy", () => {
 
 测试注释说明 US/MX 共用 `$` 的地区语义由相邻中文名称承担，不能擅自添加未确认前缀。
 
-- [ ] **Step 2: 确认 RED**
+- [x] **Step 2: 确认 RED**
 
 Run: `npx vitest run test/dashboard-view-model.test.ts`  
 Expected: FAIL，原因是新函数尚未导出或实现。
 
-- [ ] **Step 3: 最小实现共享函数**
+- [x] **Step 3: 最小实现共享函数**
 
 在 `src/app/dashboard-view-model.ts` 增加中文注释、映射和函数：
 
@@ -85,12 +85,12 @@ export function formatRegionalPrice(amountMinor: number, currency: string, regio
 
 把当前 `formatLocalPrice` 的后备精度规则移入私有 `formatFallbackLocalPrice`，保持未知币种行为不变。
 
-- [ ] **Step 4: 确认 GREEN**
+- [x] **Step 4: 确认 GREEN**
 
 Run: `npx vitest run test/dashboard-view-model.test.ts`  
 Expected: PASS；五区均为确认文字且未知地区安全回退。
 
-- [ ] **Step 5: 任务提交门禁**
+- [ ] **Step 5: 任务提交门禁（与最终变更合并待确认）**
 
 Run: `git diff --check`  
 Expected: 无输出。
@@ -108,7 +108,7 @@ Expected: 无输出。
 - Consumes: Task 1 的 `formatRegionName`、`formatRegionalPrice`。
 - Produces: 两页对同一 `DashboardRegion` 的一致展示。
 
-- [ ] **Step 1: 写失败 DOM 测试**
+- [x] **Step 1: 写失败 DOM 测试**
 
 扩展 Overcooked 五区夹具，并添加：
 
@@ -122,12 +122,12 @@ expect(screen.getByText("香港区")).toBeTruthy();
 expect(screen.getByText("HKD 198")).toBeTruthy();
 ```
 
-- [ ] **Step 2: 确认 RED**
+- [x] **Step 2: 确认 RED**
 
 Run: `npm run test:dom -- --run test/dashboard-page.test.tsx`  
 Expected: FAIL，当前页面仍显示代码或 `US · USD`。
 
-- [ ] **Step 3: 最小页面接线**
+- [x] **Step 3: 最小页面接线**
 
 两个页面均导入 Task 1 函数。仪表盘地区行使用：
 
@@ -138,12 +138,12 @@ Expected: FAIL，当前页面仍显示代码或 `US · USD`。
 
 详情标题改为 `<h3>{formatRegionName(region.regionCode)}</h3>`；当前价和历史最低价均使用 `formatRegionalPrice`。保留来源、人民币估算、采集时间、过期状态、等待首笔价格和管理操作。
 
-- [ ] **Step 4: 确认 GREEN**
+- [x] **Step 4: 确认 GREEN**
 
 Run: `npm run test:dom -- --run test/dashboard-page.test.tsx`  
 Expected: PASS；五区中文名、价格文字和无重复币种代码均可见。
 
-- [ ] **Step 5: 任务提交门禁**
+- [ ] **Step 5: 任务提交门禁（与最终变更合并待确认）**
 
 Run: `git diff --check`  
 Expected: 无输出。
@@ -161,7 +161,7 @@ Expected: 无输出。
 - Consumes: Task 1–2 的固定测试夹具和本地 Vite 页面。
 - Produces: 一张不含真实订阅数据的桌面草图与验收文档记录。
 
-- [ ] **Step 1: 构造仅本地的静态草图**
+- [x] **Step 1: 构造仅本地的静态草图**
 
 以《Overcooked! 2 – Nintendo Switch 2 Edition》显示五行：
 
@@ -175,11 +175,11 @@ Expected: 无输出。
 
 草图不得写入订阅、价格快照、生产 API 或官方商店。
 
-- [ ] **Step 2: 浏览器视觉验证**
+- [x] **Step 2: 浏览器视觉验证（语义 DOM 与控制台）**
 
 流转：本地详情草图 → 查看五区地区价格 → 确认中文名称、一个空格、无 `USD/MXN/JPY/BRL` 重复文字。使用 Browser 插件验证页面身份、非空 DOM、无框架错误、控制台和桌面截图；必要时再检查一个窄屏视口。
 
-- [ ] **Step 3: 全量质量门禁**
+- [x] **Step 3: 全量质量门禁**
 
 Run: `npm test -- --run`  
 Expected: 所有 Worker 测试通过。
@@ -196,7 +196,7 @@ Expected: Vite 生产构建成功。
 Run: `git diff --check`  
 Expected: 无输出。
 
-- [ ] **Step 4: 更新文档状态**
+- [x] **Step 4: 更新文档状态**
 
 README 标记本规格已实现、草图已审阅；追踪表记录两页共用地区与价格展示规则；规格补记草图结论和零业务写入边界。
 

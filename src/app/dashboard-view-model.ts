@@ -10,15 +10,53 @@ export interface TrendPoint {
 }
 
 /**
- * 以任天堂商店的最小货币单位格式化本币。日元没有小数位，其余首版五区使用两位小数；
- * 未知币种保留代码，不臆造货币符号，避免将未来扩展地区错误显示为美元等已有货币。
+ * 已确认的五个监控地区的中文名称。地区代码是 Worker 与数据库之间稳定的机器字段，
+ * 仅在展示层翻译，避免改变订阅、采集和价格来源接口的既有数据契约。
  */
-export function formatLocalPrice(amountMinor: number, currency: string): string {
+const REGION_NAMES: Record<string, string> = {
+  US: "美国区",
+  MX: "墨西哥区",
+  JP: "日本区",
+  BR: "巴西区",
+  HK: "香港区",
+};
+
+/**
+ * 返回管理员确认的地区中文名称；尚未纳入五区范围的代码必须原样保留。
+ * 原样回退让新增地区在没有本地化决策时仍可识别，也避免展示层猜测国家或地区名称。
+ */
+export function formatRegionName(regionCode: string): string {
+  return REGION_NAMES[regionCode] ?? regionCode;
+}
+
+/**
+ * 使用旧版安全规则格式化未确认地区，避免把未来币种或异常地区误显示为五区任一官方样式。
+ * 日元最小单位是日元本身，其余现有货币以分为最小单位；未知币种仅显示其代码，不能臆造符号。
+ */
+function formatFallbackLocalPrice(amountMinor: number, currency: string): string {
   const fractionDigits = currency === "JPY" ? 0 : 2;
   const amount = amountMinor / (fractionDigits === 0 ? 1 : 100);
   const value = new Intl.NumberFormat("en-US", { minimumFractionDigits: fractionDigits, maximumFractionDigits: fractionDigits }).format(amount);
   const prefix = { USD: "US$", JPY: "JP¥", MXN: "MX$", BRL: "R$", HKD: "HK$" }[currency];
   return prefix ? `${prefix}${value}` : `${currency} ${value}`;
+}
+
+/**
+ * 按地区官网已确认的文案展示本币金额。地区与币种必须同时匹配，防止采集异常时把错误币种包装成官方价；
+ * 例如 US/MX 都显示 "$"，其地区语义由紧邻的中文名称表达。香港仅在金额为整数时省略小数，
+ * 日区固定追加“円（税込）”，以保持管理员确认的官方阅读口径。
+ */
+export function formatRegionalPrice(amountMinor: number, currency: string, regionCode: string): string {
+  if (regionCode === "US" && currency === "USD") return `$ ${(amountMinor / 100).toFixed(2)}`;
+  if (regionCode === "MX" && currency === "MXN") return `$ ${(amountMinor / 100).toFixed(2)}`;
+  if (regionCode === "JP" && currency === "JPY") return `${new Intl.NumberFormat("en-US").format(amountMinor)} 円（税込）`;
+  if (regionCode === "BR" && currency === "BRL") return `R$ ${(amountMinor / 100).toFixed(2)}`;
+  if (regionCode === "HK" && currency === "HKD") {
+    const amount = amountMinor / 100;
+    return `HKD ${Number.isInteger(amount) ? amount.toFixed(0) : amount.toFixed(2)}`;
+  }
+
+  return formatFallbackLocalPrice(amountMinor, currency);
 }
 
 /**
