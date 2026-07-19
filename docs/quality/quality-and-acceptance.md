@@ -134,6 +134,14 @@
 - 配置锁定为 `@cloudflare/playwright 1.3.0`、Wrangler `4.112.0`、`@cloudflare/workers-types 5.20260714.1`、`nodejs_compat` 和 `BROWSER` Binding；实现须用全量 Worker/DOM/类型/构建测试及远程只读 Overcooked! 2 样本验收证明兼容性。
 - 本节只记录已批准设计，不表示代码、提交或生产部署已经完成。生产部署仍须单独确认，届时按既有规则从 V0.0.12 升至 V0.0.13。
 
+### 3.16 日区升级包 Browser Run 生产集成只读验收（2026-07-19）
+
+- 提交 `f96d1b6` 至 `bf7e7e9` 已依次完成固定 Browser Binding、日区唯一升级根、任天堂官方报价、受限浏览器批处理、关系证据组合、向导接线与保存前二次验证。本轮重新运行 Worker 59 个测试文件、293 项测试，DOM 4 个测试文件、10 项测试，以及 2 项 Browser Binding/发布契约测试，全部通过；TypeScript、生产构建、差异空白与敏感信息扫描同样退出为 0。扫描命中只包含脱敏规则、协议说明、明确假测试值和扫描命令本身，未发现真实凭据、会话持久化或 Browser Session 记录代码。
+- 经管理员授权使用 `wrangler dev --remote --port 8791` 连接远程 D1 与 Browser Run；对已由美区官方搜索确认的 `Overcooked! 2 - Nintendo Switch 2 Edition Upgrade Pack` 执行两次相同的业务只读地区核验，一次验证真实向导状态，一次裁剪非渲染字段供审计。两次均返回 HTTP 200，端到端耗时位于 11–15 秒区间，单次请求没有自动重试。
+- 日区结果为 `automatic`，规范化官方 URL 为 `https://store-jp.nintendo.com/item/software/D70050000064985/`，标题为 `Overcooked® 2 - オーバークック２ Nintendo Switch 2 Edition アップグレードパス`，币种为 JPY；任天堂官方价格 API 返回当前价 JP¥700、常规价 JP¥1,000。金额只作为本次候选证据，不写入价格历史。
+- 每次请求都在返回前等待 page、context 与请求级 browser 的关闭链；生产使用 `launch` 会话且未配置 keep-alive 或跨请求复用，符合 Cloudflare Playwright 对 `browser.close()` 关闭 launch 会话的语义。验收仅记录关闭结论，不记录 HTML、Cookie、队列信息、会话标识、响应正文、截图、Trace、网络归档或异常堆栈。
+- 业务验收没有调用最终确认、创建订阅、手动刷新、价格采集、Telegram 或部署端点，因此没有修改游戏、地区商品、订阅、价格快照、目标价或通知数据。管理员为访问受保护只读端点手动登录时创建了认证会话；该认证写入不扩大为任何业务数据授权。生产仍保持 V 0.0.12，下一步必须先提交本节文档，再单独取得 V 0.0.13 部署确认。
+
 ## 4. 验收原则
 
 - 不把“请求成功”当作“价格正确”：必须通过商品身份校验。

@@ -928,9 +928,9 @@ git push origin main
 
 **Interfaces:**
 - Consumes: Task 1–7 的完整实现。
-- Produces: 可审计的本地/远程只读验收记录；不修改生产 D1。
+- Produces: 可审计的本地/远程业务只读验收记录；不修改生产业务表。若远程预览没有可复用会话，管理员手动登录会按既有认证设计创建会话记录，但不得因此调用任何订阅、刷新或通知写入端点。
 
-- [ ] **Step 1: 运行完整本地质量门禁**
+- [x] **Step 1: 运行完整本地质量门禁**
 
 Run: `npm test`
 
@@ -952,7 +952,7 @@ Run: `node --test test/browser-run-production-config.test.mjs test/deploy-produc
 
 Expected: 依赖/Binding 与版本发布契约均通过；测试不会递增版本或部署。
 
-- [ ] **Step 2: 执行注释、安全和差异检查**
+- [x] **Step 2: 执行注释、安全和差异检查**
 
 Run: `git diff --check`
 
@@ -962,7 +962,7 @@ Run: `rg -n "TELEGRAM_BOT_TOKEN=|TELEGRAM_CHAT_ID=|Bearer |password=|sessionId|t
 
 Expected: 只出现类型名、假测试值或明确禁止记录的文档文字；不存在真实凭据、Browser Session 值或持久化代码。逐个检查所有命中。
 
-- [ ] **Step 3: 取得管理员授权后启动远程预览并执行只读样本**
+- [x] **Step 3: 取得管理员授权后启动远程预览并执行只读样本**
 
 Run: `npx wrangler dev --remote --port 8791`
 
@@ -970,7 +970,9 @@ Run: `npx wrangler dev --remote --port 8791`
 
 Expected: 日区返回 `automatic`，URL 为 `https://store-jp.nintendo.com/item/software/D70050000064985/`，货币为 JPY，当前价/常规价来自官方价格 API；请求结束后 Browser Session 正常关闭。不得调用最终确认、创建订阅、手动刷新或部署。
 
-- [ ] **Step 4: 更新结果文档**
+执行记录：远程预览的 `localhost` 会话已失效，管理员手动登录后先在真实向导执行一次官方搜索与地区核验，再以一次性本地只读代理仅重放 `resolve-regions` 以裁剪未渲染证据。两次地区核验均为 HTTP 200；登录只创建认证会话，搜索与地区核验均未修改生产业务表。
+
+- [x] **Step 4: 更新结果文档**
 
 在质量文档只记录允许字段：执行日期、测试数量、`status`、规范化日区 URL、价格来源为官方、耗时区间和 Session 正常关闭结论。不记录 HTML、Cookie、队列信息、响应正文或异常堆栈。README/追踪表状态改为“已实现、远程只读验收通过、待生产部署”。
 
