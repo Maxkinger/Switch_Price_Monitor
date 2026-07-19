@@ -256,3 +256,57 @@ describe("地区中文名与官网价格文字", () => {
     expect(screen.queryByText("US · USD")).toBeNull();
   });
 });
+
+/** 历史订阅可能在中文名规则上线前把美区官方英文标题写入 nameZh；页面必须在展示层修正，避免管理员看到英文主标题。 */
+describe("中文游戏名展示", () => {
+  afterEach(() => {
+    // 每个页面用例都清理异步读取后的 DOM，避免相同英文标题在不同页面之间互相污染断言。
+    cleanup();
+  });
+
+  it("shows Chinese game names on dashboard cards even when stored nameZh is English", async () => {
+    const englishOverview: DashboardOverview = {
+      ...localizedOverview,
+      subscriptions: [{
+        ...localizedOverview.subscriptions[0],
+        nameZh: "Overcooked! 2 – Nintendo Switch 2 Edition",
+        nameEn: "Overcooked! 2 – Nintendo Switch 2 Edition",
+      }],
+    };
+    const api = {
+      getDashboard: vi.fn(async () => englishOverview),
+      refreshNow: vi.fn(),
+      deleteSubscriptions: vi.fn(),
+    };
+
+    render(<DashboardPage api={api} onNavigate={vi.fn()} onUnauthorized={vi.fn()} />);
+
+    expect(await screen.findByRole("heading", { name: "胡闹厨房 2 Nintendo Switch 2 Edition" })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "选择 胡闹厨房 2 Nintendo Switch 2 Edition" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Overcooked! 2 – Nintendo Switch 2 Edition" })).toBeNull();
+  });
+
+  it("shows the Chinese game name as the first line on the subscription detail page", async () => {
+    const englishDetail: SubscriptionDetail = {
+      ...localizedSubscriptionDetail,
+      game: {
+        ...localizedSubscriptionDetail.game,
+        nameZh: "Overcooked! 2 – Nintendo Switch 2 Edition",
+        nameEn: "Overcooked! 2 – Nintendo Switch 2 Edition",
+      },
+    };
+    const api = {
+      getSubscription: vi.fn(async () => englishDetail),
+      refreshNow: vi.fn(),
+      updateSubscription: vi.fn(),
+      resolveMissingRegions: vi.fn(),
+      completeMissingRegions: vi.fn(),
+      deleteSubscriptions: vi.fn(),
+    };
+
+    render(<SubscriptionDetailPage api={api} productApi={{} as ReturnType<typeof createProductApiClient>} subscriptionId="subscription-overcooked-2-switch-2-edition" onBack={vi.fn()} onUnauthorized={vi.fn()} />);
+
+    expect(await screen.findByRole("heading", { name: "胡闹厨房 2 Nintendo Switch 2 Edition" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Overcooked! 2 – Nintendo Switch 2 Edition" })).toBeNull();
+  });
+});

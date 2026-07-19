@@ -158,6 +158,16 @@ describe("subscription confirmation service", () => {
     await expect(counts()).resolves.toEqual({ games: 2, products: 4, subscriptions: 2, regions: 4 });
   });
 
+  it("stores a controlled Chinese display name while keeping the official title for identity", async () => {
+    const service = createService(allFixtureCandidates());
+
+    await expect(service.confirm([overcookedSubscription()], now)).resolves.toEqual([expect.objectContaining({ status: "created" })]);
+
+    const row = await env.DB.prepare("SELECT name_zh AS nameZh, name_en AS nameEn FROM games LIMIT 1").first<{ nameZh: string; nameEn: string }>();
+    // `name_zh` 是管理页和日报的中文展示名；`name_en` 继续保留官方标题，供跨区补全和采集身份复核使用。
+    expect(row).toEqual({ nameZh: "胡闹厨房 2", nameEn: "Overcooked! 2" });
+  });
+
   it("returns an existing logical game subscription without replacing its confirmed regions", async () => {
     await seedExistingOvercooked(now);
     const service = createService(allFixtureCandidates());

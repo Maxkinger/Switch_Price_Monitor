@@ -6,6 +6,7 @@ import type {
   RegionCode,
   SubscriptionConfirmationResult,
 } from "../../shared/domain";
+import { resolveChineseGameName } from "../../shared/game-display-name";
 import type { OfficialNintendoProductPageResolver } from "../providers/official-nintendo-product-page";
 import {
   SubscriptionConfirmationRepository,
@@ -158,8 +159,8 @@ export class SubscriptionConfirmationService {
 
     return {
       game: {
-        // 官方页面通常不含可验证中文译名；首版将官方标题同时存为中英文回退显示，后续可在管理员编辑中补充中文名。
-        nameZh: selected.canonicalTitle,
+        // 中文名仅来自受控本地词表；未确认的游戏保持官方标题，避免保存阶段调用翻译、AI 或第三方服务污染商品身份。
+        nameZh: resolveChineseGameName(selected.canonicalTitle) ?? selected.canonicalTitle,
         nameEn: selected.canonicalTitle,
         normalizedName: normalizedGameName(selected),
         publisher: selected.publisher,
