@@ -37,6 +37,47 @@ describe("JapaneseSubscriptionConfirmationService", () => {
     expect(prices.resolve).toHaveBeenCalledWith(candidate);
   });
 
+  it("accepts the same automatic Japanese Gourmet Edition bundle when submitted URL omits the Store trailing slash", async () => {
+    // 添加订阅页的地区候选可能经历前端状态、旧页面或人工链接标准化差异，导致日区 Store URL 末尾斜杠缺失。
+    // 保存前复核不能信任这个浏览器字符串本身，但可以用同一个数字标题 ID 与官方搜索/价格 API 交叉确认后重建官方候选。
+    const anchor = usGourmetEditionCandidate();
+    const verified = localizedJapaneseGourmetEditionCandidate();
+    const submitted = { ...verified, productUrl: verified.productUrl.replace(/\/$/u, "") };
+    const search = { search: vi.fn<OfficialProductSearch["search"]>().mockResolvedValue({ status: "available", candidates: [verified] }) };
+    const prices = { resolve: vi.fn().mockResolvedValue(officialPriceId(verified)) };
+    const service = new JapaneseSubscriptionConfirmationService(search, prices);
+
+    await expect(service.resolve(anchor, submitted, "automatic")).resolves.toEqual(verified);
+    expect(search.search).toHaveBeenCalledWith("JP", submitted.canonicalTitle, expect.any(AbortSignal));
+    expect(prices.resolve).toHaveBeenCalledWith(verified);
+  });
+
+  it("recovers an automatic Japanese Gourmet Edition bundle when submitted title still uses the default-region English name", async () => {
+    // 真实添加流程中，前端状态或旧页面可能保留默认区英文标题，但日区 URL 已经指向官方美食家版。
+    // 最终确认必须先用英文查询得到同系列日文别名，再执行一次受限日文查询；只有同一标题 ID、bundle 类型、Team17 和价格 API 全部吻合才可保存。
+    const anchor = usGourmetEditionCandidate();
+    const verified = localizedJapaneseGourmetEditionCandidate();
+    const submitted = { ...verified, canonicalTitle: anchor.canonicalTitle };
+    const seriesAnchor = localizedJapaneseSwitch2EditionCandidate({
+      canonicalTitle: "Overcooked® 2 - オーバークック２ Nintendo Switch 2 Edition",
+      productUrl: "https://store-jp.nintendo.com/item/software/D70010000106252/",
+      productType: "game",
+    });
+    const search = {
+      search: vi.fn<OfficialProductSearch["search"]>().mockImplementation(async (_regionCode, query) => {
+        if (query === anchor.canonicalTitle) return { status: "available" as const, candidates: [seriesAnchor] };
+        return { status: "available" as const, candidates: [verified] };
+      }),
+    };
+    const prices = { resolve: vi.fn().mockResolvedValue(officialPriceId(verified)) };
+    const service = new JapaneseSubscriptionConfirmationService(search, prices);
+
+    await expect(service.resolve(anchor, submitted, "automatic")).resolves.toEqual(verified);
+    expect(search.search).toHaveBeenNthCalledWith(1, "JP", anchor.canonicalTitle, expect.any(AbortSignal));
+    expect(search.search).toHaveBeenNthCalledWith(2, "JP", "オーバークック2", expect.any(AbortSignal));
+    expect(prices.resolve).toHaveBeenCalledWith(verified);
+  });
+
   it("rejects a search result with another official Japanese URL instead of returning browser supplied identity fields", async () => {
     const anchor = usSwitch2EditionCandidate();
     const candidate = localizedJapaneseSwitch2EditionCandidate();
@@ -124,6 +165,21 @@ function usSwitch2EditionCandidate(): OfficialProductCandidate {
   };
 }
 
+/** 美区美食家版组合商品锚点复刻真实添加流程；它的 bundle 类型必须贯穿跨语言最终确认。 */
+function usGourmetEditionCandidate(): OfficialProductCandidate {
+  return {
+    regionCode: "US",
+    productUrl: "https://www.nintendo.com/us/store/products/overcooked-2-gourmet-edition-switch/",
+    canonicalTitle: "Overcooked! 2 - Gourmet Edition",
+    publisher: "Team17",
+    productType: "bundle",
+    currency: "USD",
+    coverUrl: null,
+    currentPriceMinor: 3999,
+    regularPriceMinor: null,
+  };
+}
+
 /** 日区候选使用实际 My Nintendo Store 下载版 URL 格式，并保留官方本地化标题以覆盖跨语言边界。 */
 function localizedJapaneseSwitch2EditionCandidate(overrides: Partial<OfficialProductCandidate> = {}): OfficialProductCandidate {
   return {
@@ -136,6 +192,22 @@ function localizedJapaneseSwitch2EditionCandidate(overrides: Partial<OfficialPro
     coverUrl: null,
     currentPriceMinor: 1000,
     regularPriceMinor: null,
+    ...overrides,
+  };
+}
+
+/** 日区美食家版在官方软件搜索 API 中以 DL_DLC 返回，但业务上是可独立订阅的组合商品，需要按 bundle 保存。 */
+function localizedJapaneseGourmetEditionCandidate(overrides: Partial<OfficialProductCandidate> = {}): OfficialProductCandidate {
+  return {
+    regionCode: "JP",
+    productUrl: "https://store-jp.nintendo.com/item/software/D70070000010202/",
+    canonicalTitle: "Overcooked® 2 - オーバークック２：真の食通エディション",
+    publisher: "Team17",
+    productType: "bundle",
+    currency: "JPY",
+    coverUrl: null,
+    currentPriceMinor: 1225,
+    regularPriceMinor: 4900,
     ...overrides,
   };
 }
