@@ -90,7 +90,7 @@ export function formatRegionalPrice(amountMinor: number, currency: string, regio
 Run: `npx vitest run test/dashboard-view-model.test.ts`  
 Expected: PASS；五区均为确认文字且未知地区安全回退。
 
-- [ ] **Step 5: 任务提交门禁（与最终变更合并待确认）**
+- [x] **Step 5: 任务提交门禁（已随最终变更推送 `17e64f5`）**
 
 Run: `git diff --check`  
 Expected: 无输出。
@@ -143,7 +143,7 @@ Expected: FAIL，当前页面仍显示代码或 `US · USD`。
 Run: `npm run test:dom -- --run test/dashboard-page.test.tsx`  
 Expected: PASS；五区中文名、价格文字和无重复币种代码均可见。
 
-- [ ] **Step 5: 任务提交门禁（与最终变更合并待确认）**
+- [x] **Step 5: 任务提交门禁（已随最终变更推送 `17e64f5`）**
 
 Run: `git diff --check`  
 Expected: 无输出。
@@ -200,7 +200,7 @@ Expected: 无输出。
 
 README 标记本规格已实现、草图已审阅；追踪表记录两页共用地区与价格展示规则；规格补记草图结论和零业务写入边界。
 
-- [ ] **Step 5: 任务提交门禁**
+- [x] **Step 5: 任务提交门禁（已随最终变更推送 `17e64f5`）**
 
 管理员确认后，依次执行 `git add docs/README.md docs/requirements/traceability.md docs/superpowers/specs/2026-07-19-localized-region-price-display-design.md`、`git commit -m "docs: record localized price display acceptance"`、`git push origin main`。
 
