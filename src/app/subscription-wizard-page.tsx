@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useRef, useState, type FormEvent } from "react";
 import { createProductApiClient, ProductApiError, type RegionResolutionResponse } from "./api-client";
 import {
   candidatePriceLabel,
@@ -127,10 +127,12 @@ function RegionalConfirmationPanel({
   confirmedCandidates,
   manualLinks,
   pendingLinkKey,
+  isRegionalInteractionDisabled,
   expandedRegionalKeys,
   onSelectCandidate,
   onManualLinkChange,
   onResolveLink,
+  onRetryRegions,
   onToggleSkip,
   onToggleCandidateExpansion,
 }: {
@@ -139,11 +141,15 @@ function RegionalConfirmationPanel({
   confirmedCandidates: Record<string, OfficialProductCandidate>;
   manualLinks: Record<string, string>;
   pendingLinkKey: string | null;
+  /** 搜索或地区解析进行中时禁止会发网的地区操作，避免旧面板在新搜索尚未结算时启动并发 Browser Run。 */
+  isRegionalInteractionDisabled: boolean;
   /** 展开键只控制当前页面的候选可见性，不能参与地区确认、跳过或最终订阅载荷。 */
   expandedRegionalKeys: string[];
   onSelectCandidate: (regionCode: RegionCode, candidate: OfficialProductCandidate, source: RegionalProductMatchSource) => void;
   onManualLinkChange: (key: string, value: string) => void;
   onResolveLink: (regionCode: RegionCode) => void;
+  /** 日区自动关系发现失败时由管理员显式再次触发；该点击不读取 effect，避免后台反复消耗 Browser Run 配额。 */
+  onRetryRegions: () => void;
   onToggleSkip: (regionCode: RegionCode) => void;
   onToggleCandidateExpansion: (key: string) => void;
 }) {
@@ -206,6 +212,10 @@ function RegionalConfirmationPanel({
               ) : null}
               {resolution.status === "needs-manual-link" ? (
                 <div className="regional-option__link">
+                  <p>{resolution.message}</p>
+                  {resolution.regionCode === "JP" ? (
+                    <button type="button" className="text-button" disabled={isRegionalInteractionDisabled} onClick={onRetryRegions}>重新核验</button>
+                  ) : null}
                   <input
                     type="url"
                     value={manualLinks[key] ?? ""}
@@ -213,7 +223,7 @@ function RegionalConfirmationPanel({
                     placeholder="粘贴该区任天堂官方商品链接"
                     aria-label={`${resolution.regionCode} 任天堂官方商品链接`}
                   />
-                  <button type="button" className="text-button" disabled={pendingLinkKey === key} onClick={() => onResolveLink(resolution.regionCode)}>
+                  <button type="button" className="text-button" disabled={isRegionalInteractionDisabled || pendingLinkKey === key} onClick={() => onResolveLink(resolution.regionCode)}>
                     {pendingLinkKey === key ? "核验中…" : confirmed ? "重新核验" : "核验链接"}
                   </button>
                 </div>
@@ -241,6 +251,11 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
   const [fallbackLink, setFallbackLink] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [isResolvingRegions, setIsResolvingRegions] = useState(false);
+  /**
+   * 每次跨区解析都持有递增代次。搜索、官方链接回退或下一次解析会使旧代次失效，
+   * 这样慢速 Browser Run 的成功、失败和 finally 都不能覆盖后来搜索的地区结果或加载状态。
+   */
+  const regionResolutionGeneration = useRef(0);
   const [resolutions, setResolutions] = useState<RegionResolutionResponse[]>([]);
   // 解析响应可能为空（例如仅启用默认区），因此单独记录已完成核验的默认区候选，不能以结果数组长度判断是否允许提交。
   const [resolvedCandidateKeys, setResolvedCandidateKeys] = useState<string[]>([]);
@@ -263,6 +278,15 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
     setNotice(error instanceof ProductApiError ? error.message : fallbackMessage);
   }
 
+  /**
+   * 新搜索或新默认区官方链接开始时撤销所有旧跨区请求的写入权，并立即关闭旧请求留下的局部加载状态。
+   * 请求本身不能在浏览器端可靠取消，但代次守卫可阻止它在结算后把旧商品映射重新写入新的向导上下文。
+   */
+  function invalidateRegionResolutionGeneration(): void {
+    regionResolutionGeneration.current += 1;
+    setIsResolvingRegions(false);
+  }
+
   /** 仅从当前官方搜索响应中派生已选项；旧搜索结果不会混进下一次批量确认。 */
   const selectedCandidates = useMemo(() => {
     if (wizard.searchResult.status !== "available") return [];
@@ -278,6 +302,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
       return;
     }
 
+    invalidateRegionResolutionGeneration();
     setIsSearching(true);
     setNotice(null);
     setResults([]);
@@ -303,6 +328,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
       return;
     }
 
+    invalidateRegionResolutionGeneration();
     setIsSearching(true);
     setNotice(null);
     try {
@@ -326,19 +352,23 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
       return;
     }
 
+    const generation = regionResolutionGeneration.current + 1;
+    regionResolutionGeneration.current = generation;
     setIsResolvingRegions(true);
     setNotice(null);
     setExpandedRegionalKeys([]);
     try {
       const resolved = await api.resolveRegions(selectedCandidates);
-      setResolutions(resolved);
-      setResolvedCandidateKeys(selectedCandidates.map((candidate) => candidateKey(candidate)));
+      if (regionResolutionGeneration.current !== generation) return;
+      setResolutions(() => resolved);
+      setResolvedCandidateKeys(() => selectedCandidates.map((candidate) => candidateKey(candidate)));
       // 自动结果仅来自 Worker 对保存设置和官方身份的唯一匹配；页面不会自行按名称或价格猜测跨区商品。
       setWizard((current) => applyAutomaticRegionResolutions(current, resolved));
     } catch (error) {
+      if (regionResolutionGeneration.current !== generation) return;
       handleProductError(error, "跨区匹配未完成，请稍后重试。");
     } finally {
-      setIsResolvingRegions(false);
+      if (regionResolutionGeneration.current === generation) setIsResolvingRegions(false);
     }
   }
 
@@ -366,12 +396,43 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
     setPendingLinkKey(key);
     setNotice(null);
     try {
-      const candidate = await api.resolveOfficialLink(regionCode, link);
+      // 已选默认区锚点必须随日区升级包人工链接一起交给 Worker；其他地区或类型会由服务端维持原页面解析流程。
+      const candidate = await api.resolveOfficialLink(regionCode, link, selected);
       handleRegionalCandidate(selected, regionCode, candidate, "manual_link");
     } catch (error) {
       handleProductError(error, "地区商品链接核验失败，请检查链接后重试。");
     } finally {
       setPendingLinkKey(null);
+    }
+  }
+
+  /**
+   * 日区 Browser Run 失败后仅在管理员点击时重新请求当前选择，避免 effect 因状态渲染循环自动重试。
+   * 不清空 manualLinks，确保管理员在自动核验仍失败时保留已输入的官方链接；代次守卫负责阻止过期回写，函数式 setWizard 只确保同一代次更新读取最新状态。
+   */
+  async function handleRetryRegions() {
+    if (selectedCandidates.length === 0) {
+      setNotice("请先点击选择至少一个官方候选商品。");
+      return;
+    }
+
+    const generation = regionResolutionGeneration.current + 1;
+    regionResolutionGeneration.current = generation;
+    setIsResolvingRegions(true);
+    setNotice(null);
+    setExpandedRegionalKeys(() => []);
+    try {
+      const resolved = await api.resolveRegions(selectedCandidates);
+      if (regionResolutionGeneration.current !== generation) return;
+      setResolutions(() => resolved);
+      setResolvedCandidateKeys(() => selectedCandidates.map((candidate) => candidateKey(candidate)));
+      // 自动结果仍只能由 Worker 的最新官方关系发现写入；函数式更新避免读取过期向导状态。
+      setWizard((current) => applyAutomaticRegionResolutions(current, resolved));
+    } catch (error) {
+      if (regionResolutionGeneration.current !== generation) return;
+      handleProductError(error, "跨区匹配未完成，请稍后重试。");
+    } finally {
+      if (regionResolutionGeneration.current === generation) setIsResolvingRegions(false);
     }
   }
 
@@ -494,7 +555,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
               })}
             </div>
             <div className="candidate-actions">
-              <button className="secondary-button" type="button" onClick={handleResolveRegions} disabled={isResolvingRegions || selectedCandidates.length === 0}>
+              <button className="secondary-button" type="button" onClick={handleResolveRegions} disabled={isSearching || isResolvingRegions || selectedCandidates.length === 0}>
                 {isResolvingRegions ? "匹配中…" : "核验其他地区"}
               </button>
               <button className="secondary-button" type="button" onClick={handlePreviewSources} disabled={selectedCandidates.length === 0}>预览价格来源</button>
@@ -524,10 +585,12 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
             confirmedCandidates={wizard.regionalConfirmations}
             manualLinks={manualLinks}
             pendingLinkKey={pendingLinkKey}
+            isRegionalInteractionDisabled={isSearching || isResolvingRegions}
             expandedRegionalKeys={expandedRegionalKeys}
             onSelectCandidate={(regionCode, candidate, source) => handleRegionalCandidate(selected, regionCode, candidate, source)}
             onManualLinkChange={(key, value) => setManualLinks((current) => ({ ...current, [key]: value }))}
             onResolveLink={(regionCode) => handleResolveRegionalLink(selected, regionCode)}
+            onRetryRegions={handleRetryRegions}
             onToggleSkip={(regionCode) => setWizard((current) => skipRegionalConfirmation(current, candidateKey(selected), regionCode))}
             onToggleCandidateExpansion={(key) => setExpandedRegionalKeys((current) => current.includes(key) ? current.filter((entry) => entry !== key) : [...current, key])}
           />

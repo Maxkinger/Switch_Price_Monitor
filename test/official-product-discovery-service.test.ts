@@ -1,13 +1,113 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { OfficialProductCandidate, OfficialProductSearch } from "../src/shared/domain";
-import { OfficialProductDiscoveryService } from "../src/worker/services/official-product-discovery-service";
+import { officialCandidateKey, OfficialProductDiscoveryService } from "../src/worker/services/official-product-discovery-service";
+
+/** 日区升级包人工核验只允许这一条完整、无参数的官方软件页；测试不能以模糊链接掩盖服务端关系证明的边界。 */
+const upgradeUrl = "https://store-jp.nintendo.com/item/software/D70050000064985/";
 
 /**
  * 商品发现服务测试以可注入的设置、名称搜索和官方页面解析器替代 D1 与真实任天堂请求，
  * 证明默认区由服务端设置控制，且香港区可安全进入官方链接确认流程而不会借用美区候选。
  */
 describe("official product discovery service", () => {
+  it("batches eligible Japanese upgrade fallbacks after ordinary regional search", async () => {
+    // Browser Run 只能在普通官方搜索和受限本地化回退都没有同类型候选后调用；批量注入可防止每张卡各自启动浏览器会话。
+    const anchor = usCandidate({ canonicalTitle: "Overcooked! 2 – Nintendo Switch 2 Edition Upgrade Pack", productType: "upgrade-pack" });
+    const jpUpgrade = japaneseCandidate({ canonicalTitle: "Overcooked® 2 - オーバークック２ Nintendo Switch 2 Edition アップグレードパス", productType: "upgrade-pack", productUrl: upgradeUrl });
+    const japaneseUpgrades = {
+      discover: vi.fn().mockResolvedValue(new Map([[officialCandidateKey(anchor), { status: "automatic", candidate: jpUpgrade }]])),
+      resolveManual: vi.fn(),
+    };
+    const service = new OfficialProductDiscoveryService(
+      { get: async () => ({ defaultSearchRegion: "US", enabledRegions: ["US", "JP"] }) },
+      { search: vi.fn().mockResolvedValue({ status: "available", candidates: [] }) },
+      { resolve: vi.fn() },
+      { resolveRelated: vi.fn() },
+      japaneseUpgrades,
+    );
+
+    await expect(service.resolveRegions([anchor])).resolves.toEqual([{ candidateKey: officialCandidateKey(anchor), regionCode: "JP", status: "automatic", candidate: jpUpgrade }]);
+    expect(japaneseUpgrades.discover).toHaveBeenCalledExactlyOnceWith([anchor]);
+  });
+
+  it("preserves Japanese game link parsing while requiring an anchor for a parsed upgrade pack", async () => {
+    // 日区普通游戏/DLC 没有升级关系时维持既有页面解析；页面若识别出升级包却没有锚点则拒绝返回，完整升级包锚点则必须直接走关系服务。
+    const anchor = usCandidate({ canonicalTitle: "Overcooked! 2 – Nintendo Switch 2 Edition Upgrade Pack", productType: "upgrade-pack" });
+    const jpUpgrade = japaneseCandidate({ productType: "upgrade-pack", productUrl: upgradeUrl });
+    const japaneseUpgrades = { discover: vi.fn(), resolveManual: vi.fn().mockResolvedValue(jpUpgrade) };
+    const jpGame = japaneseCandidate({ productType: "game", productUrl: "https://store-jp.nintendo.com/item/software/D70010000106252/" });
+    const pages = { resolve: vi.fn().mockResolvedValue(jpUpgrade).mockResolvedValueOnce(jpGame) };
+    const service = new OfficialProductDiscoveryService(
+      { get: async () => ({ defaultSearchRegion: "US", enabledRegions: ["US", "JP"] }) },
+      { search: vi.fn() },
+      pages,
+      { resolveRelated: vi.fn() },
+      japaneseUpgrades,
+    );
+
+    await expect(service.resolveOfficialLink("JP", upgradeUrl, anchor)).resolves.toEqual(jpUpgrade);
+    expect(japaneseUpgrades.resolveManual).toHaveBeenCalledWith(anchor, upgradeUrl);
+    expect(pages.resolve).not.toHaveBeenCalled();
+    await expect(service.resolveOfficialLink("JP", jpGame.productUrl)).resolves.toEqual(jpGame);
+    expect(pages.resolve).toHaveBeenCalledWith("JP", jpGame.productUrl, expect.any(AbortSignal));
+    await expect(service.resolveOfficialLink("JP", upgradeUrl)).rejects.toThrow("日区升级包链接核验需要完整的默认区官方商品锚点。");
+    await expect(service.resolveOfficialLink("JP", upgradeUrl, usCandidate({ productType: "game" }))).rejects.toThrow("日区升级包链接核验需要完整的默认区官方商品锚点。");
+  });
+
+  it("does not start Japanese upgrade discovery when ordinary official search is unavailable", async () => {
+    // 官方搜索不可用时没有“普通回退为空”的可审计结论，Browser Run 不得作为替代搜索入口，必须直接保留人工官方链接路径。
+    const anchor = usCandidate({ productType: "upgrade-pack" });
+    const japaneseUpgrades = { discover: vi.fn(), resolveManual: vi.fn() };
+    const service = new OfficialProductDiscoveryService(
+      { get: async () => ({ defaultSearchRegion: "US", enabledRegions: ["US", "JP"] }) },
+      { search: vi.fn().mockResolvedValue({ status: "unavailable", message: "日区官方搜索暂不可用。" }) },
+      { resolve: vi.fn() },
+      { resolveRelated: vi.fn() },
+      japaneseUpgrades,
+    );
+
+    await expect(service.resolveRegions([anchor])).resolves.toEqual([{ candidateKey: officialCandidateKey(anchor), regionCode: "JP", status: "needs-manual-link" }]);
+    expect(japaneseUpgrades.discover).not.toHaveBeenCalled();
+  });
+
+  it("does not start Japanese upgrade discovery when ordinary official search contains a same-type candidate", async () => {
+    // 一条已验证的同类型官方候选已足以进入既有身份匹配流程；Browser Run 只能补足真正没有同类型结果的受限空白，而不能覆盖人工选择。
+    const anchor = usCandidate({ productType: "upgrade-pack" });
+    const ordinaryCandidate = japaneseCandidate({ productType: "upgrade-pack", canonicalTitle: "日区其他升级包" });
+    const japaneseUpgrades = { discover: vi.fn(), resolveManual: vi.fn() };
+    const service = new OfficialProductDiscoveryService(
+      { get: async () => ({ defaultSearchRegion: "US", enabledRegions: ["US", "JP"] }) },
+      { search: vi.fn().mockResolvedValue({ status: "available", candidates: [ordinaryCandidate] }) },
+      { resolve: vi.fn() },
+      { resolveRelated: vi.fn() },
+      japaneseUpgrades,
+    );
+
+    await service.resolveRegions([anchor]);
+    expect(japaneseUpgrades.discover).not.toHaveBeenCalled();
+  });
+
+  it("safely downgrades every eligible Japanese upgrade when batch discovery throws an ordinary error", async () => {
+    // 未分类的 Browser、网络或价格异常不能泄漏给管理员，也不能中断其他普通地区结果；每个 eligible 锚点仅得到固定的人工链接说明。
+    const anchor = usCandidate({ productType: "upgrade-pack" });
+    const japaneseUpgrades = { discover: vi.fn().mockRejectedValue(new Error("external detail must stay private")), resolveManual: vi.fn() };
+    const service = new OfficialProductDiscoveryService(
+      { get: async () => ({ defaultSearchRegion: "US", enabledRegions: ["US", "JP"] }) },
+      { search: vi.fn().mockResolvedValue({ status: "available", candidates: [] }) },
+      { resolve: vi.fn() },
+      { resolveRelated: vi.fn() },
+      japaneseUpgrades,
+    );
+
+    await expect(service.resolveRegions([anchor])).resolves.toEqual([{
+      candidateKey: officialCandidateKey(anchor),
+      regionCode: "JP",
+      status: "needs-manual-link",
+      message: "日区自动核验暂不可用，请重新核验或粘贴官方链接。",
+    }]);
+  });
+
   it("uses the saved default search region instead of a browser-provided region", async () => {
     // 管理员可能在浏览器开发工具中伪造地区；服务必须始终读取持久化设置，防止不同区域商品被错误混合。
     const search = { search: vi.fn<OfficialProductSearch["search"]>().mockResolvedValue({ status: "available", candidates: [usCandidate()] }) };

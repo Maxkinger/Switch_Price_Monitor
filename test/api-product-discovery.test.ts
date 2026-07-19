@@ -2,6 +2,7 @@ import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import worker, { type Env } from "../src/worker";
+import { JapaneseUpgradeBatchLimitError } from "../src/worker/providers/japanese-upgrade-browser";
 import { handleProductRoute } from "../src/worker/routes/product-routes";
 import { SubscriptionPreviewService } from "../src/worker/services/subscription-preview-service";
 
@@ -53,6 +54,67 @@ describe("product discovery HTTP routes", () => {
     expect(resolveOfficialLink).toHaveBeenCalledWith("HK", hongKongCandidate().productUrl);
   });
 
+  it("forwards a complete Japanese upgrade anchor only after narrowing it as an official candidate", async () => {
+    // 浏览器可伪造标题字符串；路由必须完整收窄锚点后才交给日区关系服务，令升级包链接的关系证明始终由 Worker 完成。
+    const resolveOfficialLink = vi.fn(async () => japaneseUpgradeCandidate());
+    const discovery = {
+      searchDefaultRegion: async () => ({ status: "available" as const, candidates: [candidate()] }),
+      resolveOfficialLink,
+      resolveRegions: async () => [],
+    };
+    const cookie = await initializeAndLogin();
+    const anchor = { ...candidate(), canonicalTitle: "Overcooked! 2 – Nintendo Switch 2 Edition Upgrade Pack", productType: "upgrade-pack" as const };
+
+    const response = await handleProductRoute(
+      request("/api/products/resolve-link", { regionCode: "JP", productUrl: japaneseUpgradeCandidate().productUrl, anchor }, cookie),
+      env.DB,
+      fixedPreview(),
+      discovery,
+    );
+
+    expect(response?.status).toBe(200);
+    await expect(response?.json()).resolves.toEqual({ candidate: japaneseUpgradeCandidate() });
+    expect(resolveOfficialLink).toHaveBeenCalledWith("JP", japaneseUpgradeCandidate().productUrl, anchor);
+  });
+
+  it("rejects an incomplete Japanese upgrade anchor before invoking official-link discovery", async () => {
+    // 只提交标题或 URL 的伪锚点不能证明升级包类型；路由必须按完整官方候选收窄，避免浏览器把任意文本送入关系服务。
+    const resolveOfficialLink = vi.fn(async () => japaneseUpgradeCandidate());
+    const discovery = { searchDefaultRegion: async () => ({ status: "available" as const, candidates: [] }), resolveOfficialLink, resolveRegions: async () => [] };
+    const cookie = await initializeAndLogin();
+
+    const response = await handleProductRoute(
+      request("/api/products/resolve-link", { regionCode: "JP", productUrl: japaneseUpgradeCandidate().productUrl, anchor: { canonicalTitle: "伪造升级包" } }, cookie),
+      env.DB,
+      fixedPreview(),
+      discovery,
+    );
+
+    expect(response?.status).toBe(422);
+    const payload = await response?.json() as { code?: string; error?: string };
+    // 收窄顺序可能首先拒绝地区或其它缺失字段；安全契约只要求 422 与受控代码，且绝不回显浏览器伪造标题、链接或内部异常。
+    expect(payload.code).toBe("VALIDATION_ERROR");
+    expect(payload.error).not.toContain("伪造升级包");
+    expect(payload.error).not.toContain(japaneseUpgradeCandidate().productUrl);
+    expect(payload.error).not.toContain("internal");
+    expect(resolveOfficialLink).not.toHaveBeenCalled();
+  });
+
+  it("maps a Japanese upgrade batch limit error to a safe validation response", async () => {
+    // 超过 Browser Run 批量上限是管理员可修正的输入问题，路由必须保留受控中文说明而不能归类为 500 或泄漏内部堆栈。
+    const discovery = {
+      searchDefaultRegion: async () => ({ status: "available" as const, candidates: [] }),
+      resolveOfficialLink: async () => candidate(),
+      resolveRegions: async () => { throw new JapaneseUpgradeBatchLimitError("一次最多核验 3 个日区升级包，请分批处理。"); },
+    };
+    const cookie = await initializeAndLogin();
+
+    const response = await handleProductRoute(request("/api/products/resolve-regions", { candidates: [candidate()] }, cookie), env.DB, fixedPreview(), discovery);
+
+    expect(response?.status).toBe(422);
+    await expect(response?.json()).resolves.toEqual({ code: "VALIDATION_ERROR", error: "一次最多核验 3 个日区升级包，请分批处理。" });
+  });
+
   it("returns a per-region manual-link state using the server-configured enabled regions", async () => {
     // 多选候选先由默认区搜索产生；路由不能把浏览器提交的地区范围传给服务，否则旧页面可绕过当前设置。
     const resolveRegions = vi.fn(async () => [{
@@ -79,6 +141,7 @@ describe("product discovery HTTP routes", () => {
       candidateKey: `US:${candidate().productUrl}`,
       regionCode: "HK",
       status: "needs-manual-link",
+      message: "请粘贴该区任天堂官方商品链接",
     }] });
     expect(resolveRegions).toHaveBeenCalledWith([candidate()]);
   });
@@ -144,6 +207,11 @@ function candidate() {
 /** 香港候选必须携带本区官方 URL 与港币；测试刻意不复用美区链接，防止跨区商品错误通过路由边界。 */
 function hongKongCandidate() {
   return { regionCode: "HK" as const, productUrl: "https://www.nintendo.com/hk/soft/overcooked-2/", canonicalTitle: "Overcooked! 2", publisher: "Team17", productType: "game" as const, currency: "HKD", coverUrl: "https://assets.nintendo.com/overcooked-2.jpg", currentPriceMinor: 7800, regularPriceMinor: null };
+}
+
+/** 日区升级包夹具使用受控官方 URL 和升级包类型，专门覆盖路由把完整锚点传入服务端关系复核的契约。 */
+function japaneseUpgradeCandidate() {
+  return { ...candidate(), regionCode: "JP" as const, productUrl: "https://store-jp.nintendo.com/item/software/D70050000064985/", canonicalTitle: "Overcooked® 2 - オーバークック２ Nintendo Switch 2 Edition アップグレードパス", productType: "upgrade-pack" as const, currency: "JPY", currentPriceMinor: 1000 };
 }
 
 /** 最终确认必须保留默认区的官方候选及其匹配来源；即使只有一个地区也不允许跳过该映射。 */

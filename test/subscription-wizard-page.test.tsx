@@ -81,4 +81,100 @@ describe("添加订阅向导的跨区候选折叠", () => {
 
     await waitFor(() => expect(screen.getByRole("button", { name: /Unrelated Nintendo Switch 2 Edition/ })).toBeTruthy());
   });
+
+  it("retries Japanese regional discovery after a safe manual-link message and renders the automatic candidate", async () => {
+    // Browser Run 暂不可用时必须保留人工链接输入，同时管理员可重新发起同一批安全地区解析；第二次响应只能由 Worker 的自动候选更新页面。
+    const user = userEvent.setup();
+    const candidateKey = `${usCandidate.regionCode}:${usCandidate.productUrl}`;
+    const japaneseUpgrade: OfficialProductCandidate = {
+      ...featuredJapaneseCandidate,
+      productUrl: "https://store-jp.nintendo.com/item/software/D70050000064985/",
+      canonicalTitle: "Overcooked® 2 - オーバークック２ Nintendo Switch 2 Edition アップグレードパス",
+      productType: "upgrade-pack",
+    };
+    let resolveRetry: (value: RegionResolutionResponse[]) => void = () => undefined;
+    const retryPending = new Promise<RegionResolutionResponse[]>((resolve) => { resolveRetry = resolve; });
+    const api = wizardApi([]);
+    vi.mocked(api.resolveRegions)
+      .mockResolvedValueOnce([{ candidateKey, regionCode: "JP", status: "needs-manual-link", message: "日区自动核验暂不可用，请重新核验或粘贴官方链接。" }])
+      // 第二次请求保持 pending，证明按钮会在 Browser Run 重试尚未结算时禁用，不能被连续点击并发消耗浏览器配额。
+      .mockReturnValueOnce(retryPending);
+
+    render(<SubscriptionWizardPage api={api} onUnauthorized={vi.fn()} />);
+
+    await user.type(screen.getByRole("textbox", { name: "游戏名称" }), "Overcooked! 2");
+    await user.click(screen.getByRole("button", { name: "搜索官方商品" }));
+    await user.click(await screen.findByRole("button", { name: /Overcooked! 2 – Nintendo Switch 2 Edition/ }));
+    await user.click(screen.getByRole("button", { name: "核验其他地区" }));
+
+    expect(await screen.findByText("日区自动核验暂不可用，请重新核验或粘贴官方链接。")).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "JP 任天堂官方商品链接" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "重新核验" }));
+
+    await waitFor(() => expect(api.resolveRegions).toHaveBeenCalledTimes(2));
+    expect((screen.getByRole("button", { name: "重新核验" }) as HTMLButtonElement).disabled).toBe(true);
+    resolveRetry([{ candidateKey, regionCode: "JP", status: "automatic", candidate: japaneseUpgrade }]);
+    expect(await screen.findByText(`已自动加入监控：${japaneseUpgrade.canonicalTitle}`)).toBeTruthy();
+  });
+
+  it("ignores a stale Japanese retry after a new search starts a newer regional resolution", async () => {
+    // 搜索会重置地区确认上下文：旧 Browser Run 即使稍后成功，也不能把自动候选或安全提示写回新搜索；更不能在新一代仍 pending 时错误关闭加载状态。
+    const user = userEvent.setup();
+    const candidateKey = `${usCandidate.regionCode}:${usCandidate.productUrl}`;
+    const staleJapaneseUpgrade: OfficialProductCandidate = {
+      ...featuredJapaneseCandidate,
+      productUrl: "https://store-jp.nintendo.com/item/software/D70050000064985/",
+      canonicalTitle: "过期日区升级包",
+      productType: "upgrade-pack",
+    };
+    let resolveStaleRetry: (value: RegionResolutionResponse[]) => void = () => undefined;
+    let resolveFreshResolution: (value: RegionResolutionResponse[]) => void = () => undefined;
+    let resolveRefreshedSearch: (value: { status: "available"; candidates: OfficialProductCandidate[] }) => void = () => undefined;
+    const staleRetry = new Promise<RegionResolutionResponse[]>((resolve) => { resolveStaleRetry = resolve; });
+    const freshResolution = new Promise<RegionResolutionResponse[]>((resolve) => { resolveFreshResolution = resolve; });
+    const refreshedSearch = new Promise<{ status: "available"; candidates: OfficialProductCandidate[] }>((resolve) => { resolveRefreshedSearch = resolve; });
+    const api = wizardApi([]);
+    vi.mocked(api.searchProducts)
+      .mockResolvedValueOnce({ status: "available", candidates: [usCandidate] })
+      // 第二次搜索保持 pending，专门暴露旧地区面板在新搜索尚未结算时可能被再次点击的并发窗口。
+      .mockReturnValueOnce(refreshedSearch);
+    vi.mocked(api.resolveRegions)
+      .mockResolvedValueOnce([{ candidateKey, regionCode: "JP", status: "needs-manual-link", message: "日区自动核验暂不可用，请重新核验或粘贴官方链接。" }])
+      .mockReturnValueOnce(staleRetry)
+      .mockReturnValueOnce(freshResolution);
+
+    render(<SubscriptionWizardPage api={api} onUnauthorized={vi.fn()} />);
+
+    await user.type(screen.getByRole("textbox", { name: "游戏名称" }), "Overcooked! 2");
+    await user.click(screen.getByRole("button", { name: "搜索官方商品" }));
+    await user.click(await screen.findByRole("button", { name: /Overcooked! 2 – Nintendo Switch 2 Edition/ }));
+    await user.click(screen.getByRole("button", { name: "核验其他地区" }));
+    await user.click(await screen.findByRole("button", { name: "重新核验" }));
+    await waitFor(() => expect(api.resolveRegions).toHaveBeenCalledTimes(2));
+
+    await user.clear(screen.getByRole("textbox", { name: "游戏名称" }));
+    await user.type(screen.getByRole("textbox", { name: "游戏名称" }), "Overcooked! 2 refreshed");
+    await user.click(screen.getByRole("button", { name: "搜索官方商品" }));
+    const oldRetry = screen.getByRole("button", { name: "重新核验" }) as HTMLButtonElement;
+    const oldResolveRegions = screen.getByRole("button", { name: "核验其他地区" }) as HTMLButtonElement;
+    expect(oldRetry.disabled).toBe(true);
+    expect(oldResolveRegions.disabled).toBe(true);
+    await user.click(oldRetry);
+    await user.click(oldResolveRegions);
+    expect(api.resolveRegions).toHaveBeenCalledTimes(2);
+
+    resolveRefreshedSearch({ status: "available", candidates: [usCandidate] });
+    await user.click(await screen.findByRole("button", { name: /Overcooked! 2 – Nintendo Switch 2 Edition/ }));
+    await user.click(screen.getByRole("button", { name: "核验其他地区" }));
+    await waitFor(() => expect(api.resolveRegions).toHaveBeenCalledTimes(3));
+    expect(screen.getByRole("button", { name: "匹配中…" })).toBeTruthy();
+
+    resolveStaleRetry([{ candidateKey, regionCode: "JP", status: "automatic", candidate: staleJapaneseUpgrade }]);
+    await waitFor(() => expect(screen.queryByText(`已自动加入监控：${staleJapaneseUpgrade.canonicalTitle}`)).toBeNull());
+    expect(screen.queryByText("日区自动核验暂不可用，请重新核验或粘贴官方链接。")).toBeNull();
+    expect(screen.getByRole("button", { name: "匹配中…" })).toBeTruthy();
+
+    resolveFreshResolution([]);
+    await waitFor(() => expect(screen.getByRole("button", { name: "核验其他地区" })).toBeTruthy());
+  });
 });

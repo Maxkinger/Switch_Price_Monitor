@@ -8,6 +8,7 @@ import {
 } from "../../shared/domain";
 import type { ProductType } from "../providers/types";
 import type { OfficialPriceIdCandidate } from "../services/official-price-id-service";
+import { JapaneseUpgradeBatchLimitError } from "../providers/japanese-upgrade-browser";
 import { ProductDiscoveryError, type OfficialProductDiscoveryService } from "../services/official-product-discovery-service";
 import { SubscriptionConfirmationError, type SubscriptionConfirmationService } from "../services/subscription-confirmation-service";
 import { SubscriptionPreviewService } from "../services/subscription-preview-service";
@@ -45,14 +46,22 @@ export async function handleProductRoute(
       return Response.json(await discovery.searchDefaultRegion(query));
     }
     if (isResolveLink && discovery) {
-      // 链接仅能交给服务端官方解析器验证，浏览器不得自报标题、币种或价格，以免伪造跨区商品身份。
-      const { regionCode, productUrl } = readOfficialLinkRequest(await request.json<unknown>());
-      return Response.json({ candidate: await discovery.resolveOfficialLink(regionCode, productUrl) });
+      // 链接与可选完整锚点均交给服务端验证；锚点只用于日区升级包关系证明，浏览器不得以任意标题或币种伪造商品身份。
+      const { regionCode, productUrl, anchor } = readOfficialLinkRequest(await request.json<unknown>());
+      // 未提供锚点的既有普通商品调用保持双参数契约；仅在完整锚点实际存在时扩展到日区升级包关系核验，避免旧注入服务收到多余 undefined 参数。
+      const candidate = anchor === undefined
+        ? await discovery.resolveOfficialLink(regionCode, productUrl)
+        : await discovery.resolveOfficialLink(regionCode, productUrl, anchor);
+      return Response.json({ candidate });
     }
     if (isResolveRegions && discovery) {
       // 只收窄已选默认区候选；启用地区由发现服务从持久化设置读取，浏览器不能借请求体扩大或缩小官方检索范围。
       const { candidates } = readRegionResolutionRequest(await request.json<unknown>());
-      return Response.json({ regions: await discovery.resolveRegions(candidates) });
+      const regions = await discovery.resolveRegions(candidates);
+      // 服务提供日区 Browser Run 的脱敏原因时优先显示；其他人工链接状态沿用既有通用提示，维持客户端 DTO 的稳定非空消息约束。
+      return Response.json({ regions: regions.map((region) => region.status === "needs-manual-link"
+        ? { ...region, message: region.message ?? "请粘贴该区任天堂官方商品链接" }
+        : region) });
     }
     if (isConfirmSubscriptions && confirmation) {
       // 仅把运行时收窄后的完整候选交给确认服务；服务会再次请求每个官方链接，路由绝不直接拼写游戏或订阅 SQL。
@@ -66,7 +75,10 @@ export async function handleProductRoute(
     return Response.json({ regions: await preview.create(candidates) });
   } catch (error) {
     // 表单问题可以安全反馈给管理员；其他错误统一隐藏网络、解析和数据库内部细节。
-    const isValidationError = error instanceof ProductPreviewRequestError || error instanceof ProductDiscoveryError || error instanceof SubscriptionConfirmationError;
+    const isValidationError = error instanceof ProductPreviewRequestError
+      || error instanceof ProductDiscoveryError
+      || error instanceof SubscriptionConfirmationError
+      || error instanceof JapaneseUpgradeBatchLimitError;
     return Response.json(
       {
         code: isValidationError ? "VALIDATION_ERROR" : "INTERNAL_ERROR",
@@ -87,9 +99,11 @@ function readSearchQuery(value: unknown): string {
 }
 
 /** 手动补充入口只接受支持地区与 HTTPS 链接；具体任天堂主机/路径仍在发现服务中统一验证，避免路由复制安全白名单。 */
-function readOfficialLinkRequest(value: unknown): { regionCode: RegionCode; productUrl: string } {
+function readOfficialLinkRequest(value: unknown): { regionCode: RegionCode; productUrl: string; anchor?: OfficialProductCandidate } {
   if (!isRecord(value)) throw new ProductPreviewRequestError("请求内容必须是对象。");
-  return { regionCode: readRegionCode(value.regionCode), productUrl: readHttpsUrl(value.productUrl) };
+  // 可选锚点若出现就必须是完整官方候选；不能接受只含标题的浏览器对象，以免日区升级包关系服务失去类型与身份约束。
+  const anchor = "anchor" in value ? readOfficialProductCandidate(value.anchor) : undefined;
+  return { regionCode: readRegionCode(value.regionCode), productUrl: readHttpsUrl(value.productUrl), anchor };
 }
 
 /**

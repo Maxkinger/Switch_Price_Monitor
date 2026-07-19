@@ -5,6 +5,8 @@ import {
   type OfficialNintendoRelatedProductReference,
   type OfficialNintendoRelatedProductResolver,
 } from "../providers/official-nintendo-product-page";
+import { JapaneseUpgradeBatchLimitError } from "../providers/japanese-upgrade-browser";
+import type { JapaneseUpgradeDiscoveryResult, JapaneseUpgradeRelationService } from "./japanese-upgrade-relation-service";
 
 /**
  * 发现服务只读取默认搜索区和启用地区。两者均由服务端设置保存，
@@ -18,18 +20,39 @@ export interface DiscoverySettingsReader {
 export type RegionResolution =
   | { candidateKey: string; regionCode: RegionCode; status: "automatic"; candidate: OfficialProductCandidate }
   | { candidateKey: string; regionCode: RegionCode; status: "needs-manual-selection"; candidates: OfficialProductCandidate[]; featuredCandidateCount: number }
-  | { candidateKey: string; regionCode: RegionCode; status: "needs-manual-link" };
+  | { candidateKey: string; regionCode: RegionCode; status: "needs-manual-link"; message?: string };
 
 /** 未初始化设置或官方链接无法验证时使用受控领域错误，路由可返回中文 422/409 而不回显任天堂响应。 */
 export class ProductDiscoveryError extends Error {}
 
 /**
  * 不涉及港区关系发现的调用方使用安全空实现；它只返回“无法证明”，不会发网或产生候选。
- * 生产入口会显式注入真实解析器，此默认值主要保持既有单区/日区测试和独立服务使用者的最小权限。
+ * 生产入口已显式注入真实解析器；当前默认值主要保持既有单区/日区测试和独立服务使用者的最小权限。
  */
 const unavailableRelatedProductResolver: OfficialNintendoRelatedProductResolver = {
   resolveRelated: async () => null,
 };
+
+/** 日区升级包批处理异常时的固定人工说明；它不包含 Browser、网络或官方报价细节，因而可安全返回给管理员。 */
+const japaneseUpgradeManualMessage = "日区自动核验暂不可用，请重新核验或粘贴官方链接。" as const;
+
+/**
+ * 当前尚未由生产装配注入 Browser Run 关系服务时只返回人工链接状态。该默认值不会访问根搜索、浏览器或价格 API，
+ * 使普通商品和既有单元测试维持最小权限；后续生产装配任务显式注入后，真正升级包发现才会开启。
+ */
+const unavailableJapaneseUpgradeService: Pick<JapaneseUpgradeRelationService, "discover" | "resolveManual"> = {
+  async discover(anchors) {
+    return new Map(anchors.map((anchor) => [officialCandidateKey(anchor), { status: "needs-manual-link" as const, message: japaneseUpgradeManualMessage }]));
+  },
+  resolveManual: async () => null,
+};
+
+/** 普通地区搜索完成后的内部记录；资格标志永不暴露给浏览器，防止客户端借返回数据推断或触发 Browser Run。 */
+interface OrdinaryRegionMatch {
+  anchor: OfficialProductCandidate;
+  resolution: RegionResolution;
+  japaneseUpgradeEligible: boolean;
+}
 
 /**
  * 把默认区官网名称搜索、官方链接解析和跨区匹配集中在服务端。浏览器只提交查询或官方 URL，
@@ -41,6 +64,7 @@ export class OfficialProductDiscoveryService {
     private readonly search: OfficialProductSearch,
     private readonly pages: OfficialNintendoProductPageResolver,
     private readonly related: OfficialNintendoRelatedProductResolver = unavailableRelatedProductResolver,
+    private readonly japaneseUpgrades: Pick<JapaneseUpgradeRelationService, "discover" | "resolveManual"> = unavailableJapaneseUpgradeService,
   ) {}
 
   /** 读取已保存的默认搜索区；浏览器参数没有地区字段，因此不能绕过管理员设置查询另一服索引。 */
@@ -52,11 +76,26 @@ export class OfficialProductDiscoveryService {
 
   /**
    * 验证一个指定地区的任天堂官方商品链接。解析器会在网络请求前检查地区主机和路径白名单；
-   * 返回 null 表示公开页面不能证明身份，服务以可读错误终止，绝不把浏览器自报标题或币种当作候选。
+   * 返回 null 表示公开页面不能证明身份，服务以可读错误终止，绝不把浏览器自报标题或币种当作候选；
+   * 日区升级包另须由完整升级包锚点走关系服务，避免官方页面解析绕过“该升级包属于当前游戏”的业务证明。
    */
-  public async resolveOfficialLink(regionCode: RegionCode, productUrl: string): Promise<OfficialProductCandidate> {
+  public async resolveOfficialLink(
+    regionCode: RegionCode,
+    productUrl: string,
+    anchor?: OfficialProductCandidate,
+  ): Promise<OfficialProductCandidate> {
+    if (regionCode === "JP" && anchor?.productType === "upgrade-pack") {
+      // 升级包的官方 URL 只能证明页面归属，不能证明它与当前默认区商品的升级关系；必须使用同一完整锚点调用关系服务。
+      const candidate = await this.japaneseUpgrades.resolveManual(anchor, productUrl);
+      if (!candidate) throw new ProductDiscoveryError("商品链接不是该区任天堂官方链接，或公开商品信息无法验证。");
+      return candidate;
+    }
     const candidate = await this.pages.resolve(regionCode, productUrl, new AbortController().signal);
     if (!candidate) throw new ProductDiscoveryError("商品链接不是该区任天堂官方链接，或公开商品信息无法验证。");
+    if (regionCode === "JP" && candidate.productType === "upgrade-pack" && anchor?.productType !== "upgrade-pack") {
+      // 普通日区游戏/DLC 的既有人工链接仍由页面解析器兼容处理；解析后确认升级包时，缺失或非升级包锚点都不能证明关系，必须拒绝返回。
+      throw new ProductDiscoveryError("日区升级包链接核验需要完整的默认区官方商品锚点。");
+    }
     return candidate;
   }
 
@@ -67,9 +106,36 @@ export class OfficialProductDiscoveryService {
   public async resolveRegions(selected: OfficialProductCandidate[]): Promise<RegionResolution[]> {
     const settings = await this.settings.get();
     if (!settings) throw new ProductDiscoveryError("应用尚未完成初始化。");
-    return Promise.all(selected.flatMap((candidate) => settings.enabledRegions
+    const ordinaryMatches = await Promise.all(selected.flatMap((candidate) => settings.enabledRegions
       .filter((regionCode) => regionCode !== candidate.regionCode)
       .map(async (regionCode) => this.matchRegion(candidate, regionCode))));
+    const eligibleAnchors = [...new Map(ordinaryMatches
+      .filter((match) => match.japaneseUpgradeEligible)
+      .map((match) => [officialCandidateKey(match.anchor), match.anchor])).values()];
+    if (eligibleAnchors.length === 0) return ordinaryMatches.map((match) => match.resolution);
+
+    let japanese: Map<string, JapaneseUpgradeDiscoveryResult>;
+    try {
+      // 所有普通检索先并行结束后才一次批量调用，避免逐卡启动 Browser Run；按候选键去重让同一锚点不会消耗两次配额。
+      japanese = await this.japaneseUpgrades.discover(eligibleAnchors);
+    } catch (error) {
+      if (error instanceof JapaneseUpgradeBatchLimitError) throw error;
+      // 未分类外部失败不带可审计的单项成功证据；仅对本应进入 Browser 的项降级，普通地区原有结果保持不变。
+      return ordinaryMatches.map((match) => match.japaneseUpgradeEligible
+        ? { candidateKey: match.resolution.candidateKey, regionCode: "JP" as const, status: "needs-manual-link" as const, message: japaneseUpgradeManualMessage }
+        : match.resolution);
+    }
+
+    return ordinaryMatches.map((match) => {
+      const replacement = match.japaneseUpgradeEligible ? japanese.get(match.resolution.candidateKey) : undefined;
+      if (replacement?.status === "automatic") {
+        return { candidateKey: match.resolution.candidateKey, regionCode: "JP" as const, status: "automatic" as const, candidate: replacement.candidate };
+      }
+      if (replacement?.status === "needs-manual-link") {
+        return { candidateKey: match.resolution.candidateKey, regionCode: "JP" as const, status: "needs-manual-link" as const, message: replacement.message };
+      }
+      return match.resolution;
+    });
   }
 
   /**
@@ -78,7 +144,7 @@ export class OfficialProductDiscoveryService {
    */
   public async verifyAutomaticRegionalCandidate(anchor: OfficialProductCandidate, candidate: OfficialProductCandidate): Promise<boolean> {
     if (anchor.regionCode === candidate.regionCode) return false;
-    const resolution = await this.matchRegion(anchor, candidate.regionCode);
+    const { resolution } = await this.matchRegion(anchor, candidate.regionCode);
     return resolution.status === "automatic" && resolution.candidate.productUrl === candidate.productUrl;
   }
 
@@ -87,10 +153,10 @@ export class OfficialProductDiscoveryService {
    * 自动确认和人工选择的信任边界不同：前者只能使用唯一严格身份，而后者允许管理员审计本地化标题；
    * 不过两者都必须来自该地区的官方 URL 且属于同一受控商品类型，不能把搜索摘要或任意网页当作可保存映射。
    */
-  private async matchRegion(candidate: OfficialProductCandidate, regionCode: RegionCode): Promise<RegionResolution> {
+  private async matchRegion(candidate: OfficialProductCandidate, regionCode: RegionCode): Promise<OrdinaryRegionMatch> {
     const candidateKey = officialCandidateKey(candidate);
     const result = await this.search.search(regionCode, candidate.canonicalTitle, new AbortController().signal);
-    if (result.status === "unavailable") return { candidateKey, regionCode, status: "needs-manual-link" };
+    if (result.status === "unavailable") return { anchor: candidate, resolution: { candidateKey, regionCode, status: "needs-manual-link" }, japaneseUpgradeEligible: false };
 
     const initialSameTypeCandidates = verifiedSameTypeCandidates(candidate, regionCode, result.candidates);
     const japaneseCandidates = initialSameTypeCandidates.length > 0
@@ -100,20 +166,31 @@ export class OfficialProductDiscoveryService {
       ? japaneseCandidates
       : await this.searchHongKongRelatedProductFallback(candidate, regionCode);
     const matches = sameTypeCandidates.filter((option) => hasSameOfficialIdentity(candidate, option));
-    if (matches.length === 1) return { candidateKey, regionCode, status: "automatic", candidate: matches[0] };
+    if (matches.length === 1) return { anchor: candidate, resolution: { candidateKey, regionCode, status: "automatic", candidate: matches[0] }, japaneseUpgradeEligible: false };
     const localizedMatches = sameTypeCandidates.filter((option) => localizedIdentityRelevance(candidate, option) === 2);
-    if (localizedMatches.length === 1) return { candidateKey, regionCode, status: "automatic", candidate: localizedMatches[0] };
+    if (localizedMatches.length === 1) return { anchor: candidate, resolution: { candidateKey, regionCode, status: "automatic", candidate: localizedMatches[0] }, japaneseUpgradeEligible: false };
     const rankedCandidates = rankRegionalCandidates(candidate, sameTypeCandidates);
-    if (rankedCandidates.length === 0) return { candidateKey, regionCode, status: "needs-manual-link" };
+    if (rankedCandidates.length === 0) {
+      // 只有官方搜索明确 available，且首次普通搜索与受限日文别名回退都没有同类型候选时，才能请求一次 Browser Run 关系发现。
+      const japaneseUpgradeEligible = regionCode === "JP"
+        && candidate.productType === "upgrade-pack"
+        && initialSameTypeCandidates.length === 0
+        && japaneseCandidates.length === 0;
+      return { anchor: candidate, resolution: { candidateKey, regionCode, status: "needs-manual-link" }, japaneseUpgradeEligible };
+    }
 
     // 推荐数量由 Worker 根据已验证的官方字段计算，浏览器只能据此折叠显示，不能依靠标题或价格重新推断匹配关系。
     const relatedCandidateCount = rankedCandidates.filter((option) => localizedIdentityRelevance(candidate, option) > 0).length;
     return {
-      candidateKey,
-      regionCode,
-      status: "needs-manual-selection",
-      candidates: rankedCandidates,
-      featuredCandidateCount: relatedCandidateCount > 0 ? relatedCandidateCount : Math.min(3, rankedCandidates.length),
+      anchor: candidate,
+      resolution: {
+        candidateKey,
+        regionCode,
+        status: "needs-manual-selection",
+        candidates: rankedCandidates,
+        featuredCandidateCount: relatedCandidateCount > 0 ? relatedCandidateCount : Math.min(3, rankedCandidates.length),
+      },
+      japaneseUpgradeEligible: false,
     };
   }
 

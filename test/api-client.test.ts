@@ -42,6 +42,17 @@ describe("product API client", () => {
     }));
   });
 
+  it("sends the selected anchor when verifying a Japanese manual upgrade link", async () => {
+    // 选中的默认区官方候选是日区升级包关系核验的唯一可信锚点；客户端必须原样转交给同源 Worker，不能只提交人工链接。
+    const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ candidate: candidate() }));
+    const client = createProductApiClient(request);
+    const anchor = { ...candidate(), canonicalTitle: "Overcooked! 2 – Nintendo Switch 2 Edition Upgrade Pack", productType: "upgrade-pack" as const };
+    const upgradeUrl = "https://store-jp.nintendo.com/item/software/D70050000064985/";
+
+    await client.resolveOfficialLink("JP", upgradeUrl, anchor);
+    expect(request).toHaveBeenCalledWith("/api/products/resolve-link", expect.objectContaining({ body: JSON.stringify({ regionCode: "JP", productUrl: upgradeUrl, anchor }) }));
+  });
+
   it("keeps the global request count active until product discovery settles", async () => {
     // 请求尚未结算时必须显示遮罩；只断言最终为零会让根本未接入计数器的客户端虚假通过。
     const tracker = createApiRequestTracker();

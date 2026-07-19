@@ -90,11 +90,16 @@ export function createProductApiClient(request: typeof fetch = fetch, tracker?: 
       return postJson<OfficialSearchResult>("/api/products/search", { query });
     },
 
-    /** 通过用户粘贴的官方商店链接核验一个地区商品。 */
-    async resolveOfficialLink(regionCode: RegionCode, productUrl: string): Promise<OfficialProductCandidate> {
+    /**
+     * 通过用户粘贴的官方商店链接核验一个地区商品。日区升级包可附带已选默认区锚点，
+     * 使 Worker 能证明升级关系；缺省时仍兼容非升级包的既有官方页面解析流程。
+     */
+    async resolveOfficialLink(regionCode: RegionCode, productUrl: string, anchor?: OfficialProductCandidate): Promise<OfficialProductCandidate> {
       const payload = await postJson<{ candidate: OfficialProductCandidate }>("/api/products/resolve-link", {
         regionCode,
-        productUrl
+        productUrl,
+        // 只有完整锚点存在时才发送，避免旧调用方把 undefined 序列化成不稳定的接口形状。
+        ...(anchor ? { anchor } : {}),
       });
 
       return payload.candidate;
