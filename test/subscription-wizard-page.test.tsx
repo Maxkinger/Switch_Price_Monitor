@@ -38,6 +38,16 @@ const remainingJapaneseCandidate: OfficialProductCandidate = {
   publisher: "Another Publisher",
 };
 
+/** 港区官方候选保留英文商城标题，用来验证页面只在 Worker 预览确认后额外显示中文主标题，而非自行翻译候选文本。 */
+const hongKongCandidate: OfficialProductCandidate = {
+  ...usCandidate,
+  regionCode: "HK",
+  productUrl: "https://ec.nintendo.com/HK/zh/titles/70010000080132",
+  canonicalTitle: "Overcooked! 2 - Gourmet Edition",
+  currency: "HKD",
+  currentPriceMinor: 30800,
+};
+
 /** 每个 DOM 用例都提供完整的同源客户端表面，未调用的方法显式桩化以防测试偶然触发真实请求。 */
 function wizardApi(resolutions: RegionResolutionResponse[]): ReturnType<typeof createProductApiClient> {
   return {
@@ -196,11 +206,75 @@ describe("添加订阅向导的游戏中文名称预览", () => {
     await user.click(screen.getByRole("button", { name: "搜索官方商品" }));
     await user.click(await screen.findByRole("button", { name: /Overcooked! 2 – Nintendo Switch 2 Edition/ }));
     await user.click(screen.getByRole("button", { name: "核验其他地区" }));
-    await user.click(await screen.findByRole("button", { name: "确认订阅" }));
-
     expect(await screen.findByLabelText("中文展示名称")).toBeTruthy();
     expect(screen.getByText("留空将使用官方英文标题")).toBeTruthy();
+    // 无中文名回退现在在跨区核验完成后即显示；此处未点击最终确认，断言可防止即时预览意外触发 D1 写入。
     expect(api.confirmSubscriptions).not.toHaveBeenCalled();
+  });
+
+  it("shows the verified Chinese name above the Hong Kong official title after regional verification", async () => {
+    // 地区候选的英文标题仍是官方身份核对材料；只有 Worker 对同一已确认 HK URL 返回中文预览后，页面才可把中文作为主标题。
+    const user = userEvent.setup();
+    const candidateKey = `${usCandidate.regionCode}:${usCandidate.productUrl}`;
+    const api = wizardApi([{ candidateKey, regionCode: "HK", status: "automatic", candidate: hongKongCandidate }]);
+    vi.mocked(api.previewGameNames).mockResolvedValue([{ nameZh: "胡闹厨房 2 美食家版", source: "hong_kong_official" }]);
+
+    render(<SubscriptionWizardPage api={api} onUnauthorized={vi.fn()} />);
+    await user.type(screen.getByRole("textbox", { name: "游戏名称" }), "Overcooked! 2");
+    await user.click(screen.getByRole("button", { name: "搜索官方商品" }));
+    await user.click(await screen.findByRole("button", { name: /Overcooked! 2 – Nintendo Switch 2 Edition/ }));
+    await user.click(screen.getByRole("button", { name: "核验其他地区" }));
+
+    await waitFor(() => expect(api.previewGameNames).toHaveBeenCalledTimes(1));
+    // 页面同时会在名称来源提示与港区卡中使用中文；锁定卡片的自动确认文案，避免测试把相同文本的多个合法出现误判为失败。
+    expect(await screen.findByText("已自动加入监控：胡闹厨房 2 美食家版")).toBeTruthy();
+    expect(screen.getByText(`官方标题：${hongKongCandidate.canonicalTitle}`)).toBeTruthy();
+    expect(api.previewGameNames).toHaveBeenCalledWith([expect.objectContaining({
+      regions: expect.arrayContaining([expect.objectContaining({ regionCode: "HK", productUrl: hongKongCandidate.productUrl })]),
+    })]);
+  });
+
+  it("refreshes the Hong Kong card name immediately after a manually verified official link", async () => {
+    // 人工粘贴链接同样必须先由 Worker 核验，再重新取得名称预览；不能因为链接来自管理员输入就把英文候选直接当作最终中文名。
+    const user = userEvent.setup();
+    const candidateKey = `${usCandidate.regionCode}:${usCandidate.productUrl}`;
+    const api = wizardApi([{ candidateKey, regionCode: "HK", status: "needs-manual-link", message: "请粘贴香港任天堂官方商品链接。" }]);
+    vi.mocked(api.resolveOfficialLink).mockResolvedValue(hongKongCandidate);
+    vi.mocked(api.previewGameNames).mockResolvedValue([{ nameZh: "胡闹厨房 2 美食家版", source: "hong_kong_official" }]);
+
+    render(<SubscriptionWizardPage api={api} onUnauthorized={vi.fn()} />);
+    await user.type(screen.getByRole("textbox", { name: "游戏名称" }), "Overcooked! 2");
+    await user.click(screen.getByRole("button", { name: "搜索官方商品" }));
+    await user.click(await screen.findByRole("button", { name: /Overcooked! 2 – Nintendo Switch 2 Edition/ }));
+    await user.click(screen.getByRole("button", { name: "核验其他地区" }));
+    await user.type(await screen.findByRole("textbox", { name: "HK 任天堂官方商品链接" }), hongKongCandidate.productUrl);
+    await user.click(screen.getByRole("button", { name: "核验链接" }));
+
+    expect(await screen.findByText("已确认：胡闹厨房 2 美食家版")).toBeTruthy();
+    expect(screen.getByText(`官方标题：${hongKongCandidate.canonicalTitle}`)).toBeTruthy();
+    expect(api.previewGameNames).toHaveBeenLastCalledWith([expect.objectContaining({
+      regions: expect.arrayContaining([expect.objectContaining({ regionCode: "HK", productUrl: hongKongCandidate.productUrl })]),
+    })]);
+  });
+
+  it("shows the safe fallback explanation after a manually verified Hong Kong link has no Chinese name", async () => {
+    // Worker 明确无中文名称时才展示人工中文与英文回退说明；在链接尚未核验前不猜测缺失状态，避免管理员误以为可跳过官方名称判断。
+    const user = userEvent.setup();
+    const candidateKey = `${usCandidate.regionCode}:${usCandidate.productUrl}`;
+    const api = wizardApi([{ candidateKey, regionCode: "HK", status: "needs-manual-link", message: "请粘贴香港任天堂官方商品链接。" }]);
+    vi.mocked(api.resolveOfficialLink).mockResolvedValue(hongKongCandidate);
+    vi.mocked(api.previewGameNames).mockResolvedValue([{ nameZh: null, source: "unavailable" }]);
+
+    render(<SubscriptionWizardPage api={api} onUnauthorized={vi.fn()} />);
+    await user.type(screen.getByRole("textbox", { name: "游戏名称" }), "Overcooked! 2");
+    await user.click(screen.getByRole("button", { name: "搜索官方商品" }));
+    await user.click(await screen.findByRole("button", { name: /Overcooked! 2 – Nintendo Switch 2 Edition/ }));
+    await user.click(screen.getByRole("button", { name: "核验其他地区" }));
+    await user.type(await screen.findByRole("textbox", { name: "HK 任天堂官方商品链接" }), hongKongCandidate.productUrl);
+    await user.click(screen.getByRole("button", { name: "核验链接" }));
+
+    expect(await screen.findByText("最终确认时可填写中文名称或保留官方英文标题")).toBeTruthy();
+    expect(screen.getByText(`已确认：${hongKongCandidate.canonicalTitle}`)).toBeTruthy();
   });
 
   it("submits a manually entered Chinese display name only after the fallback preview", async () => {

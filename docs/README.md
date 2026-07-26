@@ -32,6 +32,8 @@
 | [地区/游戏中文名与官方价格格式设计规格](superpowers/specs/2026-07-19-localized-region-price-display-design.md) | 仪表盘/详情页地区中文名称、游戏中文主标题、五区官方价格文字、未知地区/标题回退与本地草图边界 | 已实现，草图已确认；游戏中文名已追加实现 |
 | [大陆/香港官方中文游戏名设计规格](superpowers/specs/2026-07-26-hong-kong-official-chinese-game-name-design.md) | 腾讯 Nintendo Switch 同 ID 大陆官方标题优先、香港任天堂繁中离线转简体、既有订阅同步、人工中文与英文回退的展示名规则 | 已实施；单 Worker 全量 Worker 回归、完整 DOM 回归、类型检查、构建与差异检查通过 |
 | [大陆/香港官方中文游戏名实施计划](superpowers/plans/2026-07-26-hong-kong-official-chinese-game-name.md) | 迁移 `0007`、离线繁简转换、名称来源同步 API 与向导/仪表盘接线的测试先行步骤 | 已实施；质量门禁通过，待管理员确认提交推送 |
+| [港区核验即时中文名预览设计](superpowers/specs/2026-07-26-hong-kong-name-preview-design.md) | 跨区核验完成后，港区卡即时显示 Worker 核验的简体中文名与官方原标题，并界定人工链接与英文回退边界 | 已实施；待管理员确认提交推送 |
+| [港区核验即时中文名预览实施计划](superpowers/plans/2026-07-26-hong-kong-name-preview.md) | 向导即时名称预览、人工香港官方链接刷新、DOM 回归与发布前验证步骤 | 已实施；质量门禁通过，待管理员确认提交推送 |
 | [地区中文名与官方价格格式实施计划](superpowers/plans/2026-07-19-localized-region-price-display.md) | 共享格式化、双页面接线、Overcooked 五区草图与质量门禁 | 已完成并推送 `17e64f5` |
 | [Browser Run 启动失败受控诊断设计规格](superpowers/specs/2026-07-19-browser-run-launch-failure-diagnostic-design.md) | 本地/远程 A/B 启动诊断、脱敏错误证据、阶段判断矩阵与测试边界 | 已完成；根因已确认并通过三次任天堂复验 |
 | [Browser Run 启动失败受控诊断实施计划](superpowers/plans/2026-07-19-browser-run-launch-failure-diagnostic.md) | 临时探针脱敏诊断、生命周期测试、本地/远程对照与任天堂恢复准入步骤 | 已执行；待提交结果文档 |

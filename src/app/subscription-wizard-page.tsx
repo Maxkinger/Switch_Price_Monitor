@@ -126,6 +126,7 @@ function RegionalConfirmationPanel({
   selected,
   resolutions,
   confirmedCandidates,
+  gameNamePreview,
   manualLinks,
   pendingLinkKey,
   isRegionalInteractionDisabled,
@@ -140,6 +141,8 @@ function RegionalConfirmationPanel({
   selected: OfficialProductCandidate;
   resolutions: RegionResolutionResponse[];
   confirmedCandidates: Record<string, OfficialProductCandidate>;
+  /** 名称预览只能由本轮官方地区核验后的 Worker 返回；港区卡不能由标题或输入链接自行猜测中文。 */
+  gameNamePreview: GameNamePreview | undefined;
   manualLinks: Record<string, string>;
   pendingLinkKey: string | null;
   /** 搜索或地区解析进行中时禁止会发网的地区操作，避免旧面板在新搜索尚未结算时启动并发 Browser Run。 */
@@ -180,6 +183,8 @@ function RegionalConfirmationPanel({
           const hiddenCandidateCount = resolution.status === "needs-manual-selection"
             ? resolution.candidates.length - visibleCandidates.length
             : 0;
+          // 港区仅以 Worker 已确认的中文预览替换主标题，原始官方标题仍保留作身份核对，避免展示层改写地区商品。
+          const hongKongName = resolution.regionCode === "HK" ? gameNamePreview?.nameZh : null;
           return (
             <article className="regional-option" key={key}>
               <div>
@@ -187,8 +192,9 @@ function RegionalConfirmationPanel({
                 <p>{resolutionLabel(resolution)}</p>
               </div>
               {resolution.status === "automatic" ? (
-                <small className="regional-option__confirmed">已自动加入监控：{resolution.candidate.canonicalTitle}</small>
+                <small className="regional-option__confirmed">已自动加入监控：{hongKongName ?? resolution.candidate.canonicalTitle}</small>
               ) : null}
+              {resolution.regionCode === "HK" && hongKongName && confirmed ? <small className="regional-option__confirmed">官方标题：{confirmed.canonicalTitle}</small> : null}
               {resolution.status === "needs-manual-selection" ? (
                 <div className="regional-option__candidates">
                   {visibleCandidates.map((candidate) => (
@@ -214,6 +220,7 @@ function RegionalConfirmationPanel({
               {resolution.status === "needs-manual-link" ? (
                 <div className="regional-option__link">
                   <p>{resolution.message}</p>
+                  {resolution.regionCode === "HK" && !confirmed ? <small>核验后可确定中文名称</small> : null}
                   {resolution.regionCode === "JP" ? (
                     <button type="button" className="text-button" disabled={isRegionalInteractionDisabled} onClick={onRetryRegions}>重新核验</button>
                   ) : null}
@@ -229,7 +236,9 @@ function RegionalConfirmationPanel({
                   </button>
                 </div>
               ) : null}
-              {confirmed ? <small className="regional-option__confirmed">已确认：{confirmed.canonicalTitle}</small> : null}
+              {/* 自动结果已在上方作为卡片主状态展示；不重复输出同一名称，手动选择和手动链接仍保留“已确认”以说明管理员动作已生效。 */}
+              {confirmed && resolution.status !== "automatic" ? <small className="regional-option__confirmed">已确认：{hongKongName ?? confirmed.canonicalTitle}</small> : null}
+              {resolution.regionCode === "HK" && gameNamePreview?.source === "unavailable" ? <small>最终确认时可填写中文名称或保留官方英文标题</small> : null}
               <button type="button" className="text-button" onClick={() => onToggleSkip(resolution.regionCode)}>
                 {confirmed ? "取消该区确认并跳过" : "跳过此区"}
               </button>
@@ -246,7 +255,21 @@ function RegionalConfirmationPanel({
  * 共享商品客户端由应用壳传入，使搜索、核验和确认都计入全局加载状态，且刷新、取消或认证失效不会留下部分数据。
  */
 export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnType<typeof createProductApiClient>; onUnauthorized: () => void }) {
-  const [wizard, setWizard] = useState<SubscriptionWizardState>(() => createSubscriptionWizardState(emptySearchResult));
+  const [wizard, setWizardState] = useState<SubscriptionWizardState>(() => createSubscriptionWizardState(emptySearchResult));
+  // 地区解析与人工链接均会跨越异步边界；此引用始终指向最近一次已派生状态，避免慢速预览用旧闭包覆盖管理员刚修改的选择或跳过决定。
+  const wizardStateRef = useRef(wizard);
+  wizardStateRef.current = wizard;
+  /**
+   * 所有向导改动都经由同一函数式更新进入 React 状态和同步引用。
+   * 这样网络响应可先从最新状态派生预览输入，再发起只读请求，而不会在 state updater 内启动副作用或丢失并发的管理员操作。
+   */
+  function updateWizard(updater: SubscriptionWizardState | ((current: SubscriptionWizardState) => SubscriptionWizardState)): void {
+    setWizardState((current) => {
+      const next = typeof updater === "function" ? updater(current) : updater;
+      wizardStateRef.current = next;
+      return next;
+    });
+  }
   const [query, setQuery] = useState("");
   const [fallbackRegion, setFallbackRegion] = useState<RegionCode>("US");
   const [fallbackLink, setFallbackLink] = useState("");
@@ -313,7 +336,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
     setResults([]);
     try {
       const searchResult = await api.searchProducts(trimmedQuery);
-      setWizard({ ...createSubscriptionWizardState(searchResult), query: trimmedQuery });
+      updateWizard({ ...createSubscriptionWizardState(searchResult), query: trimmedQuery });
       setResolutions([]);
       setResolvedCandidateKeys([]);
       setManualLinks({});
@@ -340,7 +363,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
     setNotice(null);
     try {
       const candidate = await api.resolveOfficialLink(fallbackRegion, fallbackLink.trim());
-      setWizard({ ...createSubscriptionWizardState({ status: "available", candidates: [candidate] }), query: candidate.canonicalTitle });
+      updateWizard({ ...createSubscriptionWizardState({ status: "available", candidates: [candidate] }), query: candidate.canonicalTitle });
       setResolutions([]);
       setResolvedCandidateKeys([]);
       setManualLinks({});
@@ -374,7 +397,9 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
       setResolutions(() => resolved);
       setResolvedCandidateKeys(() => selectedCandidates.map((candidate) => candidateKey(candidate)));
       // 自动结果仅来自 Worker 对保存设置和官方身份的唯一匹配；页面不会自行按名称或价格猜测跨区商品。
-      setWizard((current) => applyAutomaticRegionResolutions(current, resolved));
+      const nextWizard = applyAutomaticRegionResolutions(wizardStateRef.current, resolved);
+      updateWizard(nextWizard);
+      void refreshGameNamePreviews(nextWizard, resolved, generation);
     } catch (error) {
       if (regionResolutionGeneration.current !== generation) return;
       handleProductError(error, "跨区匹配未完成，请稍后重试。");
@@ -393,10 +418,13 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
     const selectedKey = candidateKey(selected);
     // 香港候选变化会影响大陆同 ID 与香港繁转简的判定，旧预览必须失效，避免管理员把上一轮名称当成本轮官方结果。
     setGameNamePreviews({});
-    setWizard((current) => setRegionalCandidate(current, selectedKey, regionCode, candidate, source));
+    updateWizard((current) => setRegionalCandidate(current, selectedKey, regionCode, candidate, source));
   }
 
-  /** 只让 Worker 解析和校验手动链接，成功后才把返回的官方候选绑定到当前游戏/地区。 */
+  /**
+   * 只让 Worker 解析和校验手动链接，成功后才把返回的官方候选绑定到当前游戏/地区并刷新名称。
+   * 必须复用本轮地区核验代次：新搜索或重新核验已使旧代次失效时，慢速链接响应不得恢复旧商品或旧中文名称。
+   */
   async function handleResolveRegionalLink(selected: OfficialProductCandidate, regionCode: RegionCode) {
     const selectedKey = candidateKey(selected);
     const key = regionalConfirmationKey(selectedKey, regionCode);
@@ -406,12 +434,18 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
       return;
     }
 
+    const generation = regionResolutionGeneration.current;
     setPendingLinkKey(key);
     setNotice(null);
     try {
       // 已选默认区锚点必须随日区升级包人工链接一起交给 Worker；其他地区或类型会由服务端维持原页面解析流程。
       const candidate = await api.resolveOfficialLink(regionCode, link, selected);
-      handleRegionalCandidate(selected, regionCode, candidate, "manual_link");
+      if (regionResolutionGeneration.current !== generation) return;
+      // 链接候选与自动候选同样会影响大陆同 ID 优先和香港繁转简；先清除旧值，再以已核验的候选立即请求 Worker 名称预览。
+      const nextWizard = setRegionalCandidate(wizardStateRef.current, selectedKey, regionCode, candidate, "manual_link");
+      setGameNamePreviews({});
+      updateWizard(nextWizard);
+      void refreshGameNamePreviews(nextWizard, resolutions, generation);
     } catch (error) {
       handleProductError(error, "地区商品链接核验失败，请检查链接后重试。");
     } finally {
@@ -421,7 +455,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
 
   /**
    * 日区 Browser Run 失败后仅在管理员点击时重新请求当前选择，避免 effect 因状态渲染循环自动重试。
-   * 不清空 manualLinks，确保管理员在自动核验仍失败时保留已输入的官方链接；代次守卫负责阻止过期回写，函数式 setWizard 只确保同一代次更新读取最新状态。
+   * 不清空 manualLinks，确保管理员在自动核验仍失败时保留已输入的官方链接；代次守卫负责阻止过期回写，刷新预览使用已派生的同一轮状态，避免等待 React 状态异步结算。
    */
   async function handleRetryRegions() {
     if (selectedCandidates.length === 0) {
@@ -439,8 +473,10 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
       if (regionResolutionGeneration.current !== generation) return;
       setResolutions(() => resolved);
       setResolvedCandidateKeys(() => selectedCandidates.map((candidate) => candidateKey(candidate)));
-      // 自动结果仍只能由 Worker 的最新官方关系发现写入；函数式更新避免读取过期向导状态。
-      setWizard((current) => applyAutomaticRegionResolutions(current, resolved));
+      // 自动结果仍只能由 Worker 的最新官方关系发现写入；同一派生状态也会立即传给名称预览，避免暂时读取到旧的 HK URL。
+      const nextWizard = applyAutomaticRegionResolutions(wizardStateRef.current, resolved);
+      updateWizard(nextWizard);
+      void refreshGameNamePreviews(nextWizard, resolved, generation);
     } catch (error) {
       if (regionResolutionGeneration.current !== generation) return;
       handleProductError(error, "跨区匹配未完成，请稍后重试。");
@@ -450,7 +486,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
   }
 
   /** 把默认区选择与已确认地区转换成服务端的严格确认模型，重复的默认区永远只保留一次。 */
-  function buildConfirmationInputs(): ConfirmedSubscriptionInput[] {
+  function buildConfirmationInputs(state = wizard, effectiveResolutions = resolutions): ConfirmedSubscriptionInput[] {
     return selectedCandidates.map((selected) => {
       const selectedKey = candidateKey(selected);
       const regions: ConfirmedRegionalProduct[] = [
@@ -460,18 +496,39 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
       for (const region of regionChoices) {
         if (region.code === selected.regionCode) continue;
         const key = regionalConfirmationKey(selectedKey, region.code);
-        const candidate = wizard.regionalConfirmations[key];
-        const matchSource = wizard.regionalConfirmationSources[key];
+        const candidate = state.regionalConfirmations[key];
+        const matchSource = state.regionalConfirmationSources[key];
         if (candidate && matchSource) regions.push({ ...candidate, matchSource });
       }
 
-      const skippedRegionCodes = resolutions
+      const skippedRegionCodes = effectiveResolutions
         .filter((resolution) => resolution.candidateKey === selectedKey)
-        .flatMap((resolution) => wizard.skippedRegionalKeys.includes(regionalConfirmationKey(selectedKey, resolution.regionCode)) ? [resolution.regionCode] : []);
+        .flatMap((resolution) => state.skippedRegionalKeys.includes(regionalConfirmationKey(selectedKey, resolution.regionCode)) ? [resolution.regionCode] : []);
       // 已出现 unavailable 预览时，空字符串是管理员明确接受英文回退的决定；首次请求预览前仍不附带该字段，避免旧候选在没有名称状态时伪造人工决定。
       const displayNameZh = manualGameNames[selectedKey] ?? (gameNamePreviews[selectedKey]?.source === "unavailable" ? "" : undefined);
       return { selected, regions, skippedRegionCodes, ...(displayNameZh === undefined ? {} : { displayNameZh }) };
     });
+  }
+
+  /**
+   * 即时预览只读取刚完成核验的候选，并以代次拒绝旧请求回写；
+   * 这样慢速大陆或香港响应不能覆盖新搜索、重试或链接重新核验后的地区映射。
+   */
+  async function refreshGameNamePreviews(
+    state: SubscriptionWizardState,
+    effectiveResolutions: RegionResolutionResponse[],
+    generation: number,
+  ): Promise<void> {
+    try {
+      // 传入刚完成的地区响应而非等待 React 状态结算，保证名称服务实际取得本轮已核验的 HK URL。
+      const inputs = buildConfirmationInputs(state, effectiveResolutions);
+      const previews = await api.previewGameNames(inputs);
+      if (regionResolutionGeneration.current !== generation || previews.length !== inputs.length) return;
+      setGameNamePreviews(Object.fromEntries(inputs.map((input, index) => [candidateKey(input.selected), previews[index]])));
+    } catch (error) {
+      if (regionResolutionGeneration.current !== generation) return;
+      handleProductError(error, "游戏名称预览暂时无法完成，请稍后重试。");
+    }
   }
 
   /**
@@ -503,7 +560,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
     try {
       const inputs = buildConfirmationInputs();
       const previewGroups = await Promise.all(inputs.map((input) => api.previewSources(input.regions)));
-      setWizard((current) => ({
+      updateWizard((current) => ({
         ...current,
         sourcePreviews: Object.fromEntries(inputs.map((input, index) => [candidateKey(input.selected), previewGroups[index]])),
       }));
@@ -520,14 +577,14 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
       await handlePreviewGameNames();
       return;
     }
-    setWizard((current) => ({ ...current, submitState: "submitting" }));
+    updateWizard((current) => ({ ...current, submitState: "submitting" }));
     setNotice(null);
     try {
       const confirmationResults = await api.confirmSubscriptions(buildConfirmationInputs());
       setResults(confirmationResults);
-      setWizard((current) => ({ ...current, submitState: "succeeded" }));
+      updateWizard((current) => ({ ...current, submitState: "succeeded" }));
     } catch (error) {
-      setWizard((current) => ({ ...current, submitState: "failed" }));
+      updateWizard((current) => ({ ...current, submitState: "failed" }));
       handleProductError(error, "订阅确认未完成，请稍后重试。");
     }
   }
@@ -597,7 +654,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
                   // 新选择会改变待确认锚点，清空旧预览后必须再次由 Worker 读取官方名称，不能沿用另一商品的来源标签。
                   setGameNamePreviews({});
                   setManualGameNames({});
-                  setWizard((current) => toggleCandidate(current, key));
+                  updateWizard((current) => toggleCandidate(current, key));
                 }} />;
               })}
             </div>
@@ -630,6 +687,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
             selected={selected}
             resolutions={resolutions}
             confirmedCandidates={wizard.regionalConfirmations}
+            gameNamePreview={gameNamePreviews[candidateKey(selected)]}
             manualLinks={manualLinks}
             pendingLinkKey={pendingLinkKey}
             isRegionalInteractionDisabled={isSearching || isResolvingRegions}
@@ -641,7 +699,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
             onToggleSkip={(regionCode) => {
               // 跳过或恢复香港区会改变可验证名称来源，因此必须取消预览并要求管理员重新查看结果。
               setGameNamePreviews({});
-              setWizard((current) => skipRegionalConfirmation(current, candidateKey(selected), regionCode));
+              updateWizard((current) => skipRegionalConfirmation(current, candidateKey(selected), regionCode));
             }}
             onToggleCandidateExpansion={(key) => setExpandedRegionalKeys((current) => current.includes(key) ? current.filter((entry) => entry !== key) : [...current, key])}
           />
