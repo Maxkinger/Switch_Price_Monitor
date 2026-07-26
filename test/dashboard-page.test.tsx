@@ -235,6 +235,22 @@ describe("地区中文名与官网价格文字", () => {
     expect(screen.queryByText("US")).toBeNull();
   });
 
+  it("always renders dashboard region prices in the product owner's fixed five-region order", async () => {
+    // Worker 返回顺序可能来自数据库插入、补全或未来 API 排序；仪表盘必须在展示层固定为美/墨/巴/港/日，
+    // 这样管理员每次横向比较价格时不用重新寻找同一区域，且缺失地区不会改变已显示地区的相对顺序。
+    const api = {
+      getDashboard: vi.fn(async () => localizedOverview),
+      refreshNow: vi.fn(),
+      deleteSubscriptions: vi.fn(),
+    };
+
+    const { container } = render(<DashboardPage api={api} onNavigate={vi.fn()} onUnauthorized={vi.fn()} />);
+    await screen.findByText("胡闹厨房 2 Nintendo Switch 2 Edition");
+
+    const regionNames = [...container.querySelectorAll(".summary-regions b")].map((node) => node.textContent);
+    expect(regionNames).toEqual(["美国区", "墨西哥区", "巴西区", "香港区", "日本区"]);
+  });
+
   it("uses the same Chinese region names and price copy on the subscription detail", async () => {
     const api = {
       getSubscription: vi.fn(async () => localizedSubscriptionDetail),

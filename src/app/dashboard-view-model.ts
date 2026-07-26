@@ -1,4 +1,4 @@
-import type { HistorySnapshot } from "./dashboard-api-client";
+import type { DashboardRegion, HistorySnapshot } from "./dashboard-api-client";
 
 export type { HistorySnapshot } from "./dashboard-api-client";
 
@@ -22,11 +22,33 @@ const REGION_NAMES: Record<string, string> = {
 };
 
 /**
+ * 仪表盘地区价格的固定阅读顺序。该顺序来自产品确认，不跟随数据库插入顺序、官方返回顺序或用户补全顺序变化；
+ * 未知未来地区排在五区之后并保持原始相对顺序，避免新地区上线时被错误插入到已确认的五区比较位置。
+ */
+const DASHBOARD_REGION_DISPLAY_ORDER = ["US", "MX", "BR", "HK", "JP"] as const;
+
+/**
  * 返回管理员确认的地区中文名称；尚未纳入五区范围的代码必须原样保留。
  * 原样回退让新增地区在没有本地化决策时仍可识别，也避免展示层猜测国家或地区名称。
  */
 export function formatRegionName(regionCode: string): string {
   return REGION_NAMES[regionCode] ?? regionCode;
+}
+
+/**
+ * 返回仪表盘可安全渲染的地区价格顺序。函数始终复制数组而不原地排序，避免 React 渲染时修改 API DTO，
+ * 也避免后续历史最低价、详情导航或测试夹具读取到被展示层改变过的服务端数据对象。
+ */
+export function sortDashboardRegions(regions: readonly DashboardRegion[]): DashboardRegion[] {
+  const orderIndex = new Map<string, number>(DASHBOARD_REGION_DISPLAY_ORDER.map((regionCode, index) => [regionCode, index]));
+  return regions
+    .map((region, originalIndex) => ({ region, originalIndex }))
+    .sort((left, right) => {
+      const leftOrder = orderIndex.get(left.region.regionCode) ?? Number.POSITIVE_INFINITY;
+      const rightOrder = orderIndex.get(right.region.regionCode) ?? Number.POSITIVE_INFINITY;
+      return leftOrder === rightOrder ? left.originalIndex - right.originalIndex : leftOrder - rightOrder;
+    })
+    .map(({ region }) => region);
 }
 
 /**
