@@ -12,6 +12,7 @@
     "test:dom": "vitest --config vitest.dom.config.mts"
   },
   "dependencies": {
+    "opencc-js": "^1.4.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

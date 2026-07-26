@@ -1,5 +1,6 @@
 import type {
   ConfirmedSubscriptionInput,
+  GameNamePreview,
   OfficialProductCandidate,
   OfficialSearchResult,
   RegionCode,
@@ -121,6 +122,15 @@ export function createProductApiClient(request: typeof fetch = fetch, tracker?: 
       });
 
       return payload.regions;
+    },
+
+    /**
+     * 在地区候选已由 Worker 收窄后预览最终游戏名；浏览器只读取名称和来源，
+     * 不接触任天堂网页、Cookie 或来源判断，最终确认服务仍会重新核验而不会信任本次结果。
+     */
+    async previewGameNames(subscriptions: ConfirmedSubscriptionInput[]): Promise<GameNamePreview[]> {
+      const payload = await postJson<{ names: GameNamePreview[] }>("/api/products/preview-game-names", { subscriptions });
+      return payload.names;
     },
 
     /** 将用户核验后的多款商品一次性确认成订阅。 */

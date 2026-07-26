@@ -6,12 +6,15 @@ import { immediateRefreshNotice } from "./dashboard-page-state";
 import { formatCnyFen, formatDashboardDateTime, formatRegionalPrice, formatRegionName, sortDashboardRegions } from "./dashboard-view-model";
 import { displayChineseGameName } from "../shared/game-display-name";
 import { SubscriptionDeleteDialog } from "./subscription-delete-dialog";
+import type { GameNameDecision, GameNameSyncResult } from "../shared/domain";
 
 /** 仪表盘仅要求客户端具备的读取/立即采集能力，保持页面可在测试中注入受控端口。 */
 interface DashboardPageApi {
   getDashboard(): Promise<DashboardOverview>;
   refreshNow(): Promise<CompletedRefreshResult>;
   deleteSubscriptions(subscriptionIds: string[]): Promise<{ deletedSubscriptionIds: string[] }>;
+  syncGameNames(subscriptionIds: string[]): Promise<GameNameSyncResult[]>;
+  confirmGameNameSync(decisions: GameNameDecision[]): Promise<{ updatedSubscriptionIds: string[] }>;
 }
 
 /**
@@ -25,6 +28,10 @@ export function DashboardPage({ api, onNavigate, onUnauthorized }: { api: Dashbo
   const [selectedSubscriptionIds, setSelectedSubscriptionIds] = useState<Set<string>>(new Set());
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  // 待决项只保存 Worker 已脱敏的英文锚点和订阅 ID；人工输入不会携带游戏 ID、官方 URL 或名称来源，避免浏览器扩大同步写入权限。
+  const [pendingGameNameDecisions, setPendingGameNameDecisions] = useState<GameNameSyncResult[] | null>(null);
+  const [manualGameNames, setManualGameNames] = useState<Record<string, string>>({});
+  const [isSyncingGameNames, setIsSyncingGameNames] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -47,6 +54,60 @@ export function DashboardPage({ api, onNavigate, onUnauthorized }: { api: Dashbo
     catch (error) {
       if (error instanceof DashboardApiError && error.status === 401) onUnauthorized();
       else setNotice(error instanceof DashboardApiError ? error.message : "刷新暂时无法完成。");
+    }
+  }
+
+  /**
+   * 名称同步只能从管理员当前显式选择启动，绝不放入加载 effect。服务端会立即写入已核验官方项，
+   * 无法核验的项留在对话框等待人工中文或英文回退；两种结果最终都通过重新读取仪表盘展示。
+   */
+  async function syncGameNames(): Promise<void> {
+    const subscriptionIds = [...selectedSubscriptionIds];
+    if (subscriptionIds.length === 0) return;
+    setIsSyncingGameNames(true);
+    setNotice(null);
+    try {
+      const results = await api.syncGameNames(subscriptionIds);
+      const decisions = results.filter((result) => result.status === "needs-decision");
+      setOverview(await api.getDashboard());
+      if (decisions.length > 0) {
+        setPendingGameNameDecisions(decisions);
+        setManualGameNames({});
+      } else {
+        setSelectedSubscriptionIds(new Set());
+        setNotice("已同步所选游戏名称。");
+      }
+    } catch (error) {
+      if (error instanceof DashboardApiError && error.status === 401) onUnauthorized();
+      else setNotice(error instanceof DashboardApiError ? error.message : "游戏名称同步暂时无法完成。");
+    } finally {
+      setIsSyncingGameNames(false);
+    }
+  }
+
+  /**
+   * 最终人工决定只提交订阅 ID 与可选中文文本；空白即为管理员选择保留英文，Worker 仍会重试官方名称，
+   * 因此浏览器不能用旧预览覆盖后来恢复的大陆或香港官方标题。
+   */
+  async function confirmGameNameSync(): Promise<void> {
+    if (!pendingGameNameDecisions) return;
+    setIsSyncingGameNames(true);
+    setNotice(null);
+    try {
+      await api.confirmGameNameSync(pendingGameNameDecisions.map((item) => {
+        const nameZh = manualGameNames[item.subscriptionId]?.trim();
+        return nameZh ? { subscriptionId: item.subscriptionId, nameZh } : { subscriptionId: item.subscriptionId };
+      }));
+      setOverview(await api.getDashboard());
+      setPendingGameNameDecisions(null);
+      setManualGameNames({});
+      setSelectedSubscriptionIds(new Set());
+      setNotice("已保存游戏名称决定。");
+    } catch (error) {
+      if (error instanceof DashboardApiError && error.status === 401) onUnauthorized();
+      else setNotice(error instanceof DashboardApiError ? error.message : "游戏名称决定暂时无法保存。");
+    } finally {
+      setIsSyncingGameNames(false);
     }
   }
 
@@ -100,7 +161,7 @@ export function DashboardPage({ api, onNavigate, onUnauthorized }: { api: Dashbo
     <header className="dashboard-header"><div><h1 id="dashboard-title">仪表盘</h1><p>查看当前价格与历史最低价。</p></div><div><button className="secondary-button" type="button" onClick={() => void refreshNow()}>立即刷新</button><button className="primary-button" type="button" onClick={() => onNavigate(subscriptionNewPath())}>添加订阅</button></div></header>
     <div className="dashboard-stats"><p><b>{overview.stats.monitoredSubscriptionCount}</b>正在监控商品</p><p><b>{overview.stats.availableRegionPriceCount}</b>可用地区价格</p><p>最近采集：{overview.stats.lastCapturedAt ? formatDashboardDateTime(overview.stats.lastCapturedAt, overview.stats.timezone ?? "UTC") : "暂无"}</p><p>下次日报：{overview.stats.nextDailyReportAt ? formatDashboardDateTime(overview.stats.nextDailyReportAt, overview.stats.timezone ?? "UTC") : "未设置"}</p></div>
     {notice ? <p className="notice" role="status">{notice}</p> : null}
-    {selectedSubscriptionIds.size > 0 ? <div className="dashboard-selection-toolbar"><span>已选择 {selectedSubscriptionIds.size} 个订阅</span><button className="danger-button" type="button" onClick={() => setIsDeleteDialogOpen(true)}>删除已选（{selectedSubscriptionIds.size}）</button></div> : null}
+    {selectedSubscriptionIds.size > 0 ? <div className="dashboard-selection-toolbar"><span>已选择 {selectedSubscriptionIds.size} 个订阅</span><button className="secondary-button" type="button" disabled={isSyncingGameNames} onClick={() => void syncGameNames()}>{isSyncingGameNames ? "同步中…" : "同步游戏名称"}</button><button className="danger-button" type="button" onClick={() => setIsDeleteDialogOpen(true)}>删除已选（{selectedSubscriptionIds.size}）</button></div> : null}
     {overview.subscriptions.length === 0 ? <section className="dashboard-empty"><h2>还没有订阅</h2><p>添加一款已核验的任天堂商品后，这里会显示五区价格和历史最低价。</p><button className="primary-button" type="button" onClick={() => onNavigate(subscriptionNewPath())}>添加订阅</button></section> : <div className="subscription-list">{overview.subscriptions.map((subscription) => {
       // 历史数据可能把英文官方标题写入 nameZh；展示层统一修正，避免卡片、复选框和详情页入口使用不同游戏名。
       const gameDisplayName = displayChineseGameName(subscription.nameZh, subscription.nameEn);
@@ -109,5 +170,19 @@ export function DashboardPage({ api, onNavigate, onUnauthorized }: { api: Dashbo
       return <article className="subscription-summary" key={subscription.subscriptionId}><label className="subscription-summary__selection"><input type="checkbox" checked={selectedSubscriptionIds.has(subscription.subscriptionId)} onChange={() => toggleSubscriptionSelection(subscription.subscriptionId)} aria-label={`选择 ${gameDisplayName}`} /><span>选择</span></label><button className="subscription-summary__details" type="button" onClick={() => onNavigate(subscriptionDetailPath(subscription.subscriptionId))}><header><h2>{gameDisplayName}</h2><span>{subscription.enabled ? "监控中" : "已暂停"}</span></header><div className="summary-regions">{/* 地区代码只作为后端数据键；展示必须与详情页共用中文名称、官网价格格式和固定五区顺序，避免用户误读币种或错看横向位置。 */}{dashboardRegions.map((region) => <p key={region.regionalProductId}><b>{formatRegionName(region.regionCode)}</b>{region.current ? <><span>{formatRegionalPrice(region.current.amountMinor, region.currency, region.regionCode)}</span><small>{formatCnyFen(region.current.cnyFen)} · {region.current.source}{region.isStale ? " · 过期" : ""}</small></> : <small>等待首笔价格</small>}</p>)}</div><footer>跨区历史最低：{subscription.allRegionHistoricalLow ? `${formatRegionName(subscription.allRegionHistoricalLow.regionCode)} ${formatRegionalPrice(subscription.allRegionHistoricalLow.amountMinor, subscription.allRegionHistoricalLow.currency, subscription.allRegionHistoricalLow.regionCode)}（${formatCnyFen(subscription.allRegionHistoricalLow.cnyFen)}）` : "暂无可比较记录"}</footer></button></article>;
     })}</div>}
     {isDeleteDialogOpen ? <SubscriptionDeleteDialog subscriptionCount={selectedSubscriptionIds.size} isDeleting={isDeleting} onCancel={() => setIsDeleteDialogOpen(false)} onConfirm={() => void confirmDelete()} /> : null}
+    {pendingGameNameDecisions ? <section className="game-name-sync-dialog" role="dialog" aria-modal="true" aria-labelledby="game-name-sync-title">
+      <h2 id="game-name-sync-title">确认游戏名称</h2>
+      <p>以下项目暂未找到可验证的官方中文名称。可填写人工中文，或保留官方英文标题。</p>
+      {pendingGameNameDecisions.map((item) => <fieldset key={item.subscriptionId}>
+        <legend>{item.nameEn}</legend>
+        <label>
+          中文展示名称
+          <input aria-label={`中文展示名称 ${item.nameEn}`} value={manualGameNames[item.subscriptionId] ?? ""} onChange={(event) => setManualGameNames((current) => ({ ...current, [item.subscriptionId]: event.target.value }))} />
+        </label>
+        <button type="button" className="text-button" onClick={() => setManualGameNames((current) => ({ ...current, [item.subscriptionId]: "" }))}>保留官方英文</button>
+      </fieldset>)}
+      <button type="button" className="secondary-button" disabled={isSyncingGameNames} onClick={() => setPendingGameNameDecisions(null)}>取消</button>
+      <button type="button" className="primary-button" disabled={isSyncingGameNames} onClick={() => void confirmGameNameSync()}>{isSyncingGameNames ? "保存中…" : "确认名称决定"}</button>
+    </section> : null}
   </section>;
 }

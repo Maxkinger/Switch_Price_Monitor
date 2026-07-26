@@ -73,6 +73,7 @@ export interface CompletedRefreshResult {
 }
 
 import type { ConfirmedRegionalProduct, RegionCode } from "../shared/domain";
+import type { GameNameDecision, GameNameSyncResult } from "../shared/domain";
 import type { RegionResolutionResponse } from "./api-client";
 import type { ApiRequestTracker } from "./api-request-tracker";
 
@@ -184,6 +185,23 @@ export function createDashboardApiClient(request: typeof fetch = fetch, tracker?
      */
     async deleteSubscriptions(subscriptionIds: string[]): Promise<{ deletedSubscriptionIds: string[] }> {
       return requestJson<{ deletedSubscriptionIds: string[] }>("/api/subscriptions", "DELETE", { subscriptionIds });
+    },
+
+    /**
+     * 仅在管理员从仪表盘显式选择后同步名称；请求只发送订阅 ID，Worker 从受保护关联恢复游戏和香港官方链接，
+     * 浏览器绝不发送游戏 ID、名称来源或任天堂 URL，以保护人工名称与订阅归属边界。
+     */
+    async syncGameNames(subscriptionIds: string[]): Promise<GameNameSyncResult[]> {
+      const payload = await requestJson<{ results: GameNameSyncResult[] }>("/api/subscriptions/sync-game-names", "POST", { subscriptionIds });
+      return payload.results;
+    },
+
+    /**
+     * 提交人工中文或官方英文回退前由 Worker 再次核验官方名称；空白名称只表达管理员的英文回退决定，
+     * 前端不声明来源也不直接修改仪表盘缓存，成功后页面必须重新读取受保护概览。
+     */
+    async confirmGameNameSync(decisions: GameNameDecision[]): Promise<{ updatedSubscriptionIds: string[] }> {
+      return requestJson<{ updatedSubscriptionIds: string[] }>("/api/subscriptions/sync-game-names/confirm", "POST", { decisions });
     },
   };
 }

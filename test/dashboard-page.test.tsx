@@ -127,6 +127,8 @@ describe("仪表盘订阅硬删除", () => {
       getDashboard: vi.fn(async () => overviewWithSubscription),
       refreshNow: vi.fn(),
       deleteSubscriptions: vi.fn(),
+      syncGameNames: vi.fn(async () => []),
+      confirmGameNameSync: vi.fn(async () => ({ updatedSubscriptionIds: [] })),
     };
     const onNavigate = vi.fn();
 
@@ -138,12 +140,97 @@ describe("仪表盘订阅硬删除", () => {
     expect(screen.getByRole("button", { name: "删除已选（1）" }).hasAttribute("disabled")).toBe(false);
   });
 
+  it("does not request game-name sync while the dashboard is loading", async () => {
+    // 若把同步放进加载副作用，此用例会失败：外部名称解析只能由管理员明确点击触发，页面初始读取不得放大任天堂请求或覆盖人工名称。
+    const api = {
+      getDashboard: vi.fn(async () => overviewWithSubscription),
+      refreshNow: vi.fn(),
+      deleteSubscriptions: vi.fn(),
+      syncGameNames: vi.fn(),
+      confirmGameNameSync: vi.fn(),
+    };
+
+    render(<DashboardPage api={api} onNavigate={vi.fn()} onUnauthorized={vi.fn()} />);
+
+    expect(api.syncGameNames).not.toHaveBeenCalled();
+    await screen.findByRole("heading", { name: "胡闹厨房 2" });
+    expect(api.syncGameNames).not.toHaveBeenCalled();
+  });
+
+  it("syncs an explicitly selected subscription, refreshes official results, and never opens an unnecessary decision dialog", async () => {
+    // 官方成功项已由 Worker 立即保存；页面只能在管理员点击后发送选中 ID，并通过第二次概览读取显示结果，不能本地伪造名称或自动弹出人工决定。
+    const user = userEvent.setup();
+    const refreshed = { ...overviewWithSubscription, subscriptions: [{ ...overviewWithSubscription.subscriptions[0], nameZh: "煮过头 2" }] };
+    const api = {
+      getDashboard: vi.fn().mockResolvedValueOnce(overviewWithSubscription).mockResolvedValueOnce(refreshed),
+      refreshNow: vi.fn(),
+      deleteSubscriptions: vi.fn(),
+      syncGameNames: vi.fn(async () => [{ subscriptionId: "subscription-overcooked-2", status: "updated_official" as const, nameEn: "Overcooked! 2" }]),
+      confirmGameNameSync: vi.fn(),
+    };
+
+    render(<DashboardPage api={api} onNavigate={vi.fn()} onUnauthorized={vi.fn()} />);
+    await user.click(await screen.findByRole("checkbox", { name: "选择 胡闹厨房 2" }));
+    await user.click(screen.getByRole("button", { name: "同步游戏名称" }));
+
+    await waitFor(() => expect(api.syncGameNames).toHaveBeenCalledWith(["subscription-overcooked-2"]));
+    expect(await screen.findByRole("heading", { name: "煮过头 2" })).toBeTruthy();
+    expect(api.getDashboard).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("dialog", { name: "确认游戏名称" })).toBeNull();
+  });
+
+  it("submits an explicit manual Chinese decision after a needs-decision sync and refreshes the dashboard", async () => {
+    // 需要人工项不能由浏览器猜测来源；管理员填写中文后只提交 subscriptionId 与文本，保存完成仍须重新读取 Worker 概览。
+    const user = userEvent.setup();
+    const refreshed = { ...overviewWithSubscription, subscriptions: [{ ...overviewWithSubscription.subscriptions[0], nameZh: "胡闹厨房 2：官方中文" }] };
+    const api = {
+      getDashboard: vi.fn().mockResolvedValueOnce(overviewWithSubscription).mockResolvedValueOnce(refreshed).mockResolvedValueOnce(refreshed),
+      refreshNow: vi.fn(),
+      deleteSubscriptions: vi.fn(),
+      syncGameNames: vi.fn(async () => [{ subscriptionId: "subscription-overcooked-2", status: "needs-decision" as const, nameEn: "Overcooked! 2" }]),
+      confirmGameNameSync: vi.fn(async () => ({ updatedSubscriptionIds: ["subscription-overcooked-2"] })),
+    };
+
+    render(<DashboardPage api={api} onNavigate={vi.fn()} onUnauthorized={vi.fn()} />);
+    await user.click(await screen.findByRole("checkbox", { name: "选择 胡闹厨房 2" }));
+    await user.click(screen.getByRole("button", { name: "同步游戏名称" }));
+    await user.type(await screen.findByRole("textbox", { name: "中文展示名称 Overcooked! 2" }), "胡闹厨房 2：官方中文");
+    await user.click(screen.getByRole("button", { name: "确认名称决定" }));
+
+    await waitFor(() => expect(api.confirmGameNameSync).toHaveBeenCalledWith([{ subscriptionId: "subscription-overcooked-2", nameZh: "胡闹厨房 2：官方中文" }]));
+    expect(await screen.findByRole("heading", { name: "胡闹厨房 2：官方中文" })).toBeTruthy();
+    expect(api.getDashboard).toHaveBeenCalledTimes(3);
+  });
+
+  it("submits an empty decision when the administrator keeps the official English fallback", async () => {
+    // “保留官方英文”只清空人工值；提交载荷必须省略 nameZh，让 Worker 记录可审计的英文回退而不是让页面自写名称来源。
+    const user = userEvent.setup();
+    const api = {
+      getDashboard: vi.fn().mockResolvedValueOnce(overviewWithSubscription).mockResolvedValueOnce(overviewWithSubscription).mockResolvedValueOnce(overviewWithSubscription),
+      refreshNow: vi.fn(),
+      deleteSubscriptions: vi.fn(),
+      syncGameNames: vi.fn(async () => [{ subscriptionId: "subscription-overcooked-2", status: "needs-decision" as const, nameEn: "Overcooked! 2" }]),
+      confirmGameNameSync: vi.fn(async () => ({ updatedSubscriptionIds: ["subscription-overcooked-2"] })),
+    };
+
+    render(<DashboardPage api={api} onNavigate={vi.fn()} onUnauthorized={vi.fn()} />);
+    await user.click(await screen.findByRole("checkbox", { name: "选择 胡闹厨房 2" }));
+    await user.click(screen.getByRole("button", { name: "同步游戏名称" }));
+    await user.click(await screen.findByRole("button", { name: "保留官方英文" }));
+    await user.click(screen.getByRole("button", { name: "确认名称决定" }));
+
+    await waitFor(() => expect(api.confirmGameNameSync).toHaveBeenCalledWith([{ subscriptionId: "subscription-overcooked-2" }]));
+    expect(api.getDashboard).toHaveBeenCalledTimes(3);
+  });
+
   it("renders collection and report times in the saved administrator timezone", async () => {
     // 浏览器时区可能与日报时区不同；页面必须使用 Worker 明确返回的 IANA 时区，让两个时间的阅读口径保持一致。
     const api = {
       getDashboard: vi.fn(async () => overviewWithSubscription),
       refreshNow: vi.fn(),
       deleteSubscriptions: vi.fn(),
+      syncGameNames: vi.fn(async () => []),
+      confirmGameNameSync: vi.fn(async () => ({ updatedSubscriptionIds: [] })),
     };
 
     render(<DashboardPage api={api} onNavigate={vi.fn()} onUnauthorized={vi.fn()} />);
@@ -160,6 +247,8 @@ describe("仪表盘订阅硬删除", () => {
         .mockResolvedValueOnce(overviewWithoutSubscription),
       refreshNow: vi.fn(),
       deleteSubscriptions: vi.fn(async () => ({ deletedSubscriptionIds: ["subscription-overcooked-2"] })),
+      syncGameNames: vi.fn(async () => []),
+      confirmGameNameSync: vi.fn(async () => ({ updatedSubscriptionIds: [] })),
     };
 
     render(<DashboardPage api={api} onNavigate={vi.fn()} onUnauthorized={vi.fn()} />);
@@ -219,6 +308,8 @@ describe("地区中文名与官网价格文字", () => {
       getDashboard: vi.fn(async () => localizedOverview),
       refreshNow: vi.fn(),
       deleteSubscriptions: vi.fn(),
+      syncGameNames: vi.fn(async () => []),
+      confirmGameNameSync: vi.fn(async () => ({ updatedSubscriptionIds: [] })),
     };
 
     render(<DashboardPage api={api} onNavigate={vi.fn()} onUnauthorized={vi.fn()} />);
@@ -242,6 +333,8 @@ describe("地区中文名与官网价格文字", () => {
       getDashboard: vi.fn(async () => localizedOverview),
       refreshNow: vi.fn(),
       deleteSubscriptions: vi.fn(),
+      syncGameNames: vi.fn(async () => []),
+      confirmGameNameSync: vi.fn(async () => ({ updatedSubscriptionIds: [] })),
     };
 
     const { container } = render(<DashboardPage api={api} onNavigate={vi.fn()} onUnauthorized={vi.fn()} />);
@@ -273,14 +366,14 @@ describe("地区中文名与官网价格文字", () => {
   });
 });
 
-/** 历史订阅可能在中文名规则上线前把美区官方英文标题写入 nameZh；页面必须在展示层修正，避免管理员看到英文主标题。 */
+/** 已保存的官方英文回退同样是可审计的最终名称；展示层不得重新套用已移除的词表把它伪装成中文。 */
 describe("中文游戏名展示", () => {
   afterEach(() => {
     // 每个页面用例都清理异步读取后的 DOM，避免相同英文标题在不同页面之间互相污染断言。
     cleanup();
   });
 
-  it("shows Chinese game names on dashboard cards even when stored nameZh is English", async () => {
+  it("preserves an explicit official English fallback on dashboard cards", async () => {
     const englishOverview: DashboardOverview = {
       ...localizedOverview,
       subscriptions: [{
@@ -293,16 +386,19 @@ describe("中文游戏名展示", () => {
       getDashboard: vi.fn(async () => englishOverview),
       refreshNow: vi.fn(),
       deleteSubscriptions: vi.fn(),
+      syncGameNames: vi.fn(async () => []),
+      confirmGameNameSync: vi.fn(async () => ({ updatedSubscriptionIds: [] })),
     };
 
     render(<DashboardPage api={api} onNavigate={vi.fn()} onUnauthorized={vi.fn()} />);
 
-    expect(await screen.findByRole("heading", { name: "胡闹厨房 2 Nintendo Switch 2 Edition" })).toBeTruthy();
-    expect(screen.getByRole("checkbox", { name: "选择 胡闹厨房 2 Nintendo Switch 2 Edition" })).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: "Overcooked! 2 – Nintendo Switch 2 Edition" })).toBeNull();
+    // 名称已由服务端明确保存为英文回退；若展示层重新引入词表，本断言会失败并暴露页面改写已审计名称的回归。
+    expect(await screen.findByRole("heading", { name: "Overcooked! 2 – Nintendo Switch 2 Edition" })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "选择 Overcooked! 2 – Nintendo Switch 2 Edition" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "胡闹厨房 2 Nintendo Switch 2 Edition" })).toBeNull();
   });
 
-  it("shows the Chinese game name as the first line on the subscription detail page", async () => {
+  it("preserves an explicit official English fallback on the subscription detail page", async () => {
     const englishDetail: SubscriptionDetail = {
       ...localizedSubscriptionDetail,
       game: {
@@ -322,7 +418,8 @@ describe("中文游戏名展示", () => {
 
     render(<SubscriptionDetailPage api={api} productApi={{} as ReturnType<typeof createProductApiClient>} subscriptionId="subscription-overcooked-2-switch-2-edition" onBack={vi.fn()} onUnauthorized={vi.fn()} />);
 
-    expect(await screen.findByRole("heading", { name: "胡闹厨房 2 Nintendo Switch 2 Edition" })).toBeTruthy();
-    expect(screen.queryByRole("heading", { name: "Overcooked! 2 – Nintendo Switch 2 Edition" })).toBeNull();
+    // 详情页与仪表盘必须读取同一保存值；人工中文或官方中文由同步服务写入后才会显示中文，不能由页面自行翻译。
+    expect(await screen.findByRole("heading", { name: "Overcooked! 2 – Nintendo Switch 2 Edition" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "胡闹厨房 2 Nintendo Switch 2 Edition" })).toBeNull();
   });
 });

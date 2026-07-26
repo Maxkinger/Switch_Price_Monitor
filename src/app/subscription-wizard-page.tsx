@@ -16,6 +16,7 @@ import {
 import type {
   ConfirmedRegionalProduct,
   ConfirmedSubscriptionInput,
+  GameNamePreview,
   OfficialProductCandidate,
   OfficialSearchResult,
   RegionCode,
@@ -265,6 +266,10 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
   const [pendingLinkKey, setPendingLinkKey] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [results, setResults] = useState<SubscriptionConfirmationResult[]>([]);
+  // 名称预览按默认区官方 URL 绑定，地区候选改动时会清空；浏览器不保存网页正文或来源推断，只保存 Worker 返回的脱敏展示 DTO。
+  const [gameNamePreviews, setGameNamePreviews] = useState<Record<string, GameNamePreview>>({});
+  // 人工中文只在官方预览不可用时由管理员填写；空白不在页面转义为中文，交给服务端明确保存官方英文回退。
+  const [manualGameNames, setManualGameNames] = useState<Record<string, string>>({});
 
   /**
    * 商品接口的 401 不能继续停留在旧向导页：认证壳层会卸载本组件以清除全部候选和地区映射。
@@ -313,6 +318,8 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
       setResolvedCandidateKeys([]);
       setManualLinks({});
       setExpandedRegionalKeys([]);
+      setGameNamePreviews({});
+      setManualGameNames({});
     } catch (error) {
       handleProductError(error, "官方搜索暂时不可用，请稍后重试。");
     } finally {
@@ -338,6 +345,8 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
       setResolvedCandidateKeys([]);
       setManualLinks({});
       setExpandedRegionalKeys([]);
+      setGameNamePreviews({});
+      setManualGameNames({});
     } catch (error) {
       handleProductError(error, "官方链接核验未完成，请稍后重试。");
     } finally {
@@ -357,6 +366,8 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
     setIsResolvingRegions(true);
     setNotice(null);
     setExpandedRegionalKeys([]);
+    setGameNamePreviews({});
+    setManualGameNames({});
     try {
       const resolved = await api.resolveRegions(selectedCandidates);
       if (regionResolutionGeneration.current !== generation) return;
@@ -380,6 +391,8 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
     source: RegionalProductMatchSource,
   ) {
     const selectedKey = candidateKey(selected);
+    // 香港候选变化会影响大陆同 ID 与香港繁转简的判定，旧预览必须失效，避免管理员把上一轮名称当成本轮官方结果。
+    setGameNamePreviews({});
     setWizard((current) => setRegionalCandidate(current, selectedKey, regionCode, candidate, source));
   }
 
@@ -455,8 +468,32 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
       const skippedRegionCodes = resolutions
         .filter((resolution) => resolution.candidateKey === selectedKey)
         .flatMap((resolution) => wizard.skippedRegionalKeys.includes(regionalConfirmationKey(selectedKey, resolution.regionCode)) ? [resolution.regionCode] : []);
-      return { selected, regions, skippedRegionCodes };
+      // 已出现 unavailable 预览时，空字符串是管理员明确接受英文回退的决定；首次请求预览前仍不附带该字段，避免旧候选在没有名称状态时伪造人工决定。
+      const displayNameZh = manualGameNames[selectedKey] ?? (gameNamePreviews[selectedKey]?.source === "unavailable" ? "" : undefined);
+      return { selected, regions, skippedRegionCodes, ...(displayNameZh === undefined ? {} : { displayNameZh }) };
     });
+  }
+
+  /**
+   * 仅在地区校验结束后显式取得名称预览。预览失败不会创建订阅，且来源文字完全取自 Worker，
+   * 因为大陆同 ID、香港标题与人工回退的最终优先级仍要在保存前由 Worker 重算。
+   */
+  async function handlePreviewGameNames(): Promise<boolean> {
+    if (selectedCandidates.length === 0) return false;
+    setNotice(null);
+    try {
+      const inputs = buildConfirmationInputs();
+      const previews = await api.previewGameNames(inputs);
+      if (previews.length !== inputs.length) {
+        setNotice("游戏名称预览暂时无法完成，请稍后重试。");
+        return false;
+      }
+      setGameNamePreviews(Object.fromEntries(inputs.map((input, index) => [candidateKey(input.selected), previews[index]])));
+      return true;
+    } catch (error) {
+      handleProductError(error, "游戏名称预览暂时无法完成，请稍后重试。");
+      return false;
+    }
   }
 
   /** 预览实际会使用的官方或已启用第三方回退来源，避免管理员在写入后才发现某区不可监控。 */
@@ -478,6 +515,11 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
   /** 最终确认由 Worker 以单个 D1 批次提交；成功前页面仍允许修改地区，不会产生半成品订阅。 */
   async function handleConfirmSubscriptions() {
     if (selectedCandidates.length === 0) return;
+    // 第一次确认点击只取得名称预览；这样管理员在任何 D1 写入前可看到官方来源或明确输入人工中文，不会由页面猜测译名。
+    if (selectedCandidates.some((candidate) => gameNamePreviews[candidateKey(candidate)] === undefined)) {
+      await handlePreviewGameNames();
+      return;
+    }
     setWizard((current) => ({ ...current, submitState: "submitting" }));
     setNotice(null);
     try {
@@ -551,7 +593,12 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
             <div className="candidate-grid">
               {wizard.searchResult.candidates.map((candidate) => {
                 const key = candidateKey(candidate);
-                return <CandidateCard key={key} candidate={candidate} selected={wizard.selectedCandidateKeys.includes(key)} onToggle={() => setWizard((current) => toggleCandidate(current, key))} />;
+                return <CandidateCard key={key} candidate={candidate} selected={wizard.selectedCandidateKeys.includes(key)} onToggle={() => {
+                  // 新选择会改变待确认锚点，清空旧预览后必须再次由 Worker 读取官方名称，不能沿用另一商品的来源标签。
+                  setGameNamePreviews({});
+                  setManualGameNames({});
+                  setWizard((current) => toggleCandidate(current, key));
+                }} />;
               })}
             </div>
             <div className="candidate-actions">
@@ -591,10 +638,37 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
             onManualLinkChange={(key, value) => setManualLinks((current) => ({ ...current, [key]: value }))}
             onResolveLink={(regionCode) => handleResolveRegionalLink(selected, regionCode)}
             onRetryRegions={handleRetryRegions}
-            onToggleSkip={(regionCode) => setWizard((current) => skipRegionalConfirmation(current, candidateKey(selected), regionCode))}
+            onToggleSkip={(regionCode) => {
+              // 跳过或恢复香港区会改变可验证名称来源，因此必须取消预览并要求管理员重新查看结果。
+              setGameNamePreviews({});
+              setWizard((current) => skipRegionalConfirmation(current, candidateKey(selected), regionCode));
+            }}
             onToggleCandidateExpansion={(key) => setExpandedRegionalKeys((current) => current.includes(key) ? current.filter((entry) => entry !== key) : [...current, key])}
           />
         ))}
+
+        {selectedCandidates.map((selected) => {
+          const preview = gameNamePreviews[candidateKey(selected)];
+          if (!preview) return null;
+          if (preview.source === "mainland_official") {
+            return <section className="game-name-preview" key={`game-name:${candidateKey(selected)}`}><p>已采用腾讯 Nintendo Switch 官方中文名称：{preview.nameZh}</p></section>;
+          }
+          if (preview.source === "hong_kong_official") {
+            return <section className="game-name-preview" key={`game-name:${candidateKey(selected)}`}><p>已采用任天堂香港官方中文名称：{preview.nameZh}</p></section>;
+          }
+          return <section className="game-name-preview" key={`game-name:${candidateKey(selected)}`}>
+            <label>
+              中文展示名称
+              <input
+                aria-label="中文展示名称"
+                value={manualGameNames[candidateKey(selected)] ?? ""}
+                onChange={(event) => setManualGameNames((current) => ({ ...current, [candidateKey(selected)]: event.target.value }))}
+                placeholder="可填写人工中文名称"
+              />
+            </label>
+            <p>留空将使用官方英文标题</p>
+          </section>;
+        })}
 
         {Object.entries(wizard.sourcePreviews).map(([key, preview]) => (
           <section className="source-preview" key={key}>

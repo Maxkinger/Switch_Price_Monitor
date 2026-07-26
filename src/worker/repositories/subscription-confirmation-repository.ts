@@ -1,5 +1,6 @@
 import type { ProductType } from "../providers/types";
 import type { OfficialProductCandidate, RegionalProductMatchSource, RegionCode } from "../../shared/domain";
+import type { GameNameSource } from "../../shared/game-name";
 
 /** 已有订阅只返回确认服务决定幂等结果所需的两个标识，避免仓储把历史地区范围交给新建流程误写。 */
 export interface ExistingSubscriptionConfirmation {
@@ -23,6 +24,8 @@ export interface ValidatedSubscriptionConfirmation {
   game: {
     id: string;
     nameZh: string;
+    /** 名称来源与展示名一起写入，后续同步据此保护人工中文，避免把受控人工决定误覆盖为自动名称。 */
+    nameZhSource: GameNameSource;
     nameEn: string;
     normalizedName: string;
     publisher: string | null;
@@ -104,9 +107,10 @@ export class SubscriptionConfirmationRepository {
     await this.database.batch(inputs.flatMap((input) => [
       this.database
         .prepare(
-          "INSERT INTO games (id, name_zh, name_en, normalized_name, publisher, product_type, cover_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO games (id, name_zh, name_zh_source, name_en, normalized_name, publisher, product_type, cover_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
-        .bind(input.game.id, input.game.nameZh, input.game.nameEn, input.game.normalizedName, input.game.publisher, input.game.productType, input.game.coverUrl, now),
+        // 创建路径必须显式保存来源而非依赖迁移默认值；新订阅的官方英文回退可被后续官方同步更新，人工名称则可据来源拒绝覆盖。
+        .bind(input.game.id, input.game.nameZh, input.game.nameZhSource, input.game.nameEn, input.game.normalizedName, input.game.publisher, input.game.productType, input.game.coverUrl, now),
       ...input.regions.map((region) => this.database
         .prepare("INSERT INTO regional_products (id, game_id, region_code, currency, official_product_id, product_url, match_source, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)")
         .bind(region.id, input.game.id, region.regionCode, region.currency, region.officialPriceId, region.productUrl, region.matchSource, now)),

@@ -63,6 +63,11 @@ export interface ConfirmedSubscriptionInput {
    * 该字段不能替代任意候选，Worker 仍会用保存的设置检查覆盖范围，防止旧页面静默创建仅默认区订阅。
    */
   skippedRegionCodes: RegionCode[];
+  /**
+   * 仅当 Worker 保存前无法重新核验大陆或香港官方中文名时，才可把该值作为人工中文兜底；
+   * 缺失或去空白后为空表示管理员明确接受官方英文标题，浏览器提供的值绝不能覆盖可核验的官方名称。
+   */
+  displayNameZh?: string;
 }
 
 /** 批量确认逐项返回的新建或既有订阅结果，既有订阅绝不隐式替换管理员此前选择的地区范围。 */
@@ -70,6 +75,34 @@ export interface SubscriptionConfirmationResult {
   gameId: string;
   subscriptionId: string;
   status: "created" | "existing";
+}
+
+/**
+ * 名称预览只公开最终可展示文字与可审计来源；`unavailable` 必须配合 null，
+ * 让调用方明确请求人工决定，而不是把锚点英文或猜测翻译伪装成官方中文。
+ */
+export interface GameNamePreview {
+  nameZh: string | null;
+  source: "mainland_official" | "hong_kong_official" | "unavailable";
+}
+
+/**
+ * 既有订阅同步逐项返回稳定状态和官方英文锚点；官方成功会立即写入，
+ * `needs-decision` 则要求管理员明确选择人工中文或官方英文回退，不能由无人值守任务猜测。
+ */
+export interface GameNameSyncResult {
+  subscriptionId: string;
+  status: "updated_official" | "needs-decision";
+  nameEn: string;
+}
+
+/**
+ * 管理员对一个受订阅约束游戏的名称决定；缺失或空白 `nameZh` 表示确认官方英文回退，
+ * 非空值仍需服务端校验含汉字且长度受限，不能携带游戏 ID、来源枚举或任意官方 URL。
+ */
+export interface GameNameDecision {
+  subscriptionId: string;
+  nameZh?: string;
 }
 
 /**

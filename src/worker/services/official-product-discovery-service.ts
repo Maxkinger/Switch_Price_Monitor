@@ -149,6 +149,36 @@ export class OfficialProductDiscoveryService {
   }
 
   /**
+   * 为名称解析返回唯一且重新核验的香港官方候选。已知 URL 必须仍是港区官方地址，并从当前页面重建全部公开字段；
+   * 无已知 URL 时只接受既有跨区匹配的 automatic 结果。canonicalTitle 只用于最终显示，不能绕过类型、发行商、
+   * 官方 URL 与受控本地化身份规则；任何歧义或外部失败均返回 null，防止错误自动改名。
+   */
+  public async resolveUniqueHongKongCandidate(
+    anchor: OfficialProductCandidate,
+    knownHongKongUrl?: string,
+  ): Promise<OfficialProductCandidate | null> {
+    try {
+      if (knownHongKongUrl !== undefined && knownHongKongUrl.trim() !== "") {
+        if (!isOfficialNintendoProductUrl("HK", knownHongKongUrl)) return null;
+        const candidate = await this.pages.resolve("HK", knownHongKongUrl, new AbortController().signal);
+        if (candidate === null
+          || candidate.regionCode !== "HK"
+          || candidate.productUrl !== knownHongKongUrl
+          || !isOfficialNintendoProductUrl("HK", candidate.productUrl)) return null;
+        return hasSameOfficialIdentity(anchor, candidate) || hasHighConfidenceLocalizedIdentity(anchor, candidate)
+          ? candidate
+          : null;
+      }
+
+      const { resolution } = await this.matchRegion(anchor, "HK");
+      return resolution.status === "automatic" ? resolution.candidate : null;
+    } catch {
+      // 名称补全不应因任天堂搜索/页面短暂故障阻断订阅；失败只关闭官方自动命名，并保留人工中文或英文回退路径。
+      return null;
+    }
+  }
+
+  /**
    * 为一个游戏/地区组合选择安全的自动候选或人工确认状态，绝不按数组位置把候选分配给其他游戏。
    * 自动确认和人工选择的信任边界不同：前者只能使用唯一严格身份，而后者允许管理员审计本地化标题；
    * 不过两者都必须来自该地区的官方 URL 且属于同一受控商品类型，不能把搜索摘要或任意网页当作可保存映射。

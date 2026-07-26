@@ -1,7 +1,9 @@
 import { env } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import worker, { type Env } from "../src/worker";
+import { handleSubscriptionRoute } from "../src/worker/routes/subscription-routes";
+import { type GameNameSyncService } from "../src/worker/services/game-name-sync-service";
 
 describe("subscription management HTTP routes", () => {
   beforeEach(async () => {
@@ -30,6 +32,77 @@ describe("subscription management HTTP routes", () => {
 
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toEqual({ code: "UNAUTHORIZED", error: "请先登录。" });
+  });
+
+  it("requires an administrator before synchronizing selected game names and never treats the static path as a subscription ID", async () => {
+    // 同步只允许管理员显式选择订阅 ID；直接调用路由可证明静态同步路径在 `/:id` 之前收窄，避免将同步动作误交给详情读取或对未选游戏执行写入。
+    const sync = vi.fn(async () => [{ subscriptionId: "subscription-overcooked-2", status: "needs-decision" as const, nameEn: "Overcooked! 2" }]);
+    const gameNames: Pick<GameNameSyncService, "sync" | "confirmDecisions"> = { sync, confirmDecisions: vi.fn(async () => undefined) };
+
+    const anonymous = await handleSubscriptionRoute(callRequest("/api/subscriptions/sync-game-names", { subscriptionIds: ["subscription-overcooked-2"] }), env.DB, undefined, gameNames);
+    expect(anonymous?.status).toBe(401);
+
+    const cookie = await initializeAndLogin();
+    const response = await handleSubscriptionRoute(callRequest("/api/subscriptions/sync-game-names", { subscriptionIds: ["subscription-overcooked-2"] }, cookie), env.DB, undefined, gameNames);
+    expect(response?.status).toBe(200);
+    await expect(response?.json()).resolves.toEqual({ results: [{ subscriptionId: "subscription-overcooked-2", status: "needs-decision", nameEn: "Overcooked! 2" }] });
+    expect(sync).toHaveBeenCalledWith(["subscription-overcooked-2"], expect.any(String));
+  });
+
+  it("requires an administrator before accepting game-name decisions", async () => {
+    // 最终决定会写入游戏展示名；即使浏览器已打开同步对话框，失效会话也必须在读取人工文本或调用服务前得到统一 401。
+    const confirmDecisions = vi.fn(async () => undefined);
+    const gameNames: Pick<GameNameSyncService, "sync" | "confirmDecisions"> = { sync: vi.fn(), confirmDecisions };
+
+    const response = await handleSubscriptionRoute(
+      callRequest("/api/subscriptions/sync-game-names/confirm", { decisions: [{ subscriptionId: "subscription-overcooked-2", nameZh: "胡闹厨房 2" }] }),
+      env.DB,
+      undefined,
+      gameNames,
+    );
+
+    expect(response?.status).toBe(401);
+    expect(confirmDecisions).not.toHaveBeenCalled();
+  });
+
+  it("strictly narrows game-name decisions and returns safe validation errors without invoking the service", async () => {
+    // 决定请求绝不能夹带 gameId、来源、外部 URL、重复订阅或纯英文名称；这些值若穿透会扩大更新归属或让不可信文本影响来源审计。
+    const confirmDecisions = vi.fn(async () => undefined);
+    const gameNames: Pick<GameNameSyncService, "sync" | "confirmDecisions"> = { sync: vi.fn(), confirmDecisions };
+    const cookie = await initializeAndLogin();
+    const externalUrl = "https://attacker.example/game";
+    const invalidBodies = [
+      { decisions: [{ subscriptionId: "subscription-overcooked-2", nameZh: "胡闹厨房 2", source: "mainland_official" }] },
+      { decisions: [{ subscriptionId: "subscription-overcooked-2", nameZh: "胡闹厨房 2", gameId: "other-game" }] },
+      { decisions: [{ subscriptionId: "subscription-overcooked-2", nameZh: "胡闹厨房 2", productUrl: externalUrl }] },
+      { decisions: [{ subscriptionId: "subscription-overcooked-2" }, { subscriptionId: "subscription-overcooked-2" }] },
+      { decisions: [{ subscriptionId: "subscription-overcooked-2", nameZh: "English only" }] },
+    ];
+
+    for (const body of invalidBodies) {
+      const response = await handleSubscriptionRoute(callRequest("/api/subscriptions/sync-game-names/confirm", body, cookie), env.DB, undefined, gameNames);
+      expect(response?.status).toBe(422);
+      const payload = await response?.json() as { code?: string; error?: string };
+      expect(payload.code).toBe("VALIDATION_ERROR");
+      expect(payload.error).not.toContain(externalUrl);
+      expect(payload.error).not.toContain("other-game");
+      expect(payload.error).not.toContain("mainland_official");
+    }
+    expect(confirmDecisions).not.toHaveBeenCalled();
+  });
+
+  it("forwards only valid manual Chinese or English-fallback decisions and returns updated subscription IDs", async () => {
+    // 合法载荷没有游戏 ID 或来源枚举；空 nameZh 表示官方英文回退，路由只转交这个最小决定，最终官方优先级仍由同步服务重算。
+    const confirmDecisions = vi.fn(async () => undefined);
+    const gameNames: Pick<GameNameSyncService, "sync" | "confirmDecisions"> = { sync: vi.fn(), confirmDecisions };
+    const cookie = await initializeAndLogin();
+    const decisions = [{ subscriptionId: "subscription-overcooked-2", nameZh: "胡闹厨房 2" }, { subscriptionId: "subscription-unrelated" }];
+
+    const response = await handleSubscriptionRoute(callRequest("/api/subscriptions/sync-game-names/confirm", { decisions }, cookie), env.DB, undefined, gameNames);
+
+    expect(response?.status).toBe(200);
+    await expect(response?.json()).resolves.toEqual({ updatedSubscriptionIds: ["subscription-overcooked-2", "subscription-unrelated"] });
+    expect(confirmDecisions).toHaveBeenCalledWith(decisions, expect.any(String));
   });
 
   it("creates one subscription for a game and reopens it instead of inserting a duplicate", async () => {
@@ -300,4 +373,13 @@ async function call(path: string, body?: unknown, cookie?: string, method = "POS
     { DB: env.DB, ASSETS: assets } as Env,
     {} as ExecutionContext,
   );
+}
+
+/** 路由单测只构造受控 JSON 请求；认证 Cookie 仍复用真实登录端点签发的 HttpOnly 会话，避免绕过会话守卫。 */
+function callRequest(path: string, body?: unknown, cookie?: string): Request {
+  return new Request(`https://example.test${path}`, {
+    method: "POST",
+    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
+  });
 }

@@ -17,6 +17,7 @@ import { createOfficialProviderRegistry } from "./providers/official-provider-re
 import { ProviderChain } from "./providers/provider-chain";
 import { createFrankfurterExchangeRateProvider } from "./providers/frankfurter-exchange-rate";
 import { createOfficialNintendoProductPageResolver } from "./providers/official-nintendo-product-page";
+import { createOfficialMainlandNintendoProductPageResolver } from "./providers/official-mainland-nintendo-product-page";
 import { createOfficialNintendoSearch } from "./providers/official-nintendo-search";
 import { RetentionRepository } from "./repositories/retention-repository";
 import { CollectionRepository } from "./repositories/collection-repository";
@@ -25,6 +26,7 @@ import { PriceRepository } from "./repositories/price-repository";
 import { NotificationEventRepository } from "./repositories/notification-event-repository";
 import { SettingsRepository } from "./repositories/settings-repository";
 import { SubscriptionConfirmationRepository } from "./repositories/subscription-confirmation-repository";
+import { GameNameRepository } from "./repositories/game-name-repository";
 import { DashboardService } from "./services/dashboard-service";
 import { OfficialPriceIdService } from "./services/official-price-id-service";
 import { OfficialProductDiscoveryService } from "./services/official-product-discovery-service";
@@ -37,6 +39,8 @@ import { ProductHealthService } from "./services/product-health-service";
 import { runPendingNotificationDelivery, runScheduled, runSixHourCollection } from "./services/scheduler-service";
 import { defaultFallbackSources, SubscriptionPreviewService } from "./services/subscription-preview-service";
 import { SubscriptionConfirmationService } from "./services/subscription-confirmation-service";
+import { GameNameService } from "./services/game-name-service";
+import { GameNameSyncService } from "./services/game-name-sync-service";
 import { SubscriptionRegionCompletionService } from "./services/subscription-region-completion-service";
 import { JapaneseSubscriptionConfirmationService } from "./services/japanese-subscription-confirmation-service";
 import { createJapaneseUpgradeRelationService } from "./services/japanese-upgrade-relation-service";
@@ -105,6 +109,8 @@ const worker: ExportedHandler<Env> = {
       // 发现阶段与保存前确认共享同一请求级服务对象，保证一次请求内使用相同的三项 Browser Run 上限且不复用跨请求会话。
       japaneseUpgradeRelations,
     );
+    // 名称服务只接收本请求已构造的官方发现器与固定大陆适配器；它不保留网页正文、Cookie 或跨请求缓存，最终确认和预览共享同一受控身份规则。
+    const gameNames = new GameNameService(officialDiscovery, createOfficialMainlandNintendoProductPageResolver());
     const officialPriceIds = new OfficialPriceIdService(createNintendoPriceApiProvider());
     const productResponse = await handleProductRoute(
       request,
@@ -125,7 +131,10 @@ const worker: ExportedHandler<Env> = {
         japaneseUpgradeRelations,
         // 非日区 automatic 候选写入前复用同一请求内的官方发现实例，重新证明 URL 仍唯一，不能信任浏览器保存的旧状态。
         officialDiscovery,
+        undefined,
+        gameNames,
       ),
+      gameNames,
     );
     if (productResponse) return productResponse;
 
@@ -142,6 +151,8 @@ const worker: ExportedHandler<Env> = {
         // 已有订阅补全使用独立的无状态发现实例，但共享同一请求内的官方适配器；不会缓存或跨用户复用候选。
         new OfficialProductDiscoveryService(new SettingsRepository(env.DB), officialSearch, officialPages, officialPages),
       ),
+      // 同步服务只以订阅 ID 授权并从 D1 重建锚点；名称预览与确认都必须通过同一个官方解析器，人工决定不会绕过最终复核。
+      new GameNameSyncService(new GameNameRepository(env.DB), gameNames),
     );
     if (subscriptionResponse) return subscriptionResponse;
 

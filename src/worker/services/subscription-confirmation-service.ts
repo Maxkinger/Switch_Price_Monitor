@@ -6,7 +6,7 @@ import type {
   RegionCode,
   SubscriptionConfirmationResult,
 } from "../../shared/domain";
-import { resolveChineseGameName } from "../../shared/game-display-name";
+import { hasChineseText } from "../../shared/traditional-to-simplified";
 import type { OfficialNintendoProductPageResolver } from "../providers/official-nintendo-product-page";
 import {
   SubscriptionConfirmationRepository,
@@ -19,6 +19,7 @@ import {
   hasSameOfficialIdentity,
 } from "./official-product-discovery-service";
 import type { JapaneseSubscriptionConfirmationService } from "./japanese-subscription-confirmation-service";
+import type { GameNameService } from "./game-name-service";
 import {
   japaneseUpgradeConfirmationKey,
   type JapaneseUpgradeConfirmationItem,
@@ -38,6 +39,9 @@ type JapaneseUpgradeVerifier = Pick<JapaneseUpgradeRelationService, "verifyForCo
 /** 本次确认请求的升级证据仅存于内存 Map，键同时包含锚点、日区 URL 与来源，不能跨商品或跨请求复用。 */
 type JapaneseUpgradeVerificationMap = Map<string, JapaneseUpgradeConfirmationResult>;
 
+/** 最终确认只需要官方名称服务的单一解析方法，不得借名称决策访问发现设置、原始页面或数据库。 */
+type OfficialGameNameResolver = Pick<GameNameService, "resolveOfficialName">;
+
 /**
  * 非日区 automatic 候选的最终唯一性验证窄接口。实现由官方发现服务提供；确认服务只关心相同 URL 是否仍可自动成立，
  * 不接触搜索词、关联结构或地区适配器细节。
@@ -49,6 +53,14 @@ export interface AutomaticRegionalCandidateVerifier {
 /** 未注入发现服务时 automatic 一律安全拒绝；生产入口会显式注入真实实现，人工选择与日区专用确认不受影响。 */
 const unavailableAutomaticRegionalCandidateVerifier: AutomaticRegionalCandidateVerifier = {
   verifyAutomaticRegionalCandidate: async () => false,
+};
+
+/**
+ * 旧调用方未接入官方名称解析时必须保守返回不可用；服务仍会校验人工中文或写英文回退，
+ * 不得借兼容默认值调用旧词表、在线翻译或把浏览器标题标成官方来源。
+ */
+const unavailableOfficialGameNameResolver: OfficialGameNameResolver = {
+  resolveOfficialName: async () => ({ kind: "unavailable" }),
 };
 
 /**
@@ -77,6 +89,7 @@ export class SubscriptionConfirmationService {
     private readonly japaneseUpgrades: JapaneseUpgradeVerifier,
     private readonly automaticVerifier: AutomaticRegionalCandidateVerifier = unavailableAutomaticRegionalCandidateVerifier,
     private readonly createId: () => string = () => crypto.randomUUID(),
+    private readonly gameNames: OfficialGameNameResolver = unavailableOfficialGameNameResolver,
   ) {}
 
   /**
@@ -156,11 +169,15 @@ export class SubscriptionConfirmationService {
     const selectedRegions = regions.filter((region) => region.regionCode === selected.regionCode && region.productUrl === selected.productUrl);
     if (selectedRegions.length !== 1) throw new SubscriptionConfirmationError("默认区商品必须在确认地区中保留一次。");
     this.validateConfiguredRegionCoverage(settings.enabledRegions, selected.regionCode, regions, input.skippedRegionCodes);
+    // 香港 URL 只能来自刚完成官方重读和身份校验的地区结果；浏览器原始 `regions` 不可作为同 ID 大陆标题或香港转换的可信捷径。
+    const hongKongProductUrl = regions.find((region) => region.regionCode === "HK")?.productUrl;
+    const gameName = await this.resolveGameName(selected, hongKongProductUrl, input.displayNameZh);
 
     return {
       game: {
-        // 中文名仅来自受控本地词表；未确认的游戏保持官方标题，避免保存阶段调用翻译、AI 或第三方服务污染商品身份。
-        nameZh: resolveChineseGameName(selected.canonicalTitle) ?? selected.canonicalTitle,
+        // 名称和来源必须来自同一次最终决议，禁止把官方文字配成人工来源或把浏览器文本误标成官方，避免页面和通知失去可追溯性。
+        nameZh: gameName.nameZh,
+        nameZhSource: gameName.nameZhSource,
         nameEn: selected.canonicalTitle,
         normalizedName: normalizedGameName(selected),
         publisher: selected.publisher,
@@ -169,6 +186,24 @@ export class SubscriptionConfirmationService {
       },
       regions,
     };
+  }
+
+  /**
+   * 保存前始终优先采用名称服务重新核验的大陆/香港官方结果；只有 unavailable 才读取浏览器人工决定。
+   * 人工名称按 Unicode 字符限制 1–200 且必须含汉字，空值则保存服务器重读的英文锚点并标记官方英文回退。
+   */
+  private async resolveGameName(
+    selected: OfficialProductCandidate,
+    hongKongProductUrl: string | undefined,
+    displayNameZh: string | undefined,
+  ): Promise<Pick<ValidatedSubscriptionConfirmation["game"], "nameZh" | "nameZhSource">> {
+    const official = await this.gameNames.resolveOfficialName(selected, hongKongProductUrl);
+    if (official.kind !== "unavailable") {
+      return { nameZh: official.nameZh, nameZhSource: official.kind };
+    }
+    const manualName = normalizeManualChineseName(displayNameZh);
+    if (manualName !== null) return { nameZh: manualName, nameZhSource: "manual_chinese" };
+    return { nameZh: selected.canonicalTitle, nameZhSource: "official_english_fallback" };
   }
 
   /**
@@ -314,6 +349,21 @@ export function normalizedGameName(candidate: Pick<OfficialProductCandidate, "ca
 /** 只用于身份比较与去重，不修改官方展示标题；Unicode 小写规则使不同语言标题的规范化行为稳定可预期。 */
 function normalize(value: string): string {
   return value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+}
+
+/**
+ * 对不可信人工名称执行统一运行时验证；undefined、null 或纯空白表示英文回退，
+ * 其它类型、无汉字或超过 200 个 Unicode 字符均受控拒绝，避免 API 绕过 TypeScript 后污染持久化来源。
+ */
+function normalizeManualChineseName(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") throw new SubscriptionConfirmationError("人工中文名称必须包含汉字且长度为 1–200 个字符。");
+  const normalized = value.trim();
+  if (normalized.length === 0) return null;
+  if (Array.from(normalized).length > 200 || !hasChineseText(normalized)) {
+    throw new SubscriptionConfirmationError("人工中文名称必须包含汉字且长度为 1–200 个字符。");
+  }
+  return normalized;
 }
 
 /** 仅把重新验证成功的本区官方 ID 写入地区商品；其他地区明确保存 null，不能跨区复用 ID。 */

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import worker, { type Env } from "../src/worker";
 import { JapaneseUpgradeBatchLimitError } from "../src/worker/providers/japanese-upgrade-browser";
 import { handleProductRoute } from "../src/worker/routes/product-routes";
+import { type GameNameService } from "../src/worker/services/game-name-service";
 import { SubscriptionPreviewService } from "../src/worker/services/subscription-preview-service";
 
 /**
@@ -215,6 +216,24 @@ describe("product discovery HTTP routes", () => {
 
     expect(response?.status).toBe(422);
     await expect(response?.json()).resolves.toEqual({ code: "VALIDATION_ERROR", error: "一次最多核验 3 个日区升级包，请分批处理。" });
+  });
+
+  it("requires an administrator and returns only the verified game-name preview DTO", async () => {
+    // 名称预览会触发受控的官方名称解析；路由必须先验证真实会话，并且只能返回最终名称与来源，不能把候选 URL、网页正文或解析器内部状态泄漏给浏览器。
+    const gameNames: Pick<GameNameService, "resolveOfficialName"> = {
+      resolveOfficialName: vi.fn(async () => ({ kind: "hong_kong_official" as const, nameZh: "胡闹厨房 2" })),
+    };
+    const discovery = { searchDefaultRegion: async () => ({ status: "available" as const, candidates: [] }), resolveOfficialLink: async () => candidate(), resolveRegions: async () => [] };
+    const body = { subscriptions: [confirmedSubscription()] };
+
+    const anonymous = await handleProductRoute(request("/api/products/preview-game-names", body), env.DB, fixedPreview(), discovery, undefined, gameNames);
+    expect(anonymous?.status).toBe(401);
+
+    const cookie = await initializeAndLogin();
+    const response = await handleProductRoute(request("/api/products/preview-game-names", body, cookie), env.DB, fixedPreview(), discovery, undefined, gameNames);
+    expect(response?.status).toBe(200);
+    await expect(response?.json()).resolves.toEqual({ names: [{ nameZh: "胡闹厨房 2", source: "hong_kong_official" }] });
+    expect(gameNames.resolveOfficialName).toHaveBeenCalledWith(candidate(), undefined);
   });
 });
 

@@ -465,6 +465,76 @@ describe("official product discovery service", () => {
     expect(search.search).toHaveBeenNthCalledWith(2, "HK", "Overcooked! 2", expect.any(AbortSignal));
   });
 
+  it("returns a known Hong Kong title only after re-reading the page and verifying its official identity", async () => {
+    // 已保存 URL 仍须在本次从香港官方详情重建；标题、类型和发行商身份一致时才可用于名称展示，不能信任数据库旧摘要。
+    const anchor = usCandidate();
+    const knownUrl = "https://ec.nintendo.com/HK/zh/titles/70010000033098";
+    const verified = hongKongBaseCandidate({ productUrl: knownUrl });
+    const pages = { resolve: vi.fn().mockResolvedValue(verified) };
+    const service = new OfficialProductDiscoveryService(
+      { get: vi.fn() },
+      { search: vi.fn() },
+      pages,
+    );
+
+    await expect(service.resolveUniqueHongKongCandidate(anchor, knownUrl)).resolves.toEqual(verified);
+    expect(pages.resolve).toHaveBeenCalledExactlyOnceWith("HK", knownUrl, expect.any(AbortSignal));
+  });
+
+  it("returns only the unique automatic Hong Kong search result when no known URL is available", async () => {
+    // 名称解析复用现有 automatic 唯一性结论；人工候选列表即使看似相关也不能按排序选第一项。
+    const verified = hongKongBaseCandidate();
+    const service = new OfficialProductDiscoveryService(
+      { get: vi.fn() },
+      { search: vi.fn().mockResolvedValue({ status: "available", candidates: [verified] }) },
+      { resolve: vi.fn() },
+    );
+
+    await expect(service.resolveUniqueHongKongCandidate(usCandidate())).resolves.toEqual(verified);
+  });
+
+  it("returns unavailable when Hong Kong candidates are ambiguous", async () => {
+    // 两个相同身份候选会进入人工选择状态；名称解析不得依搜索顺序自动采用任一标题。
+    const candidates = [
+      hongKongBaseCandidate(),
+      hongKongBaseCandidate({ productUrl: "https://ec.nintendo.com/HK/zh/titles/70010000033099" }),
+    ];
+    const service = new OfficialProductDiscoveryService(
+      { get: vi.fn() },
+      { search: vi.fn().mockResolvedValue({ status: "available", candidates }) },
+      { resolve: vi.fn() },
+    );
+
+    await expect(service.resolveUniqueHongKongCandidate(usCandidate())).resolves.toBeNull();
+  });
+
+  it("does not accept a same-title Hong Kong DLC for a game anchor", async () => {
+    // 相同 canonicalTitle 只是显示文字，不能覆盖商品类型差异；否则同名 DLC 会错误改写本体游戏名称。
+    const wrongType = hongKongBaseCandidate({ productType: "dlc" });
+    const pages = { resolve: vi.fn().mockResolvedValue(wrongType) };
+    const service = new OfficialProductDiscoveryService(
+      { get: vi.fn() },
+      { search: vi.fn() },
+      pages,
+    );
+
+    await expect(service.resolveUniqueHongKongCandidate(usCandidate(), wrongType.productUrl)).resolves.toBeNull();
+  });
+
+  it("fails closed for a non-Hong-Kong known URL or a page resolver failure", async () => {
+    // 窄方法必须自己保留港区官方边界并吞并外部失败；即使注入解析器错误返回候选，也不能访问或采用非港区链接。
+    const pages = { resolve: vi.fn().mockRejectedValue(new Error("private upstream detail")) };
+    const service = new OfficialProductDiscoveryService(
+      { get: vi.fn() },
+      { search: vi.fn() },
+      pages,
+    );
+
+    await expect(service.resolveUniqueHongKongCandidate(usCandidate(), "https://example.test/HK/zh/titles/70010000033098")).resolves.toBeNull();
+    await expect(service.resolveUniqueHongKongCandidate(usCandidate(), "https://ec.nintendo.com/HK/zh/titles/70010000033098")).resolves.toBeNull();
+    expect(pages.resolve).toHaveBeenCalledTimes(1);
+  });
+
 /** 返回一条完整美区候选，作为默认区搜索与跨区确认的稳定身份基线。 */
 function usCandidate(overrides: Partial<OfficialProductCandidate> = {}): OfficialProductCandidate {
   return {

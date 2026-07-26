@@ -1,4 +1,5 @@
-import { initialRegionCodes, regionalProductMatchSources, type ConfirmedRegionalProduct, type RegionCode } from "../../shared/domain";
+import { initialRegionCodes, regionalProductMatchSources, type ConfirmedRegionalProduct, type GameNameDecision, type RegionCode } from "../../shared/domain";
+import { hasChineseText } from "../../shared/traditional-to-simplified";
 import type { ProductType } from "../providers/types";
 import { SubscriptionRepository } from "../repositories/subscription-repository";
 import { SubscriptionDetailRepository } from "../repositories/subscription-detail-repository";
@@ -14,6 +15,7 @@ import {
   SubscriptionNotFoundError,
   SubscriptionService,
 } from "../services/subscription-service";
+import { GameNameSyncError, type GameNameSyncService } from "../services/game-name-sync-service";
 import { requireAdmin } from "./auth-guard";
 
 /**
@@ -24,6 +26,7 @@ export async function handleSubscriptionRoute(
   request: Request,
   database: D1Database,
   completion?: Pick<SubscriptionRegionCompletionService, "resolveExisting" | "completeExisting">,
+  gameNames?: Pick<GameNameSyncService, "sync" | "confirmDecisions">,
 ): Promise<Response | null> {
   const path = new URL(request.url).pathname;
   const action = readSubscriptionAction(request.method, path);
@@ -54,6 +57,21 @@ export async function handleSubscriptionRoute(
       return Response.json(await completion.completeExisting(action.subscriptionId, input, new Date().toISOString()));
     }
 
+    if (action.kind === "sync-game-names") {
+      if (!gameNames) throw new SubscriptionRequestError("游戏名称同步暂不可用。");
+      // 仅将管理员显式选择的订阅 ID 交给服务，游戏归属、HK URL 和最终官方核验均由服务从 D1 重建，路由不能接收 game ID 或来源枚举。
+      const subscriptionIds = readGameNameSyncSubscriptionIds(await request.json<unknown>());
+      return Response.json({ results: await gameNames.sync(subscriptionIds, new Date().toISOString()) });
+    }
+
+    if (action.kind === "confirm-game-name-sync") {
+      if (!gameNames) throw new SubscriptionRequestError("游戏名称同步暂不可用。");
+      // 人工中文与英文回退只使用逐项订阅 ID；服务会在写入前再试官方名称，故浏览器携带的内容无法压过已恢复的官方结果。
+      const decisions = readGameNameDecisions(await request.json<unknown>());
+      await gameNames.confirmDecisions(decisions, new Date().toISOString());
+      return Response.json({ updatedSubscriptionIds: decisions.map((decision) => decision.subscriptionId) });
+    }
+
     const service = new SubscriptionService(new SubscriptionRepository(database));
     if (action.kind === "create") {
       const input = readCreateSubscriptionInput(await request.json<unknown>());
@@ -81,7 +99,7 @@ export async function handleSubscriptionRoute(
     return Response.json({ subscriptionId: action.subscriptionId, globalTargetCnyFen: update.globalTargetCnyFen, regionTargets: update.regionTargets });
   } catch (error) {
     // 可预期的表单或商品归属错误使用 422；数据库故障则使用通用 500，任何路径都不回显 JSON、SQL 或堆栈。
-    const isValidationError = error instanceof SubscriptionRequestError || error instanceof RegionalProductMismatchError || error instanceof SubscriptionRegionCompletionError;
+    const isValidationError = error instanceof SubscriptionRequestError || error instanceof RegionalProductMismatchError || error instanceof SubscriptionRegionCompletionError || error instanceof GameNameSyncError;
     const isNotFound = error instanceof SubscriptionNotFoundError || error instanceof SubscriptionRegionCompletionNotFoundError;
     return Response.json(
       {
@@ -104,6 +122,8 @@ type SubscriptionAction =
   | { kind: "complete-regions"; subscriptionId: string }
   | { kind: "disable"; subscriptionId: string }
   | { kind: "bulk-delete" }
+  | { kind: "sync-game-names" }
+  | { kind: "confirm-game-name-sync" }
   | { kind: "set-enabled"; subscriptionId: string };
 
 /**
@@ -113,6 +133,9 @@ type SubscriptionAction =
 function readSubscriptionAction(method: string, path: string): SubscriptionAction | null {
   if (method === "POST" && path === "/api/subscriptions") return { kind: "create" };
   if (method === "DELETE" && path === "/api/subscriptions") return { kind: "bulk-delete" };
+  // 两个静态同步动作必须先于 `/:id` 正则判断，避免把 `sync-game-names` 当成订阅标识后落入详情或 PATCH 分支。
+  if (method === "POST" && path === "/api/subscriptions/sync-game-names") return { kind: "sync-game-names" };
+  if (method === "POST" && path === "/api/subscriptions/sync-game-names/confirm") return { kind: "confirm-game-name-sync" };
   const readMatch = method === "GET" ? path.match(/^\/api\/subscriptions\/([^/]+)$/) : null;
   if (readMatch) return { kind: "read", subscriptionId: decodeURIComponent(readMatch[1]) };
   const resolveRegionsMatch = method === "POST" ? path.match(/^\/api\/subscriptions\/([^/]+)\/resolve-regions$/) : null;
@@ -124,6 +147,45 @@ function readSubscriptionAction(method: string, path: string): SubscriptionActio
   const updateMatch = method === "PATCH" ? path.match(/^\/api\/subscriptions\/([^/]+)$/) : null;
   if (updateMatch) return { kind: "set-enabled", subscriptionId: decodeURIComponent(updateMatch[1]) };
   return null;
+}
+
+/** 名称同步只允许有限、非空、无重复的订阅 ID；过大批次会放大受控官方请求，故在路由边界提前拒绝。 */
+function readGameNameSyncSubscriptionIds(value: unknown): string[] {
+  if (!isRecord(value) || !Array.isArray(value.subscriptionIds) || value.subscriptionIds.length === 0 || value.subscriptionIds.length > 50) {
+    throw new SubscriptionRequestError("请选择 1 到 50 个订阅同步游戏名称。");
+  }
+  const subscriptionIds = value.subscriptionIds.map((id) => readBoundedSubscriptionId(id));
+  if (new Set(subscriptionIds).size !== subscriptionIds.length) throw new SubscriptionRequestError("订阅不能重复选择。");
+  return subscriptionIds;
+}
+
+/** 同步确认的载荷不接受游戏 ID、官方 URL 或来源枚举；人工中文空白表示管理员明确采用官方英文回退。 */
+function readGameNameDecisions(value: unknown): GameNameDecision[] {
+  if (!isRecord(value) || !Array.isArray(value.decisions) || value.decisions.length === 0 || value.decisions.length > 50) {
+    throw new SubscriptionRequestError("请提交 1 到 50 个游戏名称决定。");
+  }
+  const decisions = value.decisions.map((decision) => {
+    if (!isRecord(decision) || Object.keys(decision).some((key) => key !== "subscriptionId" && key !== "nameZh")) {
+      throw new SubscriptionRequestError("游戏名称决定无效。");
+    }
+    const subscriptionId = readBoundedSubscriptionId(decision.subscriptionId);
+    if (!("nameZh" in decision)) return { subscriptionId };
+    if (typeof decision.nameZh !== "string") throw new SubscriptionRequestError("人工中文名称无效。");
+    const normalized = decision.nameZh.trim();
+    if (Array.from(normalized).length > 200 || (normalized.length > 0 && !hasChineseText(normalized))) {
+      throw new SubscriptionRequestError("人工中文名称必须包含汉字且长度为 1–200 个字符。");
+    }
+    return normalized.length === 0 ? { subscriptionId } : { subscriptionId, nameZh: normalized };
+  });
+  if (new Set(decisions.map((decision) => decision.subscriptionId)).size !== decisions.length) throw new SubscriptionRequestError("同一批次不能重复决定同一订阅。");
+  return decisions;
+}
+
+/** 订阅 ID 只作为参数化查询键，限制去空白后的长度可避免异常载荷放大日志、D1 绑定和受控错误响应。 */
+function readBoundedSubscriptionId(value: unknown): string {
+  const subscriptionId = readNonEmptyString(value, "订阅标识无效。").trim();
+  if (subscriptionId.length > 200) throw new SubscriptionRequestError("订阅标识长度无效。");
+  return subscriptionId;
 }
 
 /**

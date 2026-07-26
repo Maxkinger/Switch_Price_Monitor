@@ -45,6 +45,7 @@ function wizardApi(resolutions: RegionResolutionResponse[]): ReturnType<typeof c
     resolveOfficialLink: vi.fn(),
     resolveRegions: vi.fn(async () => resolutions),
     previewSources: vi.fn(async () => []),
+    previewGameNames: vi.fn(async () => [{ nameZh: null, source: "unavailable" as const }]),
     confirmSubscriptions: vi.fn(async () => []),
   };
 }
@@ -178,3 +179,62 @@ describe("添加订阅向导的跨区候选折叠", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "核验其他地区" })).toBeTruthy());
   });
 });
+
+describe("添加订阅向导的游戏中文名称预览", () => {
+  afterEach(() => {
+    // 名称预览含异步状态与人工输入；每例销毁组件可防止上一例的预览结果或输入草稿影响下一例的最终确认边界。
+    cleanup();
+  });
+
+  it("shows manual Chinese and English fallback choices after a verified subscription has no official Hong Kong name", async () => {
+    // 将官方名称预览改为缺失应触发此用例失败：管理员必须在写入前看到人工中文输入与英文回退说明，页面不能擅自把英文伪装成中文官方名称。
+    const user = userEvent.setup();
+    const api = wizardApi([]);
+
+    render(<SubscriptionWizardPage api={api} onUnauthorized={vi.fn()} />);
+    await user.type(screen.getByRole("textbox", { name: "游戏名称" }), "Overcooked! 2");
+    await user.click(screen.getByRole("button", { name: "搜索官方商品" }));
+    await user.click(await screen.findByRole("button", { name: /Overcooked! 2 – Nintendo Switch 2 Edition/ }));
+    await user.click(screen.getByRole("button", { name: "核验其他地区" }));
+    await user.click(await screen.findByRole("button", { name: "确认订阅" }));
+
+    expect(await screen.findByLabelText("中文展示名称")).toBeTruthy();
+    expect(screen.getByText("留空将使用官方英文标题")).toBeTruthy();
+    expect(api.confirmSubscriptions).not.toHaveBeenCalled();
+  });
+
+  it("submits a manually entered Chinese display name only after the fallback preview", async () => {
+    // 人工中文只能在 Worker 明确返回 unavailable 后提交；若确认按钮绕过预览或遗漏 displayNameZh，保存前的人工保护分支将无法得到管理员决定。
+    const user = userEvent.setup();
+    const api = wizardApi([]);
+
+    render(<SubscriptionWizardPage api={api} onUnauthorized={vi.fn()} />);
+    await prepareFallbackPreview(user);
+    await user.type(screen.getByLabelText("中文展示名称"), "胡闹厨房 2");
+    await user.click(screen.getByRole("button", { name: "确认订阅" }));
+
+    await waitFor(() => expect(api.confirmSubscriptions).toHaveBeenCalledWith([expect.objectContaining({ displayNameZh: "胡闹厨房 2" })]));
+  });
+
+  it("submits an explicit empty displayNameZh when the fallback input is left blank", async () => {
+    // 空白不是漏传字段：它是管理员在预览后确认官方英文回退的明确值；若页面省略该键，服务虽可兼容但 API 契约无法区分未预览旧页面与本次决定。
+    const user = userEvent.setup();
+    const api = wizardApi([]);
+
+    render(<SubscriptionWizardPage api={api} onUnauthorized={vi.fn()} />);
+    await prepareFallbackPreview(user);
+    await user.click(screen.getByRole("button", { name: "确认订阅" }));
+
+    await waitFor(() => expect(api.confirmSubscriptions).toHaveBeenCalledWith([expect.objectContaining({ displayNameZh: "" })]));
+  });
+});
+
+/** 执行单候选的最短官方搜索、地区校验与名称预览流程；复用真实页面交互，避免测试直接修改向导私有状态而掩盖提交边界错误。 */
+async function prepareFallbackPreview(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.type(screen.getByRole("textbox", { name: "游戏名称" }), "Overcooked! 2");
+  await user.click(screen.getByRole("button", { name: "搜索官方商品" }));
+  await user.click(await screen.findByRole("button", { name: /Overcooked! 2 – Nintendo Switch 2 Edition/ }));
+  await user.click(screen.getByRole("button", { name: "核验其他地区" }));
+  await user.click(await screen.findByRole("button", { name: "确认订阅" }));
+  await screen.findByLabelText("中文展示名称");
+}

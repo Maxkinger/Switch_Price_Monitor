@@ -11,6 +11,7 @@ import type { OfficialPriceIdCandidate } from "../services/official-price-id-ser
 import { JapaneseUpgradeBatchLimitError } from "../providers/japanese-upgrade-browser";
 import { ProductDiscoveryError, type OfficialProductDiscoveryService } from "../services/official-product-discovery-service";
 import { SubscriptionConfirmationError, type SubscriptionConfirmationService } from "../services/subscription-confirmation-service";
+import { type GameNameService } from "../services/game-name-service";
 import { SubscriptionPreviewService } from "../services/subscription-preview-service";
 import { requireAdmin } from "./auth-guard";
 
@@ -24,6 +25,7 @@ export async function handleProductRoute(
   preview: SubscriptionPreviewService,
   discovery?: Pick<OfficialProductDiscoveryService, "searchDefaultRegion" | "resolveOfficialLink" | "resolveRegions">,
   confirmation?: Pick<SubscriptionConfirmationService, "confirm">,
+  gameNames?: Pick<GameNameService, "resolveOfficialName">,
 ): Promise<Response | null> {
   const path = new URL(request.url).pathname;
   // 精确白名单避免商品路由截获静态资源或未来端点；发现服务未注入时保留旧预览路由的可测试性。
@@ -32,7 +34,8 @@ export async function handleProductRoute(
   const isResolveLink = request.method === "POST" && path === "/api/products/resolve-link" && discovery !== undefined;
   const isResolveRegions = request.method === "POST" && path === "/api/products/resolve-regions" && discovery !== undefined;
   const isConfirmSubscriptions = request.method === "POST" && path === "/api/products/confirm-subscriptions" && confirmation !== undefined;
-  if (!isPreview && !isSearch && !isResolveLink && !isResolveRegions && !isConfirmSubscriptions) return null;
+  const isPreviewGameNames = request.method === "POST" && path === "/api/products/preview-game-names" && gameNames !== undefined;
+  if (!isPreview && !isSearch && !isResolveLink && !isResolveRegions && !isConfirmSubscriptions && !isPreviewGameNames) return null;
 
   // 必须先验证管理员会话才解析请求体或访问官方接口，避免匿名调用借预览端点放大任天堂请求负载。
   if (!(await requireAdmin(request, database))) {
@@ -69,6 +72,18 @@ export async function handleProductRoute(
       const results = await confirmation.confirm(subscriptions, new Date().toISOString());
       // 批量中含任一新建项才使用 201；全部为既有订阅时返回 200，前端可安全跳转既有编辑页而非误报失败。
       return Response.json({ subscriptions: results }, { status: results.some((result) => result.status === "created") ? 201 : 200 });
+    }
+    if (isPreviewGameNames && gameNames) {
+      // 预览只从与确认同形的受控候选恢复锚点和已选 HK URL，绝不接受浏览器声称的名称来源或外部正文；最终保存时确认服务仍会再次核验。
+      const subscriptions = readSubscriptionConfirmationRequest(await request.json<unknown>());
+      const names = await Promise.all(subscriptions.map(async ({ selected, regions }) => {
+        const hongKongProductUrl = regions.find((region) => region.regionCode === "HK")?.productUrl;
+        const official = await gameNames.resolveOfficialName(selected, hongKongProductUrl);
+        return official.kind === "unavailable"
+          ? { nameZh: null, source: "unavailable" as const }
+          : { nameZh: official.nameZh, source: official.kind };
+      }));
+      return Response.json({ names });
     }
     const candidates = readConfirmationCandidates(await request.json<unknown>());
     // 服务只产生瞬时 DTO；即使官方验证失败，异常也不会把用户 URL、外部响应或秘密写入 D1。
@@ -145,7 +160,16 @@ function readConfirmedSubscription(value: unknown): ConfirmedSubscriptionInput {
     throw new ProductPreviewRequestError("每个游戏在每区只能确认一个商品。");
   }
   const skippedRegionCodes = readSkippedRegionCodes(value.skippedRegionCodes);
-  return { selected, regions, skippedRegionCodes };
+  // 人工名只能是有限长度的普通字符串；是否含汉字及官方结果优先级仍由确认服务在最终写入前重做，路由不伪造来源判断。
+  const displayNameZh = "displayNameZh" in value ? readOptionalDisplayNameZh(value.displayNameZh) : undefined;
+  return { selected, regions, skippedRegionCodes, ...(displayNameZh === undefined ? {} : { displayNameZh }) };
+}
+
+/** 人工输入只允许可控长度的字符串；空白保留为服务端的英文回退信号，避免路由把管理员决定提前改写成任何名称来源。 */
+function readOptionalDisplayNameZh(value: unknown): string | undefined {
+  if (typeof value !== "string") throw new ProductPreviewRequestError("中文展示名称无效。");
+  if (Array.from(value.trim()).length > 200) throw new ProductPreviewRequestError("中文展示名称最长为 200 个字符。");
+  return value;
 }
 
 /**

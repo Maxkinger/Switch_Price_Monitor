@@ -158,14 +158,66 @@ describe("subscription confirmation service", () => {
     await expect(counts()).resolves.toEqual({ games: 2, products: 4, subscriptions: 2, regions: 4 });
   });
 
-  it("stores a controlled Chinese display name while keeping the official title for identity", async () => {
+  it("stores the verified official English fallback until a Chinese name source is resolved", async () => {
     const service = createService(allFixtureCandidates());
 
     await expect(service.confirm([overcookedSubscription()], now)).resolves.toEqual([expect.objectContaining({ status: "created" })]);
 
-    const row = await env.DB.prepare("SELECT name_zh AS nameZh, name_en AS nameEn FROM games LIMIT 1").first<{ nameZh: string; nameEn: string }>();
-    // `name_zh` 是管理页和日报的中文展示名；`name_en` 继续保留官方标题，供跨区补全和采集身份复核使用。
-    expect(row).toEqual({ nameZh: "胡闹厨房 2", nameEn: "Overcooked! 2" });
+    const row = await env.DB.prepare("SELECT name_zh AS nameZh, name_en AS nameEn, name_zh_source AS nameZhSource FROM games LIMIT 1")
+      .first<{ nameZh: string; nameEn: string; nameZhSource: string }>();
+    // 尚无已确认中文来源时，两个名称字段都保留官方英文标题，并显式标记英文回退；后续同步才能安全替换 `nameZh`，保存阶段不得用标题词表猜测中文名。
+    expect(row).toEqual({ nameZh: "Overcooked! 2", nameEn: "Overcooked! 2", nameZhSource: "official_english_fallback" });
+  });
+
+  it("stores a verified mainland official name instead of a browser-supplied manual name", async () => {
+    // 浏览器提交的人工名称不是官方身份凭据；只要保存前能重新核验大陆同 ID 标题，就必须覆盖伪造文本并记录可审计的大陆官方来源。
+    const gameNames = {
+      resolveOfficialName: vi.fn().mockResolvedValue({ kind: "mainland_official" as const, nameZh: "星之卡比 探索发现" }),
+    };
+    const service = createHongKongBundleService(
+      { verifyAutomaticRegionalCandidate: async () => true },
+      gameNames,
+    );
+    const input = { ...hongKongBundleSubscription("manual_selection"), displayNameZh: "伪造名称" };
+
+    await expect(service.confirm([input], now)).resolves.toEqual([expect.objectContaining({ status: "created" })]);
+    await expect(readOnlyGameName()).resolves.toEqual({
+      nameZh: "星之卡比 探索发现",
+      nameEn: "Overcooked! 2 - Gourmet Edition",
+      nameZhSource: "mainland_official",
+    });
+    // 已确认 HK 地区链接必须传给名称服务重读，不能丢弃这条同 ID 大陆官方名称所需的受订阅约束证据。
+    expect(gameNames.resolveOfficialName).toHaveBeenCalledWith(
+      overcookedGourmetUs(),
+      overcookedGourmetHk().productUrl,
+    );
+  });
+
+  it("stores a manual Chinese name only when the final official-name check is unavailable", async () => {
+    // 官方名称不可用时才允许人工中文兜底；输入必须在服务端验证为含汉字的 1–200 字名称，并以 manual_chinese 来源持久化。
+    const service = createHongKongBundleService(
+      { verifyAutomaticRegionalCandidate: async () => true },
+      { resolveOfficialName: async () => ({ kind: "unavailable" as const }) },
+    );
+    const input = { ...hongKongBundleSubscription("manual_selection"), displayNameZh: "  胡闹厨房 2 美食家版  " };
+
+    await expect(service.confirm([input], now)).resolves.toEqual([expect.objectContaining({ status: "created" })]);
+    await expect(readOnlyGameName()).resolves.toMatchObject({
+      nameZh: "胡闹厨房 2 美食家版",
+      nameZhSource: "manual_chinese",
+    });
+  });
+
+  it("rejects a browser-supplied non-Chinese fallback when the official name is unavailable", async () => {
+    // 日文假名或纯英文不能伪装成人工中文来源；受控失败必须发生在 D1 批次前，避免留下名称来源不实的半成品订阅。
+    const service = createHongKongBundleService(
+      { verifyAutomaticRegionalCandidate: async () => true },
+      { resolveOfficialName: async () => ({ kind: "unavailable" as const }) },
+    );
+    const input = { ...hongKongBundleSubscription("manual_selection"), displayNameZh: "オーバークック２" };
+
+    await expect(service.confirm([input], now)).rejects.toThrow("人工中文名称必须包含汉字且长度为 1–200 个字符。");
+    await expect(counts()).resolves.toEqual({ games: 0, products: 0, subscriptions: 0, regions: 0 });
   });
 
   it("returns an existing logical game subscription without replacing its confirmed regions", async () => {
@@ -249,7 +301,12 @@ describe("subscription confirmation service", () => {
  * 港区最终确认夹具显式注入自动发现验证器；页面解析桩仅按 URL 返回服务器重读候选，
  * 价格 ID 保持不支持地区，证明本组测试只改变 automatic 唯一性门禁而不伪造港区报价。
  */
-function createHongKongBundleService(automaticVerifier: { verifyAutomaticRegionalCandidate(anchor: OfficialProductCandidate, candidate: OfficialProductCandidate): Promise<boolean> }): SubscriptionConfirmationService {
+function createHongKongBundleService(
+  automaticVerifier: { verifyAutomaticRegionalCandidate(anchor: OfficialProductCandidate, candidate: OfficialProductCandidate): Promise<boolean> },
+  gameNames: { resolveOfficialName(anchor: OfficialProductCandidate, knownHongKongUrl?: string): Promise<
+    { kind: "mainland_official" | "hong_kong_official"; nameZh: string } | { kind: "unavailable" }
+  > } = { resolveOfficialName: async () => ({ kind: "unavailable" }) },
+): SubscriptionConfirmationService {
   const candidates = [overcookedGourmetUs(), overcookedGourmetHk()];
   return new SubscriptionConfirmationService(
     new SubscriptionConfirmationRepository(env.DB),
@@ -260,6 +317,9 @@ function createHongKongBundleService(automaticVerifier: { verifyAutomaticRegiona
     // 港区用例不包含日区升级包；空 Map 证明新依赖不会改变非日区 automatic 的独立唯一性门禁。
     { verifyForConfirmation: async () => new Map() },
     automaticVerifier,
+    // 保留既有 ID 生成器参数的默认行为；名称解析器追加在末尾，避免新依赖改变所有旧调用方的参数含义。
+    undefined,
+    gameNames,
   );
 }
 
@@ -493,4 +553,10 @@ async function counts(): Promise<{ games: number; products: number; subscription
 async function existingRegionIds(): Promise<string[]> {
   const result = await env.DB.prepare("SELECT regional_product_id AS productId FROM subscription_regions WHERE subscription_id = ? ORDER BY regional_product_id").bind("subscription-overcooked").all<{ productId: string }>();
   return result.results.map((row) => row.productId);
+}
+
+/** 读取唯一新建游戏的三项名称字段，直接验证最终确认写入的是服务端决策结果，而不是浏览器载荷或旧词表推断。 */
+async function readOnlyGameName(): Promise<{ nameZh: string; nameEn: string; nameZhSource: string } | null> {
+  return env.DB.prepare("SELECT name_zh AS nameZh, name_en AS nameEn, name_zh_source AS nameZhSource FROM games LIMIT 1")
+    .first<{ nameZh: string; nameEn: string; nameZhSource: string }>();
 }
