@@ -14,7 +14,8 @@ export const POSTGRES_MIGRATION_DIRECTORY = fileURLToPath(
 
 /**
  * 只接受 Task 2 Compose 暴露的回环测试库。严格校验主机、端口、账号和库名，
- * 是为了让 DROP SCHEMA 等破坏性测试辅助操作绝不落到开发常驻库、NAS 或生产数据库。
+ * 并拒绝可能被 pg 解释为其他连接设置的查询参数或片段；这是为了让 DROP SCHEMA 等
+ * 破坏性测试辅助操作绝不落到开发常驻库、NAS、Unix socket 或生产数据库。
  */
 export function requireTestDatabaseUrl(): string {
   const value = process.env.TEST_DATABASE_URL;
@@ -29,7 +30,9 @@ export function requireTestDatabaseUrl(): string {
     url.port === "54329" &&
     url.username === "switch_test" &&
     url.password === "switch_test" &&
-    url.pathname === "/switch_test";
+    url.pathname === "/switch_test" &&
+    url.search === "" &&
+    url.hash === "";
   if (!isDisposableDatabase) {
     throw new Error("TEST_DATABASE_URL 必须指向 Task 2 的一次性 switch_test 数据库");
   }

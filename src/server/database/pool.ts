@@ -61,6 +61,7 @@ export function createPostgresDatabase(connectionString: string): AppDatabase {
     async transaction<T>(work: (transaction: SqlExecutor) => Promise<T>): Promise<T> {
       const client = await pool.connect();
       let transactionStarted = false;
+      let releaseError: Error | undefined;
       try {
         await client.query("BEGIN");
         transactionStarted = true;
@@ -69,14 +70,33 @@ export function createPostgresDatabase(connectionString: string): AppDatabase {
         transactionStarted = false;
         return value;
       } catch (error) {
-        // 只有 BEGIN 成功后才回滚；BEGIN 自身失败时直接归还客户端，避免无事务 ROLLBACK 掩盖原始连接错误。
+        // 只有 BEGIN 成功后才回滚；工作或 COMMIT 失败但回滚成功时会话状态已知，可正常归还并原样抛出业务错误。
         if (transactionStarted) {
-          await client.query("ROLLBACK");
+          try {
+            await client.query("ROLLBACK");
+          } catch (rollbackError) {
+            // 回滚失败意味着事务状态未知：用回滚错误销毁客户端，并聚合两个错误，不能让清理故障掩盖原始业务/提交错误。
+            releaseError = normalizeConnectionError(
+              rollbackError,
+              "PostgreSQL 事务回滚失败",
+            );
+            throw aggregateOperationAndCleanupErrors(
+              error,
+              rollbackError,
+              "PostgreSQL 事务失败且回滚清理失败",
+            );
+          }
+        } else {
+          // BEGIN 控制语句失败时无法证明会话仍可复用，销毁客户端以避免未知协议/事务状态回到连接池。
+          releaseError = normalizeConnectionError(
+            error,
+            "PostgreSQL 事务启动失败",
+          );
         }
         throw error;
       } finally {
-        // 成功、业务异常和 SQL 异常都必须归还同一个客户端，否则连接池最终会耗尽并阻塞 HTTP/调度请求。
-        client.release();
+        // 正常路径 clean-release；控制语句失败路径把 Error 传给 pg 以移除客户端，两者都不会泄漏池容量。
+        client.release(releaseError);
       }
     },
 
@@ -86,20 +106,40 @@ export function createPostgresDatabase(connectionString: string): AppDatabase {
     ): Promise<T | undefined> {
       const client = await pool.connect();
       let acquired = false;
+      let releaseError: Error | undefined;
+      let workFailed = false;
+      let workError: unknown;
       try {
-        const lockResult = await client.query<{ acquired: boolean }>(
-          "SELECT pg_try_advisory_lock($1::bigint) AS acquired",
-          // bigint 转十进制字符串可保持 64 位锁键精度，避免 JavaScript number 截断后不同任务误用同一把锁。
-          [key.toString()],
-        );
+        let lockResult: QueryResult<{ acquired: boolean }>;
+        try {
+          lockResult = await client.query<{ acquired: boolean }>(
+            "SELECT pg_try_advisory_lock($1::bigint) AS acquired",
+            // bigint 转十进制字符串可保持 64 位锁键精度，避免 JavaScript number 截断后不同任务误用同一把锁。
+            [key.toString()],
+          );
+        } catch (error) {
+          // 获取锁的控制查询失败后无法判断会话是否已持锁，必须销毁连接而不是 clean-release 后让未知锁状态进入池。
+          releaseError = normalizeConnectionError(
+            error,
+            "PostgreSQL advisory lock 获取失败",
+          );
+          throw error;
+        }
         acquired = lockResult.rows[0]?.acquired === true;
         if (!acquired) {
           // try 锁失败必须立即跳过，不排队；这是防止迁移外的定时任务重复采集和重复通知的业务语义。
           return undefined;
         }
-        return await work(createExecutor(client));
+        try {
+          return await work(createExecutor(client));
+        } catch (error) {
+          workFailed = true;
+          workError = error;
+          throw error;
+        }
       } finally {
-        let unlockError: Error | undefined;
+        let unlockFailed = false;
+        let unlockError: unknown;
         try {
           if (acquired) {
             // advisory lock 属于当前数据库会话，必须在归还客户端前显式释放，防止锁随连接回池后永久阻塞后续任务。
@@ -107,12 +147,27 @@ export function createPostgresDatabase(connectionString: string): AppDatabase {
           }
         } catch (error) {
           // 解锁查询异常时销毁而非复用该会话，防止一把状态未知的会话锁随客户端回池并阻塞后续迁移或调度。
-          unlockError =
-            error instanceof Error ? error : new Error("PostgreSQL advisory lock 释放异常");
-          throw error;
+          unlockFailed = true;
+          unlockError = error;
+          releaseError = normalizeConnectionError(
+            error,
+            "PostgreSQL advisory lock 释放异常",
+          );
         } finally {
-          // 正常路径归还客户端；异常路径把错误交给 pg 以淘汰客户端，两者都不会泄漏连接池容量。
-          client.release(unlockError);
+          // 正常路径归还客户端；获取/解锁异常把错误交给 pg 以淘汰客户端，两者都不会泄漏连接池容量。
+          client.release(releaseError);
+        }
+
+        if (unlockFailed) {
+          if (workFailed) {
+            // finally 中的解锁错误不能覆盖回调错误；聚合顺序固定为业务错误在前、资源清理错误在后。
+            throw aggregateOperationAndCleanupErrors(
+              workError,
+              unlockError,
+              "PostgreSQL advisory lock 回调失败且解锁清理失败",
+            );
+          }
+          throw unlockError;
         }
       }
     },
@@ -136,4 +191,24 @@ async function releaseAdvisoryLock(client: PoolClient, key: bigint): Promise<voi
   if (result.rows[0]?.released !== true) {
     throw new Error("PostgreSQL advisory lock 释放失败");
   }
+}
+
+/**
+ * pg 的 release(error) 只接受 Error/boolean；若依赖或用户回调抛出非 Error 值，
+ * 用带 cause 的安全错误包装后销毁未知状态客户端，同时避免把连接串、SQL 参数或凭据写入消息。
+ */
+function normalizeConnectionError(error: unknown, fallbackMessage: string): Error {
+  return error instanceof Error ? error : new Error(fallbackMessage, { cause: error });
+}
+
+/**
+ * 同时保留主操作与资源清理失败，顺序固定为 operation、cleanup。
+ * AggregateError 让启动/日志层可检查两条因果链，而不是被 ROLLBACK 或解锁异常静默覆盖原始业务错误。
+ */
+function aggregateOperationAndCleanupErrors(
+  operationError: unknown,
+  cleanupError: unknown,
+  message: string,
+): AggregateError {
+  return new AggregateError([operationError, cleanupError], message);
 }

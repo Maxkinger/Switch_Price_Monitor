@@ -1,16 +1,14 @@
-import process from "node:process";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createPostgresDatabase } from "../src/server/database/pool";
 import type { AppDatabase } from "../src/server/database/types";
+import { requireTestDatabaseUrl } from "./support/postgres";
 
 /**
  * 此连接串只允许指向由 docker-compose.dev.yml 创建的可销毁 switch_test 数据库。
- * 测试拒绝缺失环境变量，避免开发者误把集成测试静默切换到 NAS、生产库或个人默认数据库。
+ * 统一安全验证会在创建任何连接池、表或 TRUNCATE 前检查完整 URL，避免本测试绕过
+ * schema 重置辅助函数的保护而误写 NAS、生产库、个人默认数据库或额外参数指定的 Unix socket。
  */
-const connectionString = process.env.TEST_DATABASE_URL;
-if (!connectionString) {
-  throw new Error("必须显式设置 TEST_DATABASE_URL 才能运行 PostgreSQL 集成测试");
-}
+const connectionString = requireTestDatabaseUrl();
 
 describe("PostgreSQL 连接池、事务与互斥锁", () => {
   let database: AppDatabase;

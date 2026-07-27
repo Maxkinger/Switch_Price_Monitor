@@ -3,6 +3,13 @@
   "private": true,
   "version": "0.0.17",
   "type": "module",
+  "codexMetadata": {
+    "databaseDependencyRationaleZh": {
+      "pg": "pg 是 Node 服务连接 PostgreSQL 的生产运行时依赖，不能放入仅测试/构建使用的 devDependencies。",
+      "parameterization": "所有动态 SQL 值必须通过 pg 参数绑定传入，禁止拼接认证、价格来源、筛选条件或其他外部输入。",
+      "credentials": "数据库连接凭据只从经过验证的运行时配置注入，不得写入源码、测试产物、镜像层或普通日志。"
+    }
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
