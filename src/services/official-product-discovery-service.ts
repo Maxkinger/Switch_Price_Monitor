@@ -5,7 +5,7 @@ import {
   type OfficialNintendoRelatedProductReference,
   type OfficialNintendoRelatedProductResolver,
 } from "../providers/official-nintendo-product-page";
-import { JapaneseUpgradeBatchLimitError } from "../worker/providers/japanese-upgrade-browser";
+import { JapaneseUpgradeBatchLimitError } from "../providers/japanese-upgrade-browser";
 import type { JapaneseUpgradeDiscoveryResult, JapaneseUpgradeRelationService } from "./japanese-upgrade-relation-service";
 
 /**

@@ -1,10 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { JapaneseUpgradeRootCandidate } from "../src/providers/official-japanese-upgrade-root";
-import {
-  createJapaneseUpgradeBrowserBatch,
-  normalizeJapaneseUpgradeUrl,
-} from "../src/worker/providers/japanese-upgrade-browser";
+import { normalizeJapaneseUpgradeUrl } from "../src/providers/japanese-upgrade-browser";
+import { createJapaneseUpgradeBrowserBatch } from "../src/worker/providers/japanese-upgrade-browser";
 
 /**
  * Browser Run 批处理器测试只使用窄内存替身，不得启动真实浏览器或访问任天堂网络。

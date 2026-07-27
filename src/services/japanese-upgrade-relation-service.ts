@@ -4,7 +4,7 @@ import {
   normalizeJapaneseUpgradeUrl,
   type JapaneseUpgradeBrowserBatch,
   type JapaneseUpgradeBrowserResult,
-} from "../worker/providers/japanese-upgrade-browser";
+} from "../providers/japanese-upgrade-browser";
 import type { JapaneseUpgradeRootCandidate, JapaneseUpgradeRootSearch } from "../providers/official-japanese-upgrade-root";
 import type { NintendoOfficialPriceQuote, NintendoOfficialPriceQuoteResolver } from "../providers/official-nintendo-price-api";
 import { officialCandidateKey } from "./official-product-discovery-service";

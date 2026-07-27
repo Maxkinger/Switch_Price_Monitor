@@ -8,7 +8,7 @@ import {
 } from "../shared/domain";
 import type { ProductType } from "../providers/types";
 import type { OfficialPriceIdCandidate } from "../services/official-price-id-service";
-import { JapaneseUpgradeBatchLimitError } from "../worker/providers/japanese-upgrade-browser";
+import { JapaneseUpgradeBatchLimitError } from "../providers/japanese-upgrade-browser";
 import { ProductDiscoveryError, type OfficialProductDiscoveryService } from "../services/official-product-discovery-service";
 import { SubscriptionConfirmationError, type SubscriptionConfirmationService } from "../services/subscription-confirmation-service";
 import { SubscriptionPreviewService } from "../services/subscription-preview-service";

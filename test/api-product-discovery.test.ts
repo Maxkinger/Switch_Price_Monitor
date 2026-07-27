@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import worker, { type Env } from "../src/worker";
-import { JapaneseUpgradeBatchLimitError } from "../src/worker/providers/japanese-upgrade-browser";
+import { JapaneseUpgradeBatchLimitError } from "../src/providers/japanese-upgrade-browser";
 import { handleProductRoute } from "../src/routes/product-routes";
 import { SubscriptionPreviewService } from "../src/services/subscription-preview-service";
 
