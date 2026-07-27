@@ -25,6 +25,7 @@ import { ExchangeRateRepository } from "../repositories/exchange-rate-repository
 import { PriceRepository } from "../repositories/price-repository";
 import { NotificationEventRepository } from "../repositories/notification-event-repository";
 import { SettingsRepository } from "../repositories/settings-repository";
+import { LegacyDashboardRepository } from "../repositories/dashboard-repository";
 import { SubscriptionConfirmationRepository } from "../repositories/subscription-confirmation-repository";
 import { DashboardService } from "../services/dashboard-service";
 import { OfficialPriceIdService } from "../services/official-price-id-service";
@@ -168,8 +169,8 @@ const worker: ExportedHandler<Env> = {
     const telegram = env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID
       ? new TelegramService({ botToken: env.TELEGRAM_BOT_TOKEN, chatId: env.TELEGRAM_CHAT_ID })
       : undefined;
-    // DashboardService 的结果完全由本 Worker 构造；在单一适配点收窄为日报 DTO，避免在 Telegram 服务传播宽松的数据库读取类型。
-    const overview = new DashboardService(env.DB);
+    // 临时 D1 reader 只维持 Worker 日报回归；DashboardService 本身保持平台中立，Node 装配将改用 PostgreSQL reader。
+    const overview = new DashboardService(new LegacyDashboardRepository(env.DB));
     // 即时事件不等日报时刻：成功后才由仓储原子更新为 delivered，失败则保持 pending 留给下一分钟重试。
     ctx.waitUntil(runPendingNotificationDelivery(scheduledAt, {
       events: new NotificationEventRepository(env.DB),
