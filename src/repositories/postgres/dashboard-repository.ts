@@ -149,7 +149,9 @@ export class PostgresDashboardRepository implements DashboardReader {
 
     const lows = new Map<string, DashboardAllRegionHistoricalLow>();
     for (const row of allRegionLows.rows) {
-      lows.set(row.subscriptionId, { ...row, capturedAt: row.capturedAt.toISOString() });
+      // subscriptionId 只用于把窗口查询结果归入订阅，不能随对象展开泄漏到公开最低价 DTO。
+      const { subscriptionId, capturedAt, ...historicalLow } = row;
+      lows.set(subscriptionId, { ...historicalLow, capturedAt: capturedAt.toISOString() });
     }
     const dashboardSubscriptions = subscriptions.rows.map((row): DashboardSubscription => ({
       ...row,

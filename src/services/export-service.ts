@@ -25,7 +25,14 @@ export class ExportService {
   }
 }
 
-/** 所有字段统一引号包裹并把内部双引号加倍，防止公式样式文本或逗号改变 CSV 结构。 */
+/**
+ * 所有字段先按 RFC 风格加倍内部双引号并整体包裹，保持逗号、CR/LF 等内容的单元格边界。
+ * 字符串若以常见 ASCII、控制字符或日文环境可能识别的全角公式触发符开头，则前置单引号；
+ * 这是降低电子表格误执行风险的输入中和措施，不声称能覆盖所有软件或导入配置。数字保持数字语义，负数不会被误加前缀。
+ */
 function csvCell(value: string | number | boolean): string {
-  return `"${String(value).replaceAll('"', '""')}"`;
+  const neutralized = typeof value === "string" && /^[=+\-@\t\r\n＝＋－＠]/u.test(value)
+    ? `'${value}`
+    : String(value);
+  return `"${neutralized.replaceAll('"', '""')}"`;
 }

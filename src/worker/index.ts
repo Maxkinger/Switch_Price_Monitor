@@ -30,7 +30,6 @@ import { SubscriptionConfirmationRepository } from "../repositories/subscription
 import { DashboardService } from "../services/dashboard-service";
 import { OfficialPriceIdService } from "../services/official-price-id-service";
 import { OfficialProductDiscoveryService } from "../services/official-product-discovery-service";
-import type { DailyReportSubscription } from "../services/report-service";
 import { RetentionService } from "../services/retention-service";
 import { CollectionService } from "../services/collection-service";
 import { DailyCnyRateService } from "../services/daily-cny-rate-service";
@@ -179,7 +178,8 @@ const worker: ExportedHandler<Env> = {
     }));
     ctx.waitUntil(runScheduled(scheduledAt, {
       settings: new SettingsRepository(env.DB),
-      overview: { getOverview: async () => ({ subscriptions: (await overview.getOverview()).subscriptions as unknown as DailyReportSubscription[] }) },
+      // DashboardSubscription 已结构化满足日报端口；直接返回可让编译器持续检查两侧 DTO，避免双重断言掩盖未来字段漂移。
+      overview: { getOverview: async () => ({ subscriptions: (await overview.getOverview()).subscriptions }) },
       telegram,
     }));
   },

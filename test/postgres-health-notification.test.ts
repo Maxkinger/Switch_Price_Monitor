@@ -32,7 +32,7 @@ describe("PostgreSQL 商品健康与通知事件仓储", () => {
     expect(row.rows[0]?.lastSuccessAt.toISOString()).toBe("2026-07-16T00:00:00.000Z");
   });
 
-  it("依赖唯一键原子预留一次并只把 pending 事件确认一次", async () => {
+  it("两个并发预留都不报错且唯一键只授予一次发送资格", async () => {
     const repository = new PostgresNotificationEventRepository(database);
     const input = {
       regionalProductId: "product-health",
@@ -40,8 +40,27 @@ describe("PostgreSQL 商品健康与通知事件仓储", () => {
       dedupeKey: "product-health:failure:fixed",
       createdAt: "2026-07-16T06:00:00.000Z",
     };
+    // 不等待第一笔 INSERT 就启动第二笔，真实覆盖两个池查询竞争同一 dedupe_key；ON CONFLICT 必须让两者都正常完成。
+    const concurrentReservations = Promise.all([
+      repository.reserve(input),
+      repository.reserve(input),
+    ]);
+    await expect(concurrentReservations).resolves.toHaveLength(2);
+    const results = await concurrentReservations;
+    expect(results.filter((reserved) => reserved)).toHaveLength(1);
+    expect(results).toContain(false);
+    expect(results).toContain(true);
+  });
+
+  it("只把 pending 通知确认一次并保留首次成功时间", async () => {
+    const repository = new PostgresNotificationEventRepository(database);
+    const input = {
+      regionalProductId: "product-health",
+      eventType: "collection-failure" as const,
+      dedupeKey: "product-health:delivery:fixed",
+      createdAt: "2026-07-16T06:00:00.000Z",
+    };
     await expect(repository.reserve(input)).resolves.toBe(true);
-    await expect(repository.reserve(input)).resolves.toBe(false);
     await expect(repository.markDelivered(input.dedupeKey, "2026-07-16T06:00:01.000Z")).resolves.toBe(true);
     await expect(repository.markDelivered(input.dedupeKey, "2026-07-16T06:00:02.000Z")).resolves.toBe(false);
   });
