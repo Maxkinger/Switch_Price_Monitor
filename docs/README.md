@@ -1,7 +1,7 @@
 # Switch Price Monitor 文档中心
 
 状态：开发进行中
-最后更新：2026-07-26
+最后更新：2026-07-27
 
 本目录按产品、架构与决策分类维护。每个需求或设计部分经确认后，应同步更新相应文档，并在需求追踪表中记录状态。
 
@@ -15,6 +15,7 @@
 | [数据模型](architecture/data-model.md) | 业务实体、关系、保留策略与敏感数据边界 | 已确认部分 |
 | [API 设计](architecture/api-design.md) | 前后端接口边界和访问控制原则 | 已确认部分 |
 | [质量与验收策略](quality/quality-and-acceptance.md) | 可靠性、安全、测试和发布验收规则 | 已确认部分 |
+| [NAS Docker 与 PostgreSQL 迁移设计规格](superpowers/specs/2026-07-27-nas-docker-postgresql-migration-design.md) | 完全迁出 Cloudflare、本地 M1 调试、多架构 Docker Hub 发布及 DS423+ Compose 部署 | 已确认，待实施 |
 | [MVP 实施计划](superpowers/plans/2026-07-16-switch-price-monitor-mvp.md) | 8 个可独立验收任务的实施顺序、测试与提交点 | 已批准，执行中 |
 | [官方价格 ID 与订阅前来源预览计划](superpowers/plans/2026-07-16-official-price-id-subscription-flow.md) | 日区官方价格接口、地区价格 ID 与创建前来源预览的后端实施步骤 | 已完成，待后续前端与其他地区适配器接续 |
 | [官方订阅发现与批量确认设计](superpowers/specs/2026-07-17-official-subscription-discovery-design.md) | 官方默认区搜索、批量候选选择、跨区确认与候选卡布局 | 已确认（草图暂定） |
@@ -55,6 +56,7 @@
 | [解决方案设计规格](superpowers/specs/2026-07-16-switch-price-monitor-design.md) | 已确认产品设计与官方价格 ID/创建前来源预览边界 | 已确认 |
 | [ADR-001：部署架构](decisions/ADR-001-cloudflare-workers-d1.md) | 采用 Cloudflare Workers Static Assets 与 D1 的决策 | 已确认 |
 | [ADR-002：价格来源验证](decisions/ADR-002-price-provider-validation.md) | 来源准入、五区可行性与回退边界 | 已确认部分 |
+| [ADR-003：NAS Docker 与 PostgreSQL](decisions/ADR-003-nas-docker-postgresql.md) | Node 应用、专属 PostgreSQL、本地 Playwright 与多架构镜像的目标部署决策 | 已确认，待实施 |
 
 ## 变更规则
 

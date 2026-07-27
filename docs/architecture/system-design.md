@@ -2,7 +2,7 @@
 
 ## 1. 文档状态
 
-本说明包含截至 2026-07-19 已获确认的架构、核心流程与可靠性约束。详细数据模型、接口和验收策略分别维护在关联文档中。
+本说明包含截至 2026-07-27 已获确认的架构、核心流程与可靠性约束。详细数据模型、接口和验收策略分别维护在关联文档中。
 
 ## 2. 已确认架构
 
@@ -28,6 +28,28 @@ Cloudflare D1
 ```
 
 部署采用单一 Cloudflare Worker：静态前端与 API 共用同一部署单元，D1 通过 Worker Binding 访问。日区升级包关系发现使用同一 Worker 的 `BROWSER` Binding，但只注入受保护的商品发现和最终确认服务；Browser Run 不连接 D1、Cron、价格采集或通知链路。敏感配置使用 Cloudflare Secrets。
+
+### 2.1 已确认的 NAS 目标架构
+
+Cloudflare 架构仍是实施完成前的当前生产环境。迁移完成并通过功能等价、备份恢复与回滚验收后，生产环境改为 Synology DS423+ 上的 Docker Compose，且不保留双平台兼容层：
+
+```text
+局域网浏览器
+          │
+          ▼
+Node.js 应用容器
+  ├─ React 静态资源与同源 API
+  ├─ 管理员认证与全部现有业务服务
+  ├─ 每分钟通知/日报与每六小时采集
+  └─ 本地 Playwright + Chromium
+          │ Compose 内部网络
+          ▼
+项目专属 PostgreSQL 容器
+```
+
+应用容器是唯一映射 NAS 端口的服务；PostgreSQL 与 Chromium 调试能力均不向局域网开放。原 D1 批处理改为显式 PostgreSQL 事务，迁移与调度使用 advisory lock 防止并发重复执行。日区升级包继续使用一个浏览器、最多三个串行隔离上下文、单项三十秒和保存前二次官方复核。
+
+本地 Apple Silicon M1 提供开发与生产 Compose 验收。GitHub Actions 仅在完整质量门禁通过后，向公开 Docker Hub 仓库发布 `linux/arm64` 与 `linux/amd64` 的固定版本镜像；NAS Compose 只拉取镜像，不构建源码。运行时数据库与 Telegram 凭据只通过未提交环境配置注入。详细边界见 [NAS Docker 与 PostgreSQL 迁移设计规格](../superpowers/specs/2026-07-27-nas-docker-postgresql-migration-design.md) 与 [ADR-003](../decisions/ADR-003-nas-docker-postgresql.md)。
 
 ## 3. 核心数据流
 

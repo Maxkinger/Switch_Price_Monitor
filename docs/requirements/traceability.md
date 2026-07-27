@@ -15,5 +15,7 @@
 | FR-009 | 连续采集失败与恢复通知 | 已确认 / 部分实现（状态机、D1 健康状态写回、失败/恢复待发送事件及 Telegram 成功投递回写，已由真实采集执行器逐地区接线；生产环境的真实来源失败与恢复演练仍待执行） | PRD §3；系统设计 §3.7 |
 | FR-010 | 订阅永久删除与全局请求加载 | 已确认 / 已实施（已认证同源 API 由共享计数器驱动全局加载遮罩；`DELETE /api/subscriptions` 校验非空/去重输入与完整目标存在性，并在一个 D1 批次中清理订阅专属数据。仪表盘提供不触发详情导航的多选和二次确认，成功后只以 Worker 重新读取的概览渲染；详情页复用同一确认框，成功后清空局部价格/地区草稿并返回仪表盘。Worker 回归覆盖匿名拒绝、零部分删除、未选订阅与全局汇率保留，页面回归覆盖确认前零写入、成功删除和详情返回；生产已在管理员明确授权下完成仪表盘两项批量删除与详情单项删除，最终概览为空） | PRD §FR-001；系统设计 §3.1；API 设计 §4；订阅硬删除与全局请求加载设计规格 |
 | FR-011 | 页面临时发布版本号 | 已确认 / 已实施并部署（左侧导航底部显示构建时版本；以 `package.json` 为唯一来源，生产部署脚本先递增补丁号，普通开发/构建/测试不改变版本；2026-07-19 已按管理员授权部署 `V 0.0.13` 并以健康接口和公开静态资源验证，未来可替换为正式版本控制） | PRD §FR-007；临时发布版本号设计规格；临时发布版本号实施计划 |
+| NFR-001 | NAS Docker、PostgreSQL、本地调试与多架构镜像发布 | 已确认 / 待实施（完全停止 Cloudflare；DS423+ 使用单 Node 应用容器与专属 PostgreSQL 容器，保留全部功能和本地 Playwright；M1 完成开发与生产验收，GitHub Actions 向公开 Docker Hub 发布 arm64/amd64 镜像，NAS 只拉取固定版本；使用全新数据库，不迁移 D1 数据） | PRD §4；系统设计 §2.1；[NAS Docker 与 PostgreSQL 迁移设计规格](../superpowers/specs/2026-07-27-nas-docker-postgresql-migration-design.md)；[ADR-003](../decisions/ADR-003-nas-docker-postgresql.md) |
 | ARCH-002 | 数据模型与 API 边界 | 已确认 / 待实现 | 数据模型；API 设计 |
-| ADR-001 | Cloudflare Workers Static Assets + D1 | 已确认 | ADR-001；系统设计 §2 |
+| ADR-001 | Cloudflare Workers Static Assets + D1 | 当前生产已确认；NAS 切换后由 ADR-003 取代 | ADR-001；系统设计 §2 |
+| ADR-003 | NAS Docker + PostgreSQL + 本地 Playwright | 已确认 / 待实施 | [ADR-003](../decisions/ADR-003-nas-docker-postgresql.md)；系统设计 §2.1；NAS Docker 与 PostgreSQL 迁移设计规格 |
