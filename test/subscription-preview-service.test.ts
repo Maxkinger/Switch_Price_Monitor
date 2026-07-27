@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { SubscriptionPreviewService } from "../src/worker/services/subscription-preview-service";
-import type { OfficialPriceIdCandidate, OfficialPriceIdResolution } from "../src/worker/services/official-price-id-service";
+import { SubscriptionPreviewService } from "../src/services/subscription-preview-service";
+import type { OfficialPriceIdCandidate, OfficialPriceIdResolution } from "../src/services/official-price-id-service";
 
 /**
  * 预览服务测试仅注入地区 ID 解析结果，隔离“给管理员什么提示”的业务规则；

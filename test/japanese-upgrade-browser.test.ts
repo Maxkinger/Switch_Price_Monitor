@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { JapaneseUpgradeRootCandidate } from "../src/worker/providers/official-japanese-upgrade-root";
+import type { JapaneseUpgradeRootCandidate } from "../src/providers/official-japanese-upgrade-root";
 import {
   createJapaneseUpgradeBrowserBatch,
   normalizeJapaneseUpgradeUrl,

@@ -1,46 +1,47 @@
 /**
  * Worker HTTP 入口把健康检查、认证 API 与静态前端资源分层处理。
- * 价格提供方、D1 和 Telegram 凭据只会在 Worker 侧使用，浏览器不会获得直接访问能力。
+ * 当前 Worker 入口负责装配平台中立的价格提供方，并保留 D1、Browser Binding 与 Telegram 凭据等 Cloudflare 专属能力；浏览器不会获得这些后端依赖的直接访问能力。
  */
-import { handleAuthRoute } from "./routes/auth-routes";
-import { handleDashboardRoute } from "./routes/dashboard-routes";
-import { handleExportRoute } from "./routes/export-routes";
-import { handleHistoryRoute } from "./routes/history-routes";
-import { handleManualRefreshRoute } from "./routes/manual-refresh-routes";
-import { handleProductRoute } from "./routes/product-routes";
-import { handleSettingsRoute } from "./routes/settings-routes";
-import { handleSubscriptionRoute } from "./routes/subscription-routes";
-import { createNintendoOfficialPriceQuoteResolver, createNintendoPriceApiProvider } from "./providers/official-nintendo-price-api";
-import { createOfficialJapaneseUpgradeRootSearch } from "./providers/official-japanese-upgrade-root";
+// 路由、服务、仓储及非 Browser 的提供方均与 Worker 生命周期无关；Worker 只承担依赖装配，便于后续 Node 运行时和测试复用同一业务实现。
+import { handleAuthRoute } from "../routes/auth-routes";
+import { handleDashboardRoute } from "../routes/dashboard-routes";
+import { handleExportRoute } from "../routes/export-routes";
+import { handleHistoryRoute } from "../routes/history-routes";
+import { handleManualRefreshRoute } from "../routes/manual-refresh-routes";
+import { handleProductRoute } from "../routes/product-routes";
+import { handleSettingsRoute } from "../routes/settings-routes";
+import { handleSubscriptionRoute } from "../routes/subscription-routes";
+import { createNintendoOfficialPriceQuoteResolver, createNintendoPriceApiProvider } from "../providers/official-nintendo-price-api";
+import { createOfficialJapaneseUpgradeRootSearch } from "../providers/official-japanese-upgrade-root";
 import { createJapaneseUpgradeBrowserBatch } from "./providers/japanese-upgrade-browser";
-import { createOfficialProviderRegistry } from "./providers/official-provider-registry";
-import { ProviderChain } from "./providers/provider-chain";
-import { createFrankfurterExchangeRateProvider } from "./providers/frankfurter-exchange-rate";
-import { createOfficialNintendoProductPageResolver } from "./providers/official-nintendo-product-page";
-import { createOfficialNintendoSearch } from "./providers/official-nintendo-search";
-import { RetentionRepository } from "./repositories/retention-repository";
-import { CollectionRepository } from "./repositories/collection-repository";
-import { ExchangeRateRepository } from "./repositories/exchange-rate-repository";
-import { PriceRepository } from "./repositories/price-repository";
-import { NotificationEventRepository } from "./repositories/notification-event-repository";
-import { SettingsRepository } from "./repositories/settings-repository";
-import { SubscriptionConfirmationRepository } from "./repositories/subscription-confirmation-repository";
-import { DashboardService } from "./services/dashboard-service";
-import { OfficialPriceIdService } from "./services/official-price-id-service";
-import { OfficialProductDiscoveryService } from "./services/official-product-discovery-service";
-import type { DailyReportSubscription } from "./services/report-service";
-import { RetentionService } from "./services/retention-service";
-import { CollectionService } from "./services/collection-service";
-import { DailyCnyRateService } from "./services/daily-cny-rate-service";
-import { LiveCollectionRunner } from "./services/live-collection-runner";
-import { ProductHealthService } from "./services/product-health-service";
-import { runPendingNotificationDelivery, runScheduled, runSixHourCollection } from "./services/scheduler-service";
-import { defaultFallbackSources, SubscriptionPreviewService } from "./services/subscription-preview-service";
-import { SubscriptionConfirmationService } from "./services/subscription-confirmation-service";
-import { SubscriptionRegionCompletionService } from "./services/subscription-region-completion-service";
-import { JapaneseSubscriptionConfirmationService } from "./services/japanese-subscription-confirmation-service";
-import { createJapaneseUpgradeRelationService } from "./services/japanese-upgrade-relation-service";
-import { TelegramService } from "./services/telegram-service";
+import { createOfficialProviderRegistry } from "../providers/official-provider-registry";
+import { ProviderChain } from "../providers/provider-chain";
+import { createFrankfurterExchangeRateProvider } from "../providers/frankfurter-exchange-rate";
+import { createOfficialNintendoProductPageResolver } from "../providers/official-nintendo-product-page";
+import { createOfficialNintendoSearch } from "../providers/official-nintendo-search";
+import { RetentionRepository } from "../repositories/retention-repository";
+import { CollectionRepository } from "../repositories/collection-repository";
+import { ExchangeRateRepository } from "../repositories/exchange-rate-repository";
+import { PriceRepository } from "../repositories/price-repository";
+import { NotificationEventRepository } from "../repositories/notification-event-repository";
+import { SettingsRepository } from "../repositories/settings-repository";
+import { SubscriptionConfirmationRepository } from "../repositories/subscription-confirmation-repository";
+import { DashboardService } from "../services/dashboard-service";
+import { OfficialPriceIdService } from "../services/official-price-id-service";
+import { OfficialProductDiscoveryService } from "../services/official-product-discovery-service";
+import type { DailyReportSubscription } from "../services/report-service";
+import { RetentionService } from "../services/retention-service";
+import { CollectionService } from "../services/collection-service";
+import { DailyCnyRateService } from "../services/daily-cny-rate-service";
+import { LiveCollectionRunner } from "../services/live-collection-runner";
+import { ProductHealthService } from "../services/product-health-service";
+import { runPendingNotificationDelivery, runScheduled, runSixHourCollection } from "../services/scheduler-service";
+import { defaultFallbackSources, SubscriptionPreviewService } from "../services/subscription-preview-service";
+import { SubscriptionConfirmationService } from "../services/subscription-confirmation-service";
+import { SubscriptionRegionCompletionService } from "../services/subscription-region-completion-service";
+import { JapaneseSubscriptionConfirmationService } from "../services/japanese-subscription-confirmation-service";
+import { createJapaneseUpgradeRelationService } from "../services/japanese-upgrade-relation-service";
+import { TelegramService } from "../services/telegram-service";
 
 export interface Env {
   /** 静态资源绑定仅服务前端文件；所有敏感业务操作必须走下方 Worker API。 */

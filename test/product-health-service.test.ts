@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { ProductHealthService } from "../src/worker/services/product-health-service";
+import { ProductHealthService } from "../src/services/product-health-service";
 
 describe("ProductHealthService", () => {
   beforeEach(async () => {

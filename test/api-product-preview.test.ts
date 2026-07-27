@@ -2,8 +2,8 @@ import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import worker, { type Env } from "../src/worker";
-import { handleProductRoute } from "../src/worker/routes/product-routes";
-import { SubscriptionPreviewService } from "../src/worker/services/subscription-preview-service";
+import { handleProductRoute } from "../src/routes/product-routes";
+import { SubscriptionPreviewService } from "../src/services/subscription-preview-service";
 
 /**
  * 商品来源预览路由测试通过真实管理员会话验证授权边界，但向预览服务注入内存解析器。

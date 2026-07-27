@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { PriceRepository } from "../src/worker/repositories/price-repository";
+import { PriceRepository } from "../src/repositories/price-repository";
 
 describe("PriceRepository", () => {
   beforeEach(async () => {

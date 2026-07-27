@@ -2,8 +2,8 @@ import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import type { OfficialProductCandidate } from "../src/shared/domain";
-import { SubscriptionConfirmationRepository } from "../src/worker/repositories/subscription-confirmation-repository";
-import { SubscriptionRegionCompletionService } from "../src/worker/services/subscription-region-completion-service";
+import { SubscriptionConfirmationRepository } from "../src/repositories/subscription-confirmation-repository";
+import { SubscriptionRegionCompletionService } from "../src/services/subscription-region-completion-service";
 
 /**
  * 已有订阅地区补全使用真实 D1 夹具验证写入边界：补全只能追加经官方复核的缺失地区，

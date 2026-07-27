@@ -19,5 +19,6 @@
       "vite/client"
     ]
   },
+  // 平台中立的 routes、services、repositories、providers 仍位于 src 范围；保留整个目录可同时校验暂存的 Worker 适配器，防止迁移期间跨平台导入失配。
   "include": ["src", "test", "vite.config.ts", "vitest.config.mts"]
 }

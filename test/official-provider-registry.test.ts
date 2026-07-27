@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { createOfficialProviderRegistry } from "../src/worker/providers/official-provider-registry";
-import type { RegionalProduct } from "../src/worker/providers/types";
+import { createOfficialProviderRegistry } from "../src/providers/official-provider-registry";
+import type { RegionalProduct } from "../src/providers/types";
 
 /** 已确认的地区商品夹具只含公开身份字段，用来证明注册表不会把已审核的 JP/HK API 错配给其他地区。 */
 const jpProduct: RegionalProduct = {

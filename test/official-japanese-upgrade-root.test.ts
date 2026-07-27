@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { OfficialProductCandidate } from "../src/shared/domain";
-import { createOfficialJapaneseUpgradeRootSearch } from "../src/worker/providers/official-japanese-upgrade-root";
+import { createOfficialJapaneseUpgradeRootSearch } from "../src/providers/official-japanese-upgrade-root";
 
 /**
  * 日区升级根商品检索只信任注入的官方 API 响应，测试禁止访问真实网络。

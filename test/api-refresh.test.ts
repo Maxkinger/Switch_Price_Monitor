@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import worker, { type Env } from "../src/worker";
-import { handleManualRefreshRoute } from "../src/worker/routes/manual-refresh-routes";
+import { handleManualRefreshRoute } from "../src/routes/manual-refresh-routes";
 
 /**
  * 测试替身只返回采集聚合数，不携带任天堂响应、商品 URL 或价格正文。

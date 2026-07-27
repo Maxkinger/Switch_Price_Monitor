@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { RateResult } from "../src/worker/providers/types";
-import { DailyCnyRateService, type ExchangeRateStore } from "../src/worker/services/daily-cny-rate-service";
+import type { RateResult } from "../src/providers/types";
+import { DailyCnyRateService, type ExchangeRateStore } from "../src/services/daily-cny-rate-service";
 
 describe("DailyCnyRateService", () => {
   it("stores current CNY rates returned for every requested currency", async () => {

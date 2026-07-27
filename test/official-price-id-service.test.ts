@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { OfficialPriceIdService } from "../src/worker/services/official-price-id-service";
-import type { PriceProvider, ProviderResult } from "../src/worker/providers/types";
+import { OfficialPriceIdService } from "../src/services/official-price-id-service";
+import type { PriceProvider, ProviderResult } from "../src/providers/types";
 
 /**
  * 商品确认阶段只在内存中提取和验证地区价格 ID；测试通过固定官方结果覆盖 URL 边界，

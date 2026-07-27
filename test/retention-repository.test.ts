@@ -1,8 +1,8 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { RetentionRepository } from "../src/worker/repositories/retention-repository";
-import { RetentionService } from "../src/worker/services/retention-service";
+import { RetentionRepository } from "../src/repositories/retention-repository";
+import { RetentionService } from "../src/services/retention-service";
 
 describe("RetentionRepository", () => {
   // 使用真实 D1 数据库验证删除边界；保留边界时刻的记录能避免维护任务比管理员配置更早地丢弃历史。

@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { PriceRepository } from "../src/worker/repositories/price-repository";
+import { PriceRepository } from "../src/repositories/price-repository";
 
 describe("PriceRepository", () => {
   // 使用测试池的真实 D1 绑定，验证快照不可变语义和 SQL 联表，而非用 mock 掩盖数据库约束。

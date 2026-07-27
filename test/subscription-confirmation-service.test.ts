@@ -2,13 +2,13 @@ import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ConfirmedSubscriptionInput, OfficialProductCandidate, RegionalProductMatchSource } from "../src/shared/domain";
-import { SubscriptionConfirmationRepository } from "../src/worker/repositories/subscription-confirmation-repository";
+import { SubscriptionConfirmationRepository } from "../src/repositories/subscription-confirmation-repository";
 import {
   japaneseUpgradeConfirmationKey,
   type JapaneseUpgradeConfirmationItem,
   type JapaneseUpgradeRelationService,
-} from "../src/worker/services/japanese-upgrade-relation-service";
-import { SubscriptionConfirmationService } from "../src/worker/services/subscription-confirmation-service";
+} from "../src/services/japanese-upgrade-relation-service";
+import { SubscriptionConfirmationService } from "../src/services/subscription-confirmation-service";
 
 /**
  * 最终确认服务测试使用真实测试 D1 与可注入的官方解析桩件。这样可验证一批写入的原子边界，

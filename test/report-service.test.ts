@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildDailyReport, type DailyReportSubscription } from "../src/worker/services/report-service";
+import { buildDailyReport, type DailyReportSubscription } from "../src/services/report-service";
 
 describe("daily Telegram report formatter", () => {
   it("includes source-marked current prices and both kinds of historical lows", () => {

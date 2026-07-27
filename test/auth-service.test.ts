@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { AuthService, LoginLockedError, ValidationError } from "../src/worker/services/auth-service";
+import { AuthService, LoginLockedError, ValidationError } from "../src/services/auth-service";
 
 describe("AuthService", () => {
   // 直接复用测试池绑定的 D1，确保初始化、会话和恢复码行为在 Worker 运行时验证。

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { evaluateHealthTransition, evaluateOfficialDrop, evaluateTarget } from "../src/worker/services/price-rules";
+import { evaluateHealthTransition, evaluateOfficialDrop, evaluateTarget } from "../src/services/price-rules";
 
 /**
  * 价格规则保持纯函数，测试不接触 D1、Telegram 或外部商店。
