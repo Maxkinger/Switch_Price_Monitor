@@ -1,9 +1,9 @@
 import type { ConfirmedRegionalProduct, OfficialProductCandidate, RegionCode } from "../shared/domain";
 import type { OfficialNintendoProductPageResolver } from "../providers/official-nintendo-product-page";
 import {
-  SubscriptionConfirmationRepository,
   type ValidatedConfirmedRegion,
 } from "../repositories/subscription-confirmation-repository";
+import type { SubscriptionConfirmationStore } from "../repositories/ports";
 import type { OfficialPriceIdResolution, OfficialPriceIdService } from "./official-price-id-service";
 import type { RegionResolution, OfficialProductDiscoveryService } from "./official-product-discovery-service";
 import type { EnabledRegionSettingsReader } from "./subscription-confirmation-service";
@@ -38,7 +38,7 @@ export interface CompletionRegionsResult {
  */
 export class SubscriptionRegionCompletionService {
   public constructor(
-    private readonly repository: SubscriptionConfirmationRepository,
+    private readonly repository: SubscriptionConfirmationStore,
     private readonly pages: OfficialNintendoProductPageResolver,
     private readonly officialPriceIds: OfficialPriceIdResolver,
     private readonly settings: EnabledRegionSettingsReader,

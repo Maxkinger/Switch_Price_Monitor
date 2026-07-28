@@ -1,8 +1,6 @@
 import { initialRegionCodes, regionalProductMatchSources, type ConfirmedRegionalProduct, type RegionCode } from "../shared/domain";
 import type { ProductType } from "../providers/types";
-import { SubscriptionRepository } from "../repositories/subscription-repository";
-import { SubscriptionDetailRepository } from "../repositories/subscription-detail-repository";
-import { SubscriptionDetailService } from "../services/subscription-detail-service";
+import type { SubscriptionDetailService } from "../services/subscription-detail-service";
 import {
   SubscriptionRegionCompletionError,
   SubscriptionRegionCompletionNotFoundError,
@@ -12,9 +10,10 @@ import {
 import {
   RegionalProductMismatchError,
   SubscriptionNotFoundError,
-  SubscriptionService,
+  type SubscriptionService,
 } from "../services/subscription-service";
 import { requireAdmin } from "./auth-guard";
+import type { SessionReader } from "./auth-guard";
 
 /**
  * 管理订阅读取、编辑与已有地区补全入口。所有写入均在会话守卫之后执行，防止第三方仅凭公开商品 ID 改变采集和通知范围。
@@ -22,7 +21,9 @@ import { requireAdmin } from "./auth-guard";
  */
 export async function handleSubscriptionRoute(
   request: Request,
-  database: D1Database,
+  sessions: SessionReader,
+  service: SubscriptionService,
+  details: SubscriptionDetailService,
   completion?: Pick<SubscriptionRegionCompletionService, "resolveExisting" | "completeExisting">,
 ): Promise<Response | null> {
   const path = new URL(request.url).pathname;
@@ -31,14 +32,14 @@ export async function handleSubscriptionRoute(
   if (!action) return null;
 
   // 认证失败统一使用固定响应，既不泄露会话是否过期，也不给匿名调用者数据库错误细节。
-  if (!(await requireAdmin(request, database))) {
+  if (!(await requireAdmin(request, sessions))) {
     return Response.json({ code: "UNAUTHORIZED", error: "请先登录。" }, { status: 401 });
   }
 
   try {
     if (action.kind === "read") {
       // 详情只经受保护服务返回脱敏读取模型，不能把路由层的数据库行、会话或来源原始响应直接序列化给浏览器。
-      const detail = await new SubscriptionDetailService(new SubscriptionDetailRepository(database)).get(action.subscriptionId);
+      const detail = await details.get(action.subscriptionId);
       return Response.json(detail);
     }
 
@@ -54,7 +55,6 @@ export async function handleSubscriptionRoute(
       return Response.json(await completion.completeExisting(action.subscriptionId, input, new Date().toISOString()));
     }
 
-    const service = new SubscriptionService(new SubscriptionRepository(database));
     if (action.kind === "create") {
       const input = readCreateSubscriptionInput(await request.json<unknown>());
       const result = await service.createOrOpen(input, new Date().toISOString());

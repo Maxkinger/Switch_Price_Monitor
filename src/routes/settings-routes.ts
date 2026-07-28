@@ -1,16 +1,15 @@
 import type { AppSettings, RegionCode, Theme } from "../shared/domain";
-import { SettingsRepository } from "../repositories/settings-repository";
 import { SettingsNotInitializedError, SettingsService, SettingsValidationError, type SettingsPatch } from "../services/settings-service";
 import { requireAdmin } from "./auth-guard";
+import type { SessionReader } from "./auth-guard";
 
 /** 受管理员会话保护的全局设置读取与局部更新入口；不处理 Telegram 等秘密配置。 */
-export async function handleSettingsRoute(request: Request, database: D1Database): Promise<Response | null> {
+export async function handleSettingsRoute(request: Request, sessions: SessionReader, service: SettingsService): Promise<Response | null> {
   const path = new URL(request.url).pathname;
   if (path !== "/api/settings" || !["GET", "PATCH"].includes(request.method)) return null;
-  if (!(await requireAdmin(request, database))) return Response.json({ code: "UNAUTHORIZED", error: "请先登录。" }, { status: 401 });
+  if (!(await requireAdmin(request, sessions))) return Response.json({ code: "UNAUTHORIZED", error: "请先登录。" }, { status: 401 });
 
   try {
-    const service = new SettingsService(new SettingsRepository(database));
     if (request.method === "GET") return Response.json(await service.get());
     const result = await service.update(readPatch(await request.json<unknown>()), new Date().toISOString());
     return Response.json(result);

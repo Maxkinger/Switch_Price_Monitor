@@ -7,32 +7,51 @@ import {
   LoginLockedError,
   ValidationError,
 } from "../services/auth-service";
+import type { SessionReader } from "./auth-guard";
+
+/**
+ * 认证路由依赖由运行时入口显式装配。cookieSecure 不能从 Forwarded 或 X-Forwarded-Proto 推断，
+ * 因为这些请求头可能由客户端伪造；部署层必须按实际 HTTPS 终止边界传入固定策略。
+ */
+export interface AuthRouteDependencies {
+  auth: AuthService;
+  sessions: SessionReader;
+  cookieSecure: boolean;
+}
 
 /**
  * 集中处理首次初始化和登录接口；这里不回显密码、恢复码哈希或会话哈希，
  * 只在首次初始化响应中返回一次明文恢复码。
  */
-export async function handleAuthRoute(request: Request, database: D1Database): Promise<Response | null> {
+export async function handleAuthRoute(
+  request: Request,
+  dependencies: AuthRouteDependencies,
+): Promise<Response | null> {
   const path = new URL(request.url).pathname;
   // 此公开状态端点只返回首次设置与当前 Cookie 的有效性两个布尔值，供 SPA 刷新后安全恢复界面；绝不返回令牌、管理员资料或地区配置。
   if (request.method === "GET" && path === "/api/auth/status") {
-    const auth = new AuthService(database);
     return Response.json({
-      initialized: await auth.isInitialized(),
-      authenticated: await auth.authenticate(readSessionCookie(request.headers.get("cookie")), new Date().toISOString()),
+      initialized: await dependencies.auth.isInitialized(),
+      authenticated: await dependencies.sessions.authenticate(
+        readSessionCookie(request.headers.get("cookie")),
+        new Date().toISOString(),
+      ),
     });
   }
   // 仅列出的 POST 路由由认证模块消费；其余请求交回 Worker 主路由，避免遮蔽未来的静态资源或 API。
   if (request.method !== "POST" || !["/api/auth/initialize", "/api/auth/login", "/api/auth/recover", "/api/auth/logout"].includes(path)) return null;
 
   try {
-    const auth = new AuthService(database);
+    const auth = dependencies.auth;
     const now = new Date().toISOString();
     // 退出仅依赖 Cookie，允许空正文；其余端点才读取 JSON，避免空请求被 JSON 解析错误拦截。
     if (path === "/api/auth/logout") {
       // 即使 Cookie 缺失也返回成功并覆盖浏览器 Cookie，防止退出接口泄露会话是否存在。
       await auth.logout(readSessionCookie(request.headers.get("cookie")), now);
-      return new Response(null, { status: 204, headers: { "set-cookie": clearSessionCookie() } });
+      return new Response(null, {
+        status: 204,
+        headers: { "set-cookie": clearSessionCookie(dependencies.cookieSecure) },
+      });
     }
 
     const body = await request.json<Record<string, unknown>>();
@@ -55,7 +74,7 @@ export async function handleAuthRoute(request: Request, database: D1Database): P
     const session = await auth.login(String(body.password ?? ""), now);
     return Response.json(
       { expiresAt: session.expiresAt },
-      { headers: { "set-cookie": makeSessionCookie(session.token) } },
+      { headers: { "set-cookie": makeSessionCookie(session.token, dependencies.cookieSecure) } },
     );
   } catch (error) {
     const status = error instanceof ConflictError
@@ -103,11 +122,11 @@ function readSessionCookie(cookieHeader: string | null): string {
 }
 
 /** 安全属性必须每次登录一致，避免未来路由遗漏 HttpOnly、Secure 或 SameSite 保护。 */
-function makeSessionCookie(token: string): string {
-  return `session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000`;
+function makeSessionCookie(token: string, secure: boolean): string {
+  return `session=${token}; HttpOnly;${secure ? " Secure;" : ""} SameSite=Lax; Path=/; Max-Age=2592000`;
 }
 
 /** 覆盖 Cookie 并立即到期，配合服务端 revoked_at 实现客户端和服务端双重退出。 */
-function clearSessionCookie(): string {
-  return "session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0";
+function clearSessionCookie(secure: boolean): string {
+  return `session=; HttpOnly;${secure ? " Secure;" : ""} SameSite=Lax; Path=/; Max-Age=0`;
 }

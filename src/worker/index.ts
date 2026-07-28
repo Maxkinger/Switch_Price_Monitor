@@ -24,10 +24,24 @@ import { CollectionRepository } from "../repositories/collection-repository";
 import { ExchangeRateRepository } from "../repositories/exchange-rate-repository";
 import { PriceRepository } from "../repositories/price-repository";
 import { NotificationEventRepository } from "../repositories/notification-event-repository";
+import { ProductHealthRepository } from "../repositories/product-health-repository";
 import { SettingsRepository } from "../repositories/settings-repository";
 import { LegacyDashboardRepository } from "../repositories/dashboard-repository";
+import { LegacyExportRepository } from "../repositories/export-repository";
+import { LegacyHistoryRepository } from "../repositories/history-repository";
+import { ManualRefreshRepository } from "../repositories/manual-refresh-repository";
+import { SubscriptionRepository } from "../repositories/subscription-repository";
+import { SubscriptionDetailRepository } from "../repositories/subscription-detail-repository";
+import { D1AuthRepository } from "../repositories/auth-repository";
 import { SubscriptionConfirmationRepository } from "../repositories/subscription-confirmation-repository";
 import { DashboardService } from "../services/dashboard-service";
+import { AuthService } from "../services/auth-service";
+import { ExportService } from "../services/export-service";
+import { HistoryService } from "../services/history-service";
+import { ManualRefreshService } from "../services/manual-refresh-service";
+import { SettingsService } from "../services/settings-service";
+import { SubscriptionService } from "../services/subscription-service";
+import { SubscriptionDetailService } from "../services/subscription-detail-service";
 import { OfficialPriceIdService } from "../services/official-price-id-service";
 import { OfficialProductDiscoveryService } from "../services/official-product-discovery-service";
 import { RetentionService } from "../services/retention-service";
@@ -64,28 +78,40 @@ const worker: ExportedHandler<Env> = {
       return Response.json({ ok: true, service: "switch-price-monitor" });
     }
 
+    // Worker 兼容期在入口显式装配 D1 适配器；路由和认证服务本身不再取得 D1Database。
+    const auth = new AuthService(new D1AuthRepository(env.DB));
+
     // 认证路由必须在静态资源前处理，避免密码请求被错误当作前端文件。
-    const authResponse = await handleAuthRoute(request, env.DB);
+    const authResponse = await handleAuthRoute(request, {
+      auth,
+      sessions: auth,
+      // Cloudflare Worker 生产入口固定由 HTTPS 提供，不能根据客户端可伪造的转发头动态降级 Cookie。
+      cookieSecure: true,
+    });
     if (authResponse) return authResponse;
 
     // 全局设置会影响后续商品搜索、主题与日报调度，必须由管理员会话保护并先于静态资源回退处理。
-    const settingsResponse = await handleSettingsRoute(request, env.DB);
+    const settingsResponse = await handleSettingsRoute(request, auth, new SettingsService(new SettingsRepository(env.DB)));
     if (settingsResponse) return settingsResponse;
 
     // 仪表盘聚合订阅和价格历史，属于管理员私有信息，必须在静态资源层之前完成会话校验。
-    const dashboardResponse = await handleDashboardRoute(request, env.DB);
+    const dashboardResponse = await handleDashboardRoute(request, auth, new DashboardService(new LegacyDashboardRepository(env.DB)));
     if (dashboardResponse) return dashboardResponse;
 
     // 手动刷新只允许管理员在请求内立即执行一次采集；冷却状态限制频率，防止匿名访问或重复点击放大外部来源负载。
-    const manualRefreshResponse = await handleManualRefreshRoute(request, env.DB, createLiveCollectionRunner(env));
+    const manualRefreshResponse = await handleManualRefreshRoute(
+      request,
+      auth,
+      new ManualRefreshService(new ManualRefreshRepository(env.DB), createLiveCollectionRunner(env)),
+    );
     if (manualRefreshResponse) return manualRefreshResponse;
 
     // 历史快照属于管理员私有价格轨迹，必须在静态资源回退前进行会话校验和查询参数验证。
-    const historyResponse = await handleHistoryRoute(request, env.DB);
+    const historyResponse = await handleHistoryRoute(request, auth, new HistoryService(new LegacyHistoryRepository(env.DB)));
     if (historyResponse) return historyResponse;
 
     // 导出可包含长期价格轨迹，必须通过管理员会话并由白名单导出服务生成，不能交给静态层或任意 SQL。
-    const exportResponse = await handleExportRoute(request, env.DB);
+    const exportResponse = await handleExportRoute(request, auth, new ExportService(new LegacyExportRepository(env.DB)));
     if (exportResponse) return exportResponse;
 
     // 商品发现与最终确认必须在会话守卫前由路由统一保护；每个请求构造无状态服务，避免在 Worker 实例间缓存候选 URL 或外部响应。
@@ -109,7 +135,7 @@ const worker: ExportedHandler<Env> = {
     const officialPriceIds = new OfficialPriceIdService(createNintendoPriceApiProvider());
     const productResponse = await handleProductRoute(
       request,
-      env.DB,
+      auth,
       new SubscriptionPreviewService(officialPriceIds, defaultFallbackSources),
       // 商品发现只在管理员会话通过后由路由触发；服务端构造可确保官网搜索配置、商品页请求和用户浏览器完全隔离。
       officialDiscovery,
@@ -133,7 +159,9 @@ const worker: ExportedHandler<Env> = {
     // 订阅写入会改变后续采集与通知范围，因此必须在静态资源回退之前进入带会话校验的管理 API。
     const subscriptionResponse = await handleSubscriptionRoute(
       request,
-      env.DB,
+      auth,
+      new SubscriptionService(new SubscriptionRepository(env.DB)),
+      new SubscriptionDetailService(new SubscriptionDetailRepository(env.DB)),
       // 已有订阅补全复用同一官方页面、价格 ID、设置与跨区发现服务；这样新建和补全遵守相同的地区安全边界。
       new SubscriptionRegionCompletionService(
         new SubscriptionConfirmationRepository(env.DB),
@@ -196,7 +224,10 @@ function createLiveCollectionRunner(env: Env): LiveCollectionRunner {
     rates: new DailyCnyRateService(createFrankfurterExchangeRateProvider(), new ExchangeRateRepository(env.DB)),
     officialProviders: createOfficialProviderRegistry(),
     collection: new CollectionService(new ProviderChain(), prices),
-    health: new ProductHealthService(env.DB),
+    health: new ProductHealthService(
+      new ProductHealthRepository(env.DB),
+      new NotificationEventRepository(env.DB),
+    ),
     previousOfficial: prices,
     events: new NotificationEventRepository(env.DB),
   });

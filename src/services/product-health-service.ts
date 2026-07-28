@@ -1,21 +1,17 @@
-import { NotificationEventRepository } from "../repositories/notification-event-repository";
-import { ProductHealthRepository } from "../repositories/product-health-repository";
+import type { NotificationEventStore, ProductHealthStore } from "../repositories/ports";
 import { evaluateHealthTransition, type HealthTransition } from "./price-rules";
 
 /**
- * 将纯健康规则与 D1 状态连接起来的应用服务。采集执行器每次得到成功或失败结果后调用它，
+ * 将纯健康规则与平台中立仓储状态连接起来的应用服务。采集执行器每次得到成功或失败结果后调用它，
  * 仅在规则产生失败或恢复变迁时原子预留待发送事件；真正 Telegram 投递仍由后续调度器处理。
  */
 export class ProductHealthService {
-  // 服务接收 Worker 的 D1 绑定并在内部固定仓储边界，使采集执行器不能绕过规则层直接拼写健康状态 SQL。
-  private readonly health: ProductHealthRepository;
-  // 通知仓储将状态变化转换为一次性待发送事件，避免采集器直接访问 Telegram 凭据或网络。
-  private readonly notifications: NotificationEventRepository;
-
-  public constructor(database: D1Database) {
-    this.health = new ProductHealthRepository(database);
-    this.notifications = new NotificationEventRepository(database);
-  }
+  public constructor(
+    // 健康状态和通知预留都以窄端口注入，使 Node/PostgreSQL 与 Worker 兼容入口复用同一规则服务。
+    private readonly health: ProductHealthStore,
+    // 通知仓储只取得去重事件 DTO，服务和采集器均不会接触 Telegram 凭据或数据库驱动。
+    private readonly notifications: NotificationEventStore,
+  ) {}
 
   /**
    * 记录一轮地区商品采集结果并返回状态变迁。成功才写入 last_success_at，

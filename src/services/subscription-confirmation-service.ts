@@ -9,10 +9,10 @@ import type {
 import { resolveChineseGameName } from "../shared/game-display-name";
 import type { OfficialNintendoProductPageResolver } from "../providers/official-nintendo-product-page";
 import {
-  SubscriptionConfirmationRepository,
   type ValidatedConfirmedRegion,
   type ValidatedSubscriptionConfirmation,
 } from "../repositories/subscription-confirmation-repository";
+import type { SubscriptionConfirmationStore } from "../repositories/ports";
 import type { OfficialPriceIdResolution, OfficialPriceIdService } from "./official-price-id-service";
 import {
   hasHighConfidenceLocalizedIdentity,
@@ -69,7 +69,7 @@ export class SubscriptionConfirmationError extends Error {}
  */
 export class SubscriptionConfirmationService {
   public constructor(
-    private readonly repository: SubscriptionConfirmationRepository,
+    private readonly repository: SubscriptionConfirmationStore,
     private readonly pages: OfficialNintendoProductPageResolver,
     private readonly officialPriceIds: OfficialPriceIdResolver,
     private readonly settings: EnabledRegionSettingsReader,
@@ -120,7 +120,7 @@ export class SubscriptionConfirmationService {
    */
   private projectConfirmationResults(
     validated: UnidentifiedValidatedSubscription[],
-    existing: Awaited<ReturnType<SubscriptionConfirmationRepository["findExistingByNormalizedNames"]>>,
+    existing: Awaited<ReturnType<SubscriptionConfirmationStore["findExistingByNormalizedNames"]>>,
     creations: ValidatedSubscriptionConfirmation[],
   ): SubscriptionConfirmationResult[] {
     return validated.map((input) => {

@@ -3,6 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import worker, { type Env } from "../src/worker";
 import { handleManualRefreshRoute } from "../src/routes/manual-refresh-routes";
+import { D1AuthRepository } from "../src/repositories/auth-repository";
+import { ManualRefreshRepository } from "../src/repositories/manual-refresh-repository";
+import { AuthService } from "../src/services/auth-service";
+import { ManualRefreshService } from "../src/services/manual-refresh-service";
 
 /**
  * 测试替身只返回采集聚合数，不携带任天堂响应、商品 URL 或价格正文。
@@ -84,8 +88,8 @@ async function call(cookie: string, runner: ImmediateRefreshRunnerStub): Promise
   // 直接注入无网络采集替身，验证路由在认证后每次等待同步采集完成；静态资源层不应参与此 API。
   const response = await handleManualRefreshRoute(
     new Request("https://example.test/api/refresh", { method: "POST", headers: { cookie } }),
-    env.DB,
-    runner,
+    new AuthService(new D1AuthRepository(env.DB)),
+    new ManualRefreshService(new ManualRefreshRepository(env.DB), runner),
   );
   if (!response) throw new Error("手动刷新路由未处理 /api/refresh 请求。");
   return response;

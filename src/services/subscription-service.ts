@@ -1,5 +1,5 @@
 import type { SubscriptionInput } from "../shared/domain";
-import { SubscriptionRepository } from "../repositories/subscription-repository";
+import type { SubscriptionStore } from "../repositories/ports";
 
 /** 创建或打开订阅后的最小结果；前端只需要知道应跳转的订阅和是否首次创建，不应获得数据库内部信息。 */
 export interface CreateOrOpenSubscriptionResult {
@@ -18,7 +18,7 @@ export class SubscriptionNotFoundError extends Error {}
  * 它不在这里搜索或猜测商品；传入的地区商品 ID 必须已由后续的商品确认流程验证，避免把本体、DLC 与升级包混订。
  */
 export class SubscriptionService {
-  public constructor(private readonly subscriptions: SubscriptionRepository) {}
+  public constructor(private readonly subscriptions: SubscriptionStore) {}
 
   /**
    * 重复提交同一 gameId 时返回既有订阅而不覆盖地区范围，保护管理员已经确认的监控配置。
@@ -65,7 +65,7 @@ export class SubscriptionService {
 
   /**
    * 硬删除返回调用方已通过路由去重后的原始 ID 顺序，供前端准确移除所选卡片。
-   * 仓储会先验证所有订阅存在；发现任一不存在即抛 404 且不执行 D1 删除批次，防止多选操作部分成功而让用户误以为全部已删除。
+   * 仓储会先验证所有订阅存在；发现任一不存在即抛 404 且不执行删除事务，防止多选操作部分成功而让用户误以为全部已删除。
    */
   public async deleteMany(subscriptionIds: string[]): Promise<string[]> {
     if (!(await this.subscriptions.deleteMany(subscriptionIds))) {

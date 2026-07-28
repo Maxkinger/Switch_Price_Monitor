@@ -13,6 +13,7 @@ import { ProductDiscoveryError, type OfficialProductDiscoveryService } from "../
 import { SubscriptionConfirmationError, type SubscriptionConfirmationService } from "../services/subscription-confirmation-service";
 import { SubscriptionPreviewService } from "../services/subscription-preview-service";
 import { requireAdmin } from "./auth-guard";
+import type { SessionReader } from "./auth-guard";
 
 /**
  * 管理员商品发现、来源预览与最终确认的统一入口。搜索、链接解析、跨区匹配和来源预览保持只读；
@@ -20,7 +21,7 @@ import { requireAdmin } from "./auth-guard";
  */
 export async function handleProductRoute(
   request: Request,
-  database: D1Database,
+  sessions: SessionReader | unknown,
   preview: SubscriptionPreviewService,
   discovery?: Pick<OfficialProductDiscoveryService, "searchDefaultRegion" | "resolveOfficialLink" | "resolveRegions">,
   confirmation?: Pick<SubscriptionConfirmationService, "confirm">,
@@ -35,7 +36,7 @@ export async function handleProductRoute(
   if (!isPreview && !isSearch && !isResolveLink && !isResolveRegions && !isConfirmSubscriptions) return null;
 
   // 必须先验证管理员会话才解析请求体或访问官方接口，避免匿名调用借预览端点放大任天堂请求负载。
-  if (!(await requireAdmin(request, database))) {
+  if (!(await requireAdmin(request, sessions))) {
     return Response.json({ code: "UNAUTHORIZED", error: "请先登录。" }, { status: 401 });
   }
 

@@ -1,5 +1,18 @@
 import type { RateResult, RegionalProduct } from "../providers/types";
-import type { AppSettings, HistoricalLow, SubscriptionRecord } from "../shared/domain";
+import type {
+  AppSettings,
+  HistoricalLow,
+  InitialSettings,
+  SubscriptionInput,
+  SubscriptionRecord,
+} from "../shared/domain";
+import type {
+  ExistingSubscriptionConfirmation,
+  ExistingSubscriptionRegionCompletion,
+  ValidatedConfirmedRegion,
+  ValidatedSubscriptionConfirmation,
+} from "./subscription-confirmation-repository";
+import type { ManualRefreshRequestResult } from "./manual-refresh-repository";
 import type { DashboardOverview } from "../services/dashboard-service";
 import type { ProductHealthState } from "../services/price-rules";
 import type { SubscriptionDetail } from "./subscription-detail-repository";
@@ -15,6 +28,134 @@ import type {
  */
 export interface SettingsReader {
   get(): Promise<AppSettings | null>;
+}
+
+/**
+ * 首次初始化在服务层完成 PBKDF2 派生后才进入仓储；端口只接收哈希、随机盐和受控设置，
+ * 从而不让数据库适配器接触管理员明文密码或一次性恢复码。
+ */
+export interface HashedAdminSetup {
+  passwordHash: string;
+  passwordSalt: string;
+  recoveryHash: string;
+  recoverySalt: string;
+  createdAt: string;
+  initialSettings: Omit<InitialSettings, "createdAt">;
+}
+
+/**
+ * 会话端口只持久化随机令牌的 SHA-256 摘要。原始 Cookie 令牌不得跨过服务边界，
+ * `expiresAt` 与 `createdAt` 使用 ISO 时间，由 PostgreSQL 仓储写入 TIMESTAMPTZ。
+ */
+export interface StoredSession {
+  id: string;
+  tokenHash: string;
+  expiresAt: string;
+  createdAt: string;
+}
+
+/** 单管理员失败记录只包含限流决策所需字段，不保存尝试密码、来源 IP 或会话材料。 */
+export interface LoginAttemptRecord {
+  failedCount: number;
+  lockedUntil: string | null;
+}
+
+/** 密码校验端口只返回派生哈希与盐；仓储不能返回恢复状态或其他无关认证列。 */
+export interface PasswordCredential {
+  passwordHash: string;
+  passwordSalt: string;
+}
+
+/** 恢复校验端口包含一次性消费时间，服务据此统一拒绝错误、缺失或已经使用的恢复码。 */
+export interface RecoveryCredential {
+  recoveryHash: string;
+  recoverySalt: string;
+  recoveryUsedAt: string | null;
+}
+
+/**
+ * 密码恢复写入把新密码派生值、恢复码消费时间和全会话撤销时间绑定为同一业务命令。
+ * 登录失败记录由仓储在同一事务中清除，防止部分提交留下旧会话或旧锁定状态。
+ */
+export interface PasswordResetWrite {
+  passwordHash: string;
+  passwordSalt: string;
+  recoveryUsedAt: string;
+  sessionRevokedAt: string;
+}
+
+/**
+ * 平台中立认证端口把安全规则留在 AuthService，只暴露最小认证状态和原子写命令。
+ * 实现不得泄漏 pg 客户端、SQL 结果或 D1 API；初始化与密码恢复必须各自在单一事务中完成。
+ */
+export interface AuthRepository {
+  isInitialized(): Promise<boolean>;
+  initialize(input: HashedAdminSetup): Promise<void>;
+  getLoginAttempt(): Promise<LoginAttemptRecord | null>;
+  getPasswordCredential(): Promise<PasswordCredential | null>;
+  createSession(session: StoredSession): Promise<void>;
+  getRecoveryCredential(): Promise<RecoveryCredential | null>;
+  resetPassword(input: PasswordResetWrite): Promise<void>;
+  revokeSession(tokenHash: string, now: string): Promise<void>;
+  isSessionValid(tokenHash: string, now: string): Promise<boolean>;
+  saveLoginAttempt(input: LoginAttemptRecord): Promise<void>;
+  clearLoginAttempt(): Promise<void>;
+}
+
+/**
+ * 数据库唯一约束检测到并发首次初始化时，仓储只抛出受控领域无关冲突，
+ * AuthService 再映射为既有安全错误，避免把 PostgreSQL 表名、SQLSTATE 或参数带到 API。
+ */
+export class AuthInitializationConflictError extends Error {
+  public constructor() {
+    super("认证初始化已存在");
+  }
+}
+
+/** 手动刷新只持久化最近请求时刻；临时无冷却规则仍由既有结果 DTO 明确表达。 */
+export interface ManualRefreshRequestStore {
+  request(now: string): Promise<ManualRefreshRequestResult>;
+}
+
+/**
+ * 订阅确认写端口覆盖规范化身份查询、新建原子批次和已有订阅地区补全。
+ * 服务只依赖这些领域 DTO，不接触 D1 batch、PostgreSQL transaction 或任何驱动客户端。
+ */
+export interface SubscriptionConfirmationStore {
+  findExistingByNormalizedNames(
+    normalizedNames: string[],
+  ): Promise<Map<string, ExistingSubscriptionConfirmation>>;
+  createAtomically(inputs: ValidatedSubscriptionConfirmation[], now: string): Promise<void>;
+  findForRegionCompletion(
+    subscriptionId: string,
+  ): Promise<ExistingSubscriptionRegionCompletion | null>;
+  completeAtomically(
+    subscriptionId: string,
+    gameId: string,
+    regions: ValidatedConfirmedRegion[],
+    now: string,
+  ): Promise<void>;
+}
+
+/**
+ * 订阅编辑端口把创建、目标价、地区替换与永久删除定义为平台中立能力。
+ * 需要多条 SQL 的实现必须自行提供真实事务，服务层不模拟批处理或持有数据库连接。
+ */
+export interface SubscriptionStore extends SubscriptionReader {
+  create(input: SubscriptionInput): Promise<void>;
+  setEnabled(id: string, enabled: boolean, updatedAt: string): Promise<boolean>;
+  setTargets(
+    id: string,
+    globalTargetCnyFen: number | null,
+    regionTargets: Array<{ regionCode: string; targetAmountMinor: number }>,
+    updatedAt: string,
+  ): Promise<boolean>;
+  replaceRegionalProducts(
+    id: string,
+    regionalProductIds: string[],
+    updatedAt: string,
+  ): Promise<void>;
+  deleteMany(subscriptionIds: string[]): Promise<boolean>;
 }
 
 /** 定时采集只能读取当前仍启用且已由管理员确认的地区商品。 */

@@ -2,6 +2,8 @@ import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { ProductHealthService } from "../src/services/product-health-service";
+import { ProductHealthRepository } from "../src/repositories/product-health-repository";
+import { NotificationEventRepository } from "../src/repositories/notification-event-repository";
 
 describe("ProductHealthService", () => {
   beforeEach(async () => {
@@ -15,7 +17,10 @@ describe("ProductHealthService", () => {
 
   it("persists the third-failure alert state and emits one recovery after a later success", async () => {
     // 三次失败跨独立服务调用模拟三个 Cron 周期；成功后读取 D1 行验证计数、通知标记与最后成功时间都已安全重置。
-    const health = new ProductHealthService(env.DB);
+    const health = new ProductHealthService(
+      new ProductHealthRepository(env.DB),
+      new NotificationEventRepository(env.DB),
+    );
 
     await expect(health.record("product-health", false, "2026-07-16T00:00:00.000Z")).resolves.toMatchObject({ notification: "none", consecutiveFailures: 1 });
     await expect(health.record("product-health", false, "2026-07-16T06:00:00.000Z")).resolves.toMatchObject({ notification: "none", consecutiveFailures: 2 });

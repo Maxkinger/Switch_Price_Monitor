@@ -5,6 +5,12 @@ import worker, { type Env } from "../src/worker";
 import { handleSubscriptionRoute } from "../src/routes/subscription-routes";
 import type { RegionResolution } from "../src/services/official-product-discovery-service";
 import type { CompletionRegionsInput, CompletionRegionsResult } from "../src/services/subscription-region-completion-service";
+import { D1AuthRepository } from "../src/repositories/auth-repository";
+import { SubscriptionRepository } from "../src/repositories/subscription-repository";
+import { SubscriptionDetailRepository } from "../src/repositories/subscription-detail-repository";
+import { AuthService } from "../src/services/auth-service";
+import { SubscriptionService } from "../src/services/subscription-service";
+import { SubscriptionDetailService } from "../src/services/subscription-detail-service";
 
 /**
  * 订阅详情读取接口测试覆盖三项管理员可见的业务事实：详情仅对已登录会话开放、
@@ -180,7 +186,9 @@ async function callCompletionRoute(
       body: JSON.stringify(body),
       headers: { "content-type": "application/json", cookie },
     }),
-    env.DB,
+    new AuthService(new D1AuthRepository(env.DB)),
+    new SubscriptionService(new SubscriptionRepository(env.DB)),
+    new SubscriptionDetailService(new SubscriptionDetailRepository(env.DB)),
     completion,
   ))!;
 }

@@ -1,9 +1,12 @@
 import { initialRegionCodes, type InitialSettings } from "../shared/domain";
-import { SettingsRepository } from "../repositories/settings-repository";
+import {
+  AuthInitializationConflictError,
+  type AuthRepository,
+} from "../repositories/ports";
 
 /**
  * 认证服务负责单管理员的初始化、密码登录和会话生命周期。
- * 所有秘密只在调用边界短暂存在；D1 中只存派生哈希或令牌摘要，避免数据库副本直接成为登录凭据。
+ * 所有秘密只在调用边界短暂存在；仓储中只存派生哈希或令牌摘要，避免数据库副本直接成为登录凭据。
  */
 const encoder = new TextEncoder();
 // PBKDF2 在 Worker Web Crypto 中可用；10 万次迭代提高离线破解成本，同时保持个人站点首次登录的可接受延迟。
@@ -38,19 +41,14 @@ export class InvalidRecoveryCodeError extends Error {
 }
 
 export class AuthService {
-  private readonly settings: SettingsRepository;
-
-  public constructor(private readonly database: D1Database) {
-    this.settings = new SettingsRepository(database);
-  }
+  public constructor(private readonly repository: AuthRepository) {}
 
   /**
    * 供首次访问页面选择“初始化”或“登录”界面。只检查单管理员记录是否存在，
    * 绝不返回密码哈希、地区、会话或恢复码状态，避免公开端点扩大认证信息暴露面。
    */
   public async isInitialized(): Promise<boolean> {
-    const credential = await this.database.prepare("SELECT id FROM admin_credentials WHERE id = 1").first();
-    return Boolean(credential);
+    return this.repository.isInitialized();
   }
 
   public async initialize(
@@ -67,23 +65,32 @@ export class AuthService {
     if (input.password.length < 16) {
       throw new ValidationError("管理员密码至少需要 16 个字符。");
     }
-    const existing = await this.database.prepare("SELECT id FROM admin_credentials WHERE id = 1").first();
+    const existing = await this.repository.isInitialized();
     if (existing) throw new ConflictError("初始化已完成。");
 
     // 恢复码仅在本次响应中返回；数据库始终保存派生哈希而非明文。
     const recoveryCode = makeRecoveryCode();
     const passwordSalt = randomText(16);
     const recoverySalt = randomText(16);
-    await this.database.batch([
-      this.database
-        .prepare("INSERT INTO admin_credentials (id, password_hash, password_salt, recovery_hash, recovery_salt, created_at) VALUES (1, ?, ?, ?, ?, ?)")
-        .bind(await deriveHash(input.password, passwordSalt), passwordSalt, await deriveHash(recoveryCode, recoverySalt), recoverySalt, input.now),
-    ]);
-    await this.settings.saveInitial({
-      enabledRegions: input.enabledRegions,
-      defaultSearchRegion: input.defaultSearchRegion,
-      createdAt: input.now,
-    });
+    try {
+      await this.repository.initialize({
+        passwordHash: await deriveHash(input.password, passwordSalt),
+        passwordSalt,
+        recoveryHash: await deriveHash(recoveryCode, recoverySalt),
+        recoverySalt,
+        createdAt: input.now,
+        initialSettings: {
+          enabledRegions: input.enabledRegions,
+          defaultSearchRegion: input.defaultSearchRegion,
+        },
+      });
+    } catch (error) {
+      // 并发首次初始化由数据库唯一约束最终裁决；对外仍保持既有安全冲突类型和固定文案。
+      if (error instanceof AuthInitializationConflictError) {
+        throw new ConflictError("初始化已完成。");
+      }
+      throw error;
+    }
     return { recoveryCode };
   }
 
@@ -92,9 +99,7 @@ export class AuthService {
    * 这样锁定期内即使输入正确密码也不能被当作绕过限流的探针。
    */
   public async login(password: string, now: string): Promise<{ token: string; expiresAt: string }> {
-    const attempt = await this.database
-      .prepare("SELECT failed_count AS failedCount, locked_until AS lockedUntil FROM login_attempts WHERE id = 1")
-      .first<{ failedCount: number; lockedUntil: string | null }>();
+    const attempt = await this.repository.getLoginAttempt();
     const nowMs = Date.parse(now);
 
     if (attempt?.lockedUntil && Date.parse(attempt.lockedUntil) > nowMs) {
@@ -103,7 +108,7 @@ export class AuthService {
     // 锁定已自然到期时先清空失败记录，避免很久以前的输错次数影响下一次登录。
     if (attempt?.lockedUntil) await this.clearLoginAttempts();
 
-    const credential = await this.database.prepare("SELECT password_hash AS passwordHash, password_salt AS passwordSalt FROM admin_credentials WHERE id = 1").first<{ passwordHash: string; passwordSalt: string }>();
+    const credential = await this.repository.getPasswordCredential();
     if (!credential || !(await matches(password, credential.passwordSalt, credential.passwordHash))) {
       await this.recordFailedLogin(now, attempt?.lockedUntil ? 0 : (attempt?.failedCount ?? 0));
       throw new InvalidCredentialsError("密码错误。");
@@ -113,7 +118,12 @@ export class AuthService {
     // 浏览器拿到随机令牌，数据库只保存 SHA-256 摘要，数据库泄露时不能直接复用会话。
     const token = randomText(32);
     const expiresAt = new Date(nowMs + sessionDurationMs).toISOString();
-    await this.database.prepare("INSERT INTO sessions (id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?)").bind(randomText(16), await sha256(token), expiresAt, now).run();
+    await this.repository.createSession({
+      id: randomText(16),
+      tokenHash: await sha256(token),
+      expiresAt,
+      createdAt: now,
+    });
     return { token, expiresAt };
   }
 
@@ -123,23 +133,20 @@ export class AuthService {
    */
   public async resetPassword(recoveryCode: string, password: string, now: string): Promise<void> {
     if (password.length < 16) throw new ValidationError("管理员密码至少需要 16 个字符。");
-    const credential = await this.database
-      .prepare("SELECT recovery_hash AS recoveryHash, recovery_salt AS recoverySalt, recovery_used_at AS recoveryUsedAt FROM admin_credentials WHERE id = 1")
-      .first<{ recoveryHash: string; recoverySalt: string; recoveryUsedAt: string | null }>();
+    const credential = await this.repository.getRecoveryCredential();
     const normalizedCode = recoveryCode.trim().toUpperCase();
     if (!credential || credential.recoveryUsedAt || !(await matches(normalizedCode, credential.recoverySalt, credential.recoveryHash))) {
       throw new InvalidRecoveryCodeError("恢复码无效或已使用。");
     }
 
     const passwordSalt = randomText(16);
-    // 密码更新、恢复码失效和会话撤销作为同一批写入，避免中途失败留下可继续使用的旧会话。
-    await this.database.batch([
-      this.database
-        .prepare("UPDATE admin_credentials SET password_hash = ?, password_salt = ?, recovery_used_at = ? WHERE id = 1")
-        .bind(await deriveHash(password, passwordSalt), passwordSalt, now),
-      this.database.prepare("UPDATE sessions SET revoked_at = ? WHERE revoked_at IS NULL").bind(now),
-      this.database.prepare("DELETE FROM login_attempts WHERE id = 1"),
-    ]);
+    // 密码更新、恢复码失效、全会话撤销和失败记录清理由仓储在同一事务中完成，任何中途故障都不得部分提交。
+    await this.repository.resetPassword({
+      passwordHash: await deriveHash(password, passwordSalt),
+      passwordSalt,
+      recoveryUsedAt: now,
+      sessionRevokedAt: now,
+    });
   }
 
   /**
@@ -147,7 +154,7 @@ export class AuthService {
    * 防止退出接口被用作会话存在性的探测信号。
    */
   public async logout(token: string, now: string): Promise<void> {
-    await this.database.prepare("UPDATE sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL").bind(now, await sha256(token)).run();
+    await this.repository.revokeSession(await sha256(token), now);
   }
 
   /**
@@ -156,26 +163,19 @@ export class AuthService {
    */
   public async authenticate(token: string, now: string): Promise<boolean> {
     if (!token) return false;
-    const session = await this.database
-      .prepare("SELECT id FROM sessions WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?")
-      .bind(await sha256(token), now)
-      .first();
-    return Boolean(session);
+    return this.repository.isSessionValid(await sha256(token), now);
   }
 
   /** 把失败次数累积为单管理员记录，并在第五次失败时写入绝对解锁时间，便于无状态 Worker 判断。 */
   private async recordFailedLogin(now: string, previousFailures: number): Promise<void> {
     const failedCount = previousFailures + 1;
     const lockedUntil = failedCount >= maximumFailedLogins ? new Date(Date.parse(now) + loginLockDurationMs).toISOString() : null;
-    await this.database
-      .prepare("INSERT INTO login_attempts (id, failed_count, locked_until) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET failed_count = excluded.failed_count, locked_until = excluded.locked_until")
-      .bind(failedCount, lockedUntil)
-      .run();
+    await this.repository.saveLoginAttempt({ failedCount, lockedUntil });
   }
 
   /** 成功认证、密码恢复和锁定到期都复用此清理逻辑，保证下次失败从零开始累计。 */
   private async clearLoginAttempts(): Promise<void> {
-    await this.database.prepare("DELETE FROM login_attempts WHERE id = 1").run();
+    await this.repository.clearLoginAttempt();
   }
 }
 
@@ -207,7 +207,7 @@ async function sha256(value: string): Promise<string> {
   return toHex(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(value))));
 }
 
-/** 哈希输出统一为十六进制文本，便于 D1 的 TEXT 字段保存和参数化查询。 */
+/** 哈希输出统一为十六进制文本，便于数据库 TEXT 字段保存和参数化查询。 */
 function toHex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
