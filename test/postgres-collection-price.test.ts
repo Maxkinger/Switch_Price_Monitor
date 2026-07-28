@@ -64,6 +64,44 @@ describe("PostgreSQL 采集商品与价格读取仓储", () => {
     };
     await expect(new PostgresPriceRepository(unsafeExecutor).countForRegionalProduct("product-active")).rejects.toThrow("安全整数");
   });
+
+  it("把已验证价格按整数最小单位追加为不可变快照", async () => {
+    const repository = new PostgresPriceRepository(database);
+
+    // null 人民币值表示汇率暂不可得；不得写成零，也不得对本币整数金额做浮点换算。
+    await repository.append({
+      regionalProductId: "product-active",
+      amountMinor: 7_980,
+      currency: "JPY",
+      cnyFen: null,
+      source: "official",
+      capturedAt: "2026-07-18T00:00:00.000Z",
+    });
+
+    const stored = await database.query<{
+      amountMinor: number;
+      currency: string;
+      cnyFen: number | null;
+      source: string;
+      capturedAt: Date;
+    }>(
+      `SELECT amount_minor AS "amountMinor",
+              currency,
+              cny_fen AS "cnyFen",
+              source,
+              captured_at AS "capturedAt"
+         FROM price_snapshots
+        WHERE regional_product_id = $1`,
+      ["product-active"],
+    );
+    expect(stored.rows).toEqual([{
+      amountMinor: 7_980,
+      currency: "JPY",
+      cnyFen: null,
+      source: "official",
+      capturedAt: new Date("2026-07-18T00:00:00.000Z"),
+    }]);
+  });
 });
 
 async function seedCollection(database: AppDatabase): Promise<void> {

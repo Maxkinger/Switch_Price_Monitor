@@ -18,6 +18,19 @@ interface ExchangeRateRow {
 export class PostgresExchangeRateRepository implements ExchangeRateReader {
   public constructor(private readonly database: SqlExecutor) {}
 
+  /**
+   * 当日成功汇率按币种和捕获时刻幂等追加；冲突表示同轮重试，不覆盖既有可审计来源。
+   * 过期只属于服务本轮回退语义，成功来源写入始终使用原生 FALSE。
+   */
+  public async append(value: RateResult): Promise<void> {
+    await this.database.query(
+      `INSERT INTO exchange_rates (currency, cny_rate, source, captured_at, is_stale)
+       VALUES ($1, $2, $3, $4, FALSE)
+       ON CONFLICT (currency, captured_at) DO NOTHING`,
+      [value.currency, value.cnyRate, value.source, value.capturedAt],
+    );
+  }
+
   public async latestFor(currency: string): Promise<RateResult | null> {
     const result = await this.database.query<ExchangeRateRow>(
       `SELECT currency,

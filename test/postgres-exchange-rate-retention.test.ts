@@ -31,6 +31,27 @@ describe("PostgreSQL 汇率与保留仓储", () => {
     });
   });
 
+  it("同一币种与捕获时刻的成功汇率重试保持幂等", async () => {
+    const repository = new PostgresExchangeRateRepository(database);
+    const capturedAt = "2026-07-18T00:00:00.000Z";
+
+    // 两次写入模拟同一采集轮重试；唯一约束应保留首条可审计来源，不能覆盖或产生两条日报候选。
+    await repository.append({ currency: "USD", cnyRate: 7.18, source: "first", capturedAt });
+    await repository.append({ currency: "USD", cnyRate: 7.99, source: "retry", capturedAt });
+
+    await expect(repository.latestFor("USD")).resolves.toEqual({
+      currency: "USD",
+      cnyRate: 7.18,
+      source: "first",
+      capturedAt,
+    });
+    const count = await database.query<{ count: string }>(
+      "SELECT COUNT(*) AS count FROM exchange_rates WHERE currency = $1",
+      ["USD"],
+    );
+    expect(count.rows[0]?.count).toBe("1");
+  });
+
   it("只删除严格早于价格截止点的快照并返回安全数值计数", async () => {
     await seedProduct(database);
     await database.query(

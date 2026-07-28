@@ -8,17 +8,30 @@
       "pg": "pg 是 Node 服务连接 PostgreSQL 的生产运行时依赖，不能放入仅测试/构建使用的 devDependencies。",
       "parameterization": "所有动态 SQL 值必须通过 pg 参数绑定传入，禁止拼接认证、价格来源、筛选条件或其他外部输入。",
       "credentials": "数据库连接凭据只从经过验证的运行时配置注入，不得写入源码、测试产物、镜像层或普通日志。"
+    },
+    "nodeRuntimeDependencyRationaleZh": {
+      "hono": "Hono 只承担标准 Fetch 应用组合，现有平台中立路由继续接收同源 Request，不在框架层复制业务判断。",
+      "@hono/node-server": "Node adapter 只把 Fetch 应用接到 Node.js 22 HTTP，监听、优雅关停和数据库生命周期仍由项目入口控制。",
+      "tooling": "tsx、concurrently 与 tsup 仅用于本地增量调试和构建；生产运行只执行 dist/server/index.js。",
+      "workerTransition": "迁移期仍保留 Worker 测试所需 Cloudflare 开发依赖，生产依赖和 Node 服务端源码不导入这些包，最终清理由 Task 11 完成。"
     }
   },
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "concurrently --kill-others-on-fail \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "tsx watch src/server/index.ts",
+    "dev:client": "vite",
+    "build": "npm run build:client && npm run build:server",
+    "build:client": "vite build",
+    "build:server": "tsup",
+    "start": "node dist/server/index.js",
     "preview": "vite preview",
     "deploy": "node ./scripts/deploy-production.mjs",
     "test": "vitest",
     "test:dom": "vitest --config vitest.dom.config.mts"
   },
   "dependencies": {
+    "@hono/node-server": "2.0.12",
+    "hono": "4.12.32",
     "pg": "^8.22.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
@@ -30,11 +43,15 @@
     "@cloudflare/workers-types": "5.20260714.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@types/node": "22.20.0",
     "@types/pg": "^8.20.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^5.0.2",
+    "concurrently": "10.0.4",
     "jsdom": "^29.1.1",
+    "tsup": "8.5.1",
+    "tsx": "4.23.1",
     "typescript": "^5.8.3",
     "vite": "^7.0.6",
     "vitest": "^4.1.0",

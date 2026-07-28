@@ -1,5 +1,5 @@
 import { initialRegionCodes, themes, type AppSettings, type RegionCode } from "../shared/domain";
-import { SettingsRepository } from "../repositories/settings-repository";
+import type { SettingsStore } from "../repositories/ports";
 
 /** 设置记录异常缺失时使用明确错误，避免在已登录但未完成初始化的异常状态下返回空对象。 */
 export class SettingsNotInitializedError extends Error {}
@@ -15,7 +15,8 @@ export type SettingsPatch = Partial<Omit<AppSettings, "createdAt">>;
  * 因此管理员可以安全地更改默认搜索区而不改变历史价格的含义。
  */
 export class SettingsService {
-  public constructor(private readonly settings: SettingsRepository) {}
+  // 平台中立端口避免设置路由因一个具体 D1 类而阻止 Node/PostgreSQL 装配。
+  public constructor(private readonly settings: SettingsStore) {}
 
   public async get(): Promise<AppSettings> {
     const current = await this.settings.get();

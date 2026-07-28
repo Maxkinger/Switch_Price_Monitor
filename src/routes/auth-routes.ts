@@ -138,12 +138,15 @@ function readSessionCookie(cookieHeader: string | null): string {
   return entry ? entry.slice("session=".length) : "";
 }
 
-/** 安全属性必须每次登录一致，避免未来路由遗漏 HttpOnly、Secure 或 SameSite 保护。 */
+/**
+ * 安全属性必须每次登录一致：HttpOnly 阻止前端脚本读取令牌，SameSite=Strict 禁止跨站请求携带会话；
+ * Secure 只使用受信入口的显式配置，不能依据客户端可伪造的转发头自动改变。
+ */
 function makeSessionCookie(token: string, secure: boolean): string {
-  return `session=${token}; HttpOnly;${secure ? " Secure;" : ""} SameSite=Lax; Path=/; Max-Age=2592000`;
+  return `session=${token}; HttpOnly;${secure ? " Secure;" : ""} SameSite=Strict; Path=/; Max-Age=2592000`;
 }
 
-/** 覆盖 Cookie 并立即到期，配合服务端 revoked_at 实现客户端和服务端双重退出。 */
+/** 覆盖 Cookie 并立即到期；退出与登录使用相同 Strict/Secure 属性，确保浏览器能删除精确同源 Cookie。 */
 function clearSessionCookie(secure: boolean): string {
-  return `session=; HttpOnly;${secure ? " Secure;" : ""} SameSite=Lax; Path=/; Max-Age=0`;
+  return `session=; HttpOnly;${secure ? " Secure;" : ""} SameSite=Strict; Path=/; Max-Age=0`;
 }

@@ -31,6 +31,14 @@ export interface SettingsReader {
 }
 
 /**
+ * 设置写端口只允许完整替换已验证的公开偏好；单例 ID、认证列和未来 Telegram 秘密均不由服务传入。
+ * Node/PostgreSQL 与迁移期 D1 适配器可共享 SettingsService，而无需把数据库类型带入业务层。
+ */
+export interface SettingsStore extends SettingsReader {
+  save(settings: AppSettings, updatedAt: string): Promise<void>;
+}
+
+/**
  * 首次初始化在服务层完成 PBKDF2 派生后才进入仓储；端口只接收哈希、随机盐和受控设置，
  * 从而不让数据库适配器接触管理员明文密码或一次性恢复码。
  */

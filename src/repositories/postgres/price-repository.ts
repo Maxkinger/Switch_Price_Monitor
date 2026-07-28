@@ -1,5 +1,5 @@
 import type { SqlExecutor } from "../../server/database/types";
-import type { HistoricalLow, PriceSource } from "../../shared/domain";
+import type { HistoricalLow, PriceSnapshot, PriceSource } from "../../shared/domain";
 import type { PriceReader } from "../ports";
 
 interface CountRow { count: string; }
@@ -21,6 +21,26 @@ interface HistoricalLowRow {
  */
 export class PostgresPriceRepository implements PriceReader {
   public constructor(private readonly database: SqlExecutor) {}
+
+  /**
+   * 成功验证后的价格只追加不可变快照；金额保持整数最小货币单位，null 人民币值表示本轮汇率不可用而非零元。
+   * 动态字段全部参数化，来源正文和外部响应不会进入价格表。
+   */
+  public async append(snapshot: PriceSnapshot): Promise<void> {
+    await this.database.query(
+      `INSERT INTO price_snapshots (
+         regional_product_id, amount_minor, currency, cny_fen, source, captured_at
+       ) VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        snapshot.regionalProductId,
+        snapshot.amountMinor,
+        snapshot.currency,
+        snapshot.cnyFen,
+        snapshot.source,
+        snapshot.capturedAt,
+      ],
+    );
+  }
 
   public async countForRegionalProduct(regionalProductId: string): Promise<number> {
     const result = await this.database.query<CountRow>(

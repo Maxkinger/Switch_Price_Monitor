@@ -1,5 +1,5 @@
 import { initialRegionCodes, themes, type AppSettings, type RegionCode } from "../../shared/domain";
-import type { SettingsReader } from "../ports";
+import type { SettingsStore } from "../ports";
 import type { SqlExecutor } from "../../server/database/types";
 
 /** pg 会把 TIMESTAMPTZ 解码为 Date；JSONB 保持 unknown，必须在进入领域 DTO 前做运行时校验。 */
@@ -19,7 +19,7 @@ interface SettingsRow {
  * 查询只列出公开偏好字段，不读取认证或未来 Telegram 配置；所有别名与行类型精确一致，
  * JSONB 则按现有五区、去重和默认区从属规则验证，防止数据库外部写入绕过服务约束。
  */
-export class PostgresSettingsRepository implements SettingsReader {
+export class PostgresSettingsRepository implements SettingsStore {
   public constructor(private readonly database: SqlExecutor) {}
 
   public async get(): Promise<AppSettings | null> {
@@ -58,6 +58,36 @@ export class PostgresSettingsRepository implements SettingsReader {
       createdAt: row.createdAt.toISOString(),
     };
   }
+
+  /**
+   * 完整替换单管理员公开设置，但保留 created_at 和固定 id=1。
+   * JSONB 参数由 pg 发送字符串并显式转 jsonb；所有值均绑定参数，不能借地区、时区或主题拼接 SQL。
+   */
+  public async save(settings: AppSettings, updatedAt: string): Promise<void> {
+    await this.database.query(
+      `UPDATE settings
+          SET enabled_regions_json = $1::jsonb,
+              default_search_region = $2,
+              theme = $3,
+              timezone = $4,
+              daily_report_time = $5,
+              tax_state = $6,
+              price_history_retention = $7,
+              updated_at = $8
+        WHERE id = 1`,
+      [
+        JSON.stringify(settings.enabledRegions),
+        settings.defaultSearchRegion,
+        settings.theme,
+        settings.timezone,
+        settings.dailyReportTime,
+        settings.taxState,
+        settings.priceHistoryRetention,
+        updatedAt,
+      ],
+    );
+  }
+
 }
 
 /**

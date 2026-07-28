@@ -51,6 +51,14 @@ Node.js 应用容器
 
 本地 Apple Silicon M1 提供开发与生产 Compose 验收。GitHub Actions 仅在完整质量门禁通过后，向公开 Docker Hub 仓库发布 `linux/arm64` 与 `linux/amd64` 的固定版本镜像；NAS Compose 只拉取镜像，不构建源码。运行时数据库与 Telegram 凭据只通过未提交环境配置注入。详细边界见 [NAS Docker 与 PostgreSQL 迁移设计规格](../superpowers/specs/2026-07-27-nas-docker-postgresql-migration-design.md) 与 [ADR-003](../decisions/ADR-003-nas-docker-postgresql.md)。
 
+### 2.2 Node HTTP 迁移入口
+
+Node.js 22 入口现已独立构建到 `dist/server`，React 只构建到 `dist/client`；迁移期 Worker 入口仅用于既有回归，不会被 Vite 重新打入 Node 生产产物。Node 启动严格读取环境白名单，要求数据库 URL 与显式 `COOKIE_SECURE=true|false`，只在 Telegram token/chat id 成对存在时注入，并以固定错误码拒绝非法端口、请求体上限和关停时间，错误不包含秘密值。
+
+启动顺序固定为 PostgreSQL 连接池、版本迁移、PostgreSQL 仓储与平台中立服务装配、HTTP 监听。HTTP 请求依次进入健康检查、认证、设置、仪表盘、手动刷新、历史、导出、商品与订阅路由；未知 `/api/*` 返回 JSON 404，非 API 路径才读取规范静态根并回退 `index.html`。静态读取在访问前拒绝目录穿越、绝对路径、重复编码和越根符号链接；请求体在业务路由前受固定字节上限保护。
+
+认证 Cookie 固定 `HttpOnly; SameSite=Strict`，`Secure` 完全取自可信启动配置，不读取 `Forwarded` 或 `X-Forwarded-Proto`。Node 进程收到 `SIGINT`/`SIGTERM` 后先停止接受新连接，在宽限期等待在途响应，超时只强制关闭本 HTTP 服务连接；HTTP 完全停止后才关闭 PostgreSQL。Task 7 尚未接入本地 Playwright，因此日区升级关系通过窄占位依赖明确失败，不导入 Worker Browser Binding、不伪造成功，也不绕过保存前官方复核。
+
 ## 3. 核心数据流
 
 ### 3.1 新建订阅

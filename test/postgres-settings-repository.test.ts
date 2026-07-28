@@ -55,4 +55,37 @@ describe("PostgreSQL 设置读取仓储", () => {
     const repository = new PostgresSettingsRepository(database);
     await expect(repository.get()).rejects.toThrow("设置中的启用地区 JSONB 无效");
   });
+
+  it("完整更新公开设置并保留首次创建时间", async () => {
+    await database.query(
+      `INSERT INTO settings (
+         id, enabled_regions_json, default_search_region, created_at, updated_at
+       ) VALUES (1, $1::jsonb, 'US', $2, $2)`,
+      [JSON.stringify(["US"]), "2026-07-16T00:00:00.000Z"],
+    );
+    const repository = new PostgresSettingsRepository(database);
+
+    // 保存值全部为公开偏好；认证、Telegram 与数据库秘密不属于 DTO，不能因完整替换进入设置 SQL。
+    await repository.save({
+      enabledRegions: ["US", "JP"],
+      defaultSearchRegion: "JP",
+      theme: "calm-dark",
+      timezone: "Asia/Tokyo",
+      dailyReportTime: "08:30",
+      taxState: "CA",
+      priceHistoryRetention: "one-year",
+      createdAt: "2026-07-16T00:00:00.000Z",
+    }, "2026-07-17T00:00:00.000Z");
+
+    await expect(repository.get()).resolves.toEqual({
+      enabledRegions: ["US", "JP"],
+      defaultSearchRegion: "JP",
+      theme: "calm-dark",
+      timezone: "Asia/Tokyo",
+      dailyReportTime: "08:30",
+      taxState: "CA",
+      priceHistoryRetention: "one-year",
+      createdAt: "2026-07-16T00:00:00.000Z",
+    });
+  });
 });
