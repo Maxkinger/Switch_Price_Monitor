@@ -1,6 +1,7 @@
 import { initialRegionCodes, type InitialSettings } from "../shared/domain";
 import {
   AuthInitializationConflictError,
+  AuthRecoveryRejectedError,
   type AuthRepository,
 } from "../repositories/ports";
 
@@ -95,35 +96,38 @@ export class AuthService {
   }
 
   /**
-   * 校验密码并创建一个新的浏览器会话。失败记录必须在校验前检查锁定状态，
-   * 这样锁定期内即使输入正确密码也不能被当作绕过限流的探针。
+   * 校验密码并创建一个新的浏览器会话。资格判断、PBKDF2、失败写入或成功建会话由仓储串行化，
+   * 这样前五个并发错误请求完成锁定后，第六个请求会在密码校验前被拒绝，正确密码也不能绕过限流。
    */
   public async login(password: string, now: string): Promise<{ token: string; expiresAt: string }> {
-    const attempt = await this.repository.getLoginAttempt();
     const nowMs = Date.parse(now);
-
-    if (attempt?.lockedUntil && Date.parse(attempt.lockedUntil) > nowMs) {
-      throw new LoginLockedError("登录尝试过多，请十五分钟后再试。");
-    }
-    // 锁定已自然到期时先清空失败记录，避免很久以前的输错次数影响下一次登录。
-    if (attempt?.lockedUntil) await this.clearLoginAttempts();
-
-    const credential = await this.repository.getPasswordCredential();
-    if (!credential || !(await matches(password, credential.passwordSalt, credential.passwordHash))) {
-      await this.recordFailedLogin(now, attempt?.lockedUntil ? 0 : (attempt?.failedCount ?? 0));
-      throw new InvalidCredentialsError("密码错误。");
-    }
-    // 成功登录立即清空失败状态，保证旧的错误次数不会影响下一次真正的管理员登录。
-    await this.clearLoginAttempts();
     // 浏览器拿到随机令牌，数据库只保存 SHA-256 摘要，数据库泄露时不能直接复用会话。
     const token = randomText(32);
     const expiresAt = new Date(nowMs + sessionDurationMs).toISOString();
-    await this.repository.createSession({
-      id: randomText(16),
-      tokenHash: await sha256(token),
-      expiresAt,
-      createdAt: now,
-    });
+    const result = await this.repository.performLoginAttempt(
+      {
+        now,
+        maximumFailedLogins,
+        lockedUntilOnThreshold: new Date(
+          nowMs + loginLockDurationMs,
+        ).toISOString(),
+        session: {
+          id: randomText(16),
+          tokenHash: await sha256(token),
+          expiresAt,
+          createdAt: now,
+        },
+      },
+      async (credential) =>
+        credential !== null &&
+        matches(password, credential.passwordSalt, credential.passwordHash),
+    );
+    if (result === "locked") {
+      throw new LoginLockedError("登录尝试过多，请十五分钟后再试。");
+    }
+    if (result === "invalid") {
+      throw new InvalidCredentialsError("密码错误。");
+    }
     return { token, expiresAt };
   }
 
@@ -141,12 +145,21 @@ export class AuthService {
 
     const passwordSalt = randomText(16);
     // 密码更新、恢复码失效、全会话撤销和失败记录清理由仓储在同一事务中完成，任何中途故障都不得部分提交。
-    await this.repository.resetPassword({
-      passwordHash: await deriveHash(password, passwordSalt),
-      passwordSalt,
-      recoveryUsedAt: now,
-      sessionRevokedAt: now,
-    });
+    try {
+      await this.repository.resetPassword({
+        passwordHash: await deriveHash(password, passwordSalt),
+        passwordSalt,
+        recoveryHash: credential.recoveryHash,
+        recoveryUsedAt: now,
+        sessionRevokedAt: now,
+      });
+    } catch (error) {
+      // 条件消费失败包含并发竞争、已使用或摘要不再匹配，统一为相同恢复错误以避免状态枚举。
+      if (error instanceof AuthRecoveryRejectedError) {
+        throw new InvalidRecoveryCodeError("恢复码无效或已使用。");
+      }
+      throw error;
+    }
   }
 
   /**
@@ -166,17 +179,6 @@ export class AuthService {
     return this.repository.isSessionValid(await sha256(token), now);
   }
 
-  /** 把失败次数累积为单管理员记录，并在第五次失败时写入绝对解锁时间，便于无状态 Worker 判断。 */
-  private async recordFailedLogin(now: string, previousFailures: number): Promise<void> {
-    const failedCount = previousFailures + 1;
-    const lockedUntil = failedCount >= maximumFailedLogins ? new Date(Date.parse(now) + loginLockDurationMs).toISOString() : null;
-    await this.repository.saveLoginAttempt({ failedCount, lockedUntil });
-  }
-
-  /** 成功认证、密码恢复和锁定到期都复用此清理逻辑，保证下次失败从零开始累计。 */
-  private async clearLoginAttempts(): Promise<void> {
-    await this.repository.clearLoginAttempt();
-  }
 }
 
 /** 使用系统安全随机源生成盐、会话令牌和恢复码片段；绝不能改为可预测的时间或伪随机数。 */

@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import worker, { type Env } from "../src/worker";
 import { JapaneseUpgradeBatchLimitError } from "../src/providers/japanese-upgrade-browser";
 import { handleProductRoute } from "../src/routes/product-routes";
+import { D1AuthRepository } from "../src/repositories/auth-repository";
+import { AuthService } from "../src/services/auth-service";
 import { SubscriptionPreviewService } from "../src/services/subscription-preview-service";
 
 /**
@@ -23,11 +25,11 @@ describe("product discovery HTTP routes", () => {
       resolveOfficialLink: async () => candidate(),
       resolveRegions: async () => [],
     };
-    const anonymous = await handleProductRoute(request("/api/products/search", { query: "Overcooked" }), env.DB, fixedPreview(), discovery);
+    const anonymous = await handleProductRoute(request("/api/products/search", { query: "Overcooked" }), sessions(), fixedPreview(), discovery);
     expect(anonymous?.status).toBe(401);
 
     const cookie = await initializeAndLogin();
-    const response = await handleProductRoute(request("/api/products/search", { query: "Overcooked" }, cookie), env.DB, fixedPreview(), discovery);
+    const response = await handleProductRoute(request("/api/products/search", { query: "Overcooked" }, cookie), sessions(), fixedPreview(), discovery);
     expect(response?.status).toBe(200);
     await expect(response?.json()).resolves.toEqual({ status: "available", candidates: [candidate()] });
   });
@@ -44,7 +46,7 @@ describe("product discovery HTTP routes", () => {
 
     const response = await handleProductRoute(
       request("/api/products/resolve-link", { regionCode: "HK", productUrl: hongKongCandidate().productUrl }, cookie),
-      env.DB,
+      sessions(),
       fixedPreview(),
       discovery,
     );
@@ -67,7 +69,7 @@ describe("product discovery HTTP routes", () => {
 
     const response = await handleProductRoute(
       request("/api/products/resolve-link", { regionCode: "JP", productUrl: japaneseUpgradeCandidate().productUrl, anchor }, cookie),
-      env.DB,
+      sessions(),
       fixedPreview(),
       discovery,
     );
@@ -85,7 +87,7 @@ describe("product discovery HTTP routes", () => {
 
     const response = await handleProductRoute(
       request("/api/products/resolve-link", { regionCode: "JP", productUrl: japaneseUpgradeCandidate().productUrl, anchor: { canonicalTitle: "伪造升级包" } }, cookie),
-      env.DB,
+      sessions(),
       fixedPreview(),
       discovery,
     );
@@ -109,7 +111,7 @@ describe("product discovery HTTP routes", () => {
     };
     const cookie = await initializeAndLogin();
 
-    const response = await handleProductRoute(request("/api/products/resolve-regions", { candidates: [candidate()] }, cookie), env.DB, fixedPreview(), discovery);
+    const response = await handleProductRoute(request("/api/products/resolve-regions", { candidates: [candidate()] }, cookie), sessions(), fixedPreview(), discovery);
 
     expect(response?.status).toBe(422);
     await expect(response?.json()).resolves.toEqual({ code: "VALIDATION_ERROR", error: "一次最多核验 3 个日区升级包，请分批处理。" });
@@ -131,7 +133,7 @@ describe("product discovery HTTP routes", () => {
 
     const response = await handleProductRoute(
       request("/api/products/resolve-regions", { candidates: [candidate()] }, cookie),
-      env.DB,
+      sessions(),
       fixedPreview(),
       discovery,
     );
@@ -159,7 +161,7 @@ describe("product discovery HTTP routes", () => {
 
     const response = await handleProductRoute(
       request("/api/products/resolve-regions", { candidates: [candidate()], enabledRegions: ["HK"] }, cookie),
-      env.DB,
+      sessions(),
       fixedPreview(),
       discovery,
     );
@@ -182,7 +184,7 @@ describe("product discovery HTTP routes", () => {
 
     const response = await handleProductRoute(
       request("/api/products/confirm-subscriptions", { subscriptions: [input] }, cookie),
-      env.DB,
+      sessions(),
       fixedPreview(),
       discovery,
       { confirm },
@@ -207,7 +209,7 @@ describe("product discovery HTTP routes", () => {
 
     const response = await handleProductRoute(
       request("/api/products/confirm-subscriptions", { subscriptions: [confirmedSubscription()] }, cookie),
-      env.DB,
+      sessions(),
       fixedPreview(),
       discovery,
       confirmation,
@@ -264,4 +266,9 @@ function workerEnv(): Env {
     ASSETS: { fetch: async () => new Response("unexpected asset request", { status: 500 }) } as unknown as Fetcher,
     BROWSER: { fetch: async () => new Response("unexpected browser binding request", { status: 500 }) } as unknown as Fetcher,
   };
+}
+
+/** 每次直接路由调用显式装配当前 D1 测试绑定，避免路由根据 unknown 对象猜测认证平台。 */
+function sessions(): AuthService {
+  return new AuthService(new D1AuthRepository(env.DB));
 }

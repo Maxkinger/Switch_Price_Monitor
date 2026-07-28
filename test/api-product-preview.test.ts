@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import worker, { type Env } from "../src/worker";
 import { handleProductRoute } from "../src/routes/product-routes";
+import { D1AuthRepository } from "../src/repositories/auth-repository";
+import { AuthService } from "../src/services/auth-service";
 import { SubscriptionPreviewService } from "../src/services/subscription-preview-service";
 
 /**
@@ -17,12 +19,12 @@ describe("product source preview HTTP route", () => {
 
   it("rejects anonymous access and returns source previews to a signed-in administrator without persisting candidates", async () => {
     const preview = fixedPreview();
-    const anonymous = await handleProductRoute(request([jpCandidate()]), env.DB, preview);
+    const anonymous = await handleProductRoute(request([jpCandidate()]), sessions(), preview);
     expect(anonymous?.status).toBe(401);
 
     const cookie = await initializeAndLogin();
     const before = await counts();
-    const response = await handleProductRoute(request([jpCandidate(), hkCandidate()], cookie), env.DB, preview);
+    const response = await handleProductRoute(request([jpCandidate(), hkCandidate()], cookie), sessions(), preview);
 
     expect(response?.status).toBe(200);
     await expect(response?.json()).resolves.toMatchObject({ regions: [
@@ -35,7 +37,7 @@ describe("product source preview HTTP route", () => {
 
   it("rejects duplicate regions and malformed candidates with a safe validation response", async () => {
     const cookie = await initializeAndLogin();
-    const duplicate = await handleProductRoute(request([jpCandidate(), { ...jpCandidate(), productUrl: "https://example.test/second" }], cookie), env.DB, fixedPreview());
+    const duplicate = await handleProductRoute(request([jpCandidate(), { ...jpCandidate(), productUrl: "https://example.test/second" }], cookie), sessions(), fixedPreview());
     expect(duplicate?.status).toBe(422);
     await expect(duplicate?.json()).resolves.toEqual({ code: "VALIDATION_ERROR", error: "每个地区只能确认一个商品。" });
   });
@@ -48,6 +50,11 @@ function fixedPreview(): SubscriptionPreviewService {
       ? { status: "official-available", officialPriceId: "70050000064985" }
       : { status: "official-id-unavailable", officialPriceId: null, reason: "unsupported-region" },
   }, ["eshop-prices", "nt-deals"]);
+}
+
+/** 路由测试显式装配 D1 兼容认证适配器，生产路由不再运行时猜测数据库对象。 */
+function sessions(): AuthService {
+  return new AuthService(new D1AuthRepository(env.DB));
 }
 
 /** 日区候选使用已确认的官方链接；路由仍会验证 HTTPS、标题、发行商、商品类型和地区代码。 */

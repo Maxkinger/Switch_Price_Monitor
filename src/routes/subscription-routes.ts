@@ -69,7 +69,7 @@ export async function handleSubscriptionRoute(
     }
 
     if (action.kind === "bulk-delete") {
-      // 只接受已收窄且去重的订阅 ID；服务层会在 D1 写入前再次确认所有目标存在，避免浏览器过期选择导致部分删除。
+      // 只接受已收窄且去重的订阅 ID；仓储事务会在首条写入前确认所有目标存在，避免浏览器过期选择导致部分删除。
       const subscriptionIds = readBulkDeleteSubscriptionIds(await request.json<unknown>());
       return Response.json({ deletedSubscriptionIds: await service.deleteMany(subscriptionIds) });
     }
@@ -160,7 +160,7 @@ function readCreateSubscriptionInput(value: unknown): { id: string; gameId: stri
 }
 
 /**
- * 补全请求不接受游戏 ID、现有商品 ID 或自定义地区范围；这些身份与范围均由服务从 D1/设置读取。
+ * 补全请求不接受游戏 ID、现有商品 ID 或自定义地区范围；这些身份与范围均由服务从持久化订阅和设置读取。
  * 新候选只做严格 JSON 和受控枚举收窄，服务仍会重新解析每个任天堂官方链接后才可能进入原子写入。
  */
 function readCompletionRegionsInput(value: unknown): CompletionRegionsInput {
@@ -263,7 +263,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** 标识符保留原值供 D1 外键查询，但拒绝空白字符串，避免前端无选择时形成难诊断的关系错误。 */
+/** 标识符保留原值供仓储参数化外键查询，但拒绝空白字符串，避免前端无选择时形成难诊断的关系错误。 */
 function readNonEmptyString(value: unknown, message: string): string {
   if (typeof value !== "string" || value.trim().length === 0) throw new SubscriptionRequestError(message);
   return value;

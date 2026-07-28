@@ -22,7 +22,7 @@ export async function handleManualRefreshRoute(
     if (error instanceof ManualRefreshCooldownError) {
       return Response.json({ code: "REFRESH_COOLDOWN", error: error.message, nextAllowedAt: error.nextAllowedAt }, { status: 429 });
     }
-    // D1 或外部来源异常不回传表结构、商品链接和运行时堆栈，避免已登录浏览器脚本或日志采集器获得内部细节。
+    // 持久化仓储或外部来源异常不回传表结构、商品链接和运行时堆栈，避免已登录浏览器脚本或日志采集器获得内部细节。
     return Response.json({ code: "INTERNAL_ERROR", error: "刷新暂时无法完成，请稍后重试。" }, { status: 500 });
   }
 }

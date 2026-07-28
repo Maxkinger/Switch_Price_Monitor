@@ -55,19 +55,19 @@ describe("PostgreSQL 订阅确认与永久删除事务", () => {
         "subscription-complete",
         "game-complete",
         [{
-          id: "product-jp",
-          regionCode: "JP",
-          currency: "JPY",
-          officialPriceId: "official-jp",
-          productUrl: "https://store.nintendo.example/jp/product-jp",
+          id: "product-mx",
+          regionCode: "MX",
+          currency: "MXN",
+          officialPriceId: "official-mx",
+          productUrl: "https://www.nintendo.example/mx/product-mx",
           matchSource: "manual_link",
         }],
         fixedNow,
       ),
     ).rejects.toThrow("合成订阅事务故障");
 
-    await expect(countRows(database, "regional_products")).resolves.toBe(1);
-    await expect(countRows(database, "subscription_regions")).resolves.toBe(1);
+    await expect(countRows(database, "regional_products")).resolves.toBe(2);
+    await expect(countRows(database, "subscription_regions")).resolves.toBe(2);
   });
 
   it("永久删除含缺失 ID 时在任何写入前拒绝并保留全部目标", async () => {
@@ -82,7 +82,7 @@ describe("PostgreSQL 订阅确认与永久删除事务", () => {
       subscriptions.deleteMany(["subscription-delete", "subscription-missing"]),
     ).resolves.toBe(false);
     await expect(countRows(database, "games")).resolves.toBe(1);
-    await expect(countRows(database, "regional_products")).resolves.toBe(1);
+    await expect(countRows(database, "regional_products")).resolves.toBe(2);
     await expect(countRows(database, "subscriptions")).resolves.toBe(1);
   });
 
@@ -92,23 +92,67 @@ describe("PostgreSQL 订阅确认与永久删除事务", () => {
       [confirmation("game-delete-rollback", "subscription-delete-rollback", "deletion rollback")],
       fixedNow,
     );
-    await database.query(
-      `INSERT INTO price_snapshots (
-         regional_product_id, amount_minor, currency, cny_fen, source, captured_at
-       ) VALUES ($1, $2, $3, $4, $5, $6)`,
-      ["game-delete-rollback-product-us", 1999, "USD", 14300, "official", fixedNow],
+    await seedDeletionDependents(
+      database,
+      "game-delete-rollback",
+      "subscription-delete-rollback",
     );
     const subscriptions = new PostgresSubscriptionRepository(
-      // 第六条事务查询前，目标验证及若干 DELETE 已执行；只有真实回滚能恢复刚删除的价格快照。
-      failTransactionBeforeQuery(database, 6),
+      // 第八条事务查询前，所有从属表 DELETE 已执行；只有真实回滚能恢复完整删除图。
+      failTransactionBeforeQuery(database, 8),
     );
 
     await expect(
       subscriptions.deleteMany(["subscription-delete-rollback"]),
     ).rejects.toThrow("合成订阅事务故障");
-    await expect(countRows(database, "price_snapshots")).resolves.toBe(1);
-    await expect(countRows(database, "games")).resolves.toBe(1);
-    await expect(countRows(database, "subscriptions")).resolves.toBe(1);
+    await expectDeletionGraphCounts(database, {
+      games: 1,
+      regionalProducts: 2,
+      subscriptions: 1,
+      subscriptionRegions: 2,
+      targets: 1,
+      snapshots: 2,
+      logs: 2,
+      health: 2,
+      notifications: 2,
+    });
+    await expectGlobalRowsPreserved(database);
+  });
+
+  it("永久删除成功清空完整订阅图但保留设置、汇率和认证资料", async () => {
+    /**
+     * 管理员明确永久删除只授权目标订阅的业务图；全局设置、汇率和认证单例属于共享/安全状态，
+     * 即使其时间或币种与被删游戏相同也不得被宽泛条件误删。
+     */
+    const confirmationRepository = new PostgresSubscriptionConfirmationRepository(database);
+    await confirmationRepository.createAtomically(
+      [confirmation("game-delete-success", "subscription-delete-success", "deletion success")],
+      fixedNow,
+    );
+    await seedDeletionDependents(
+      database,
+      "game-delete-success",
+      "subscription-delete-success",
+    );
+
+    await expect(
+      new PostgresSubscriptionRepository(database).deleteMany([
+        "subscription-delete-success",
+      ]),
+    ).resolves.toBe(true);
+
+    await expectDeletionGraphCounts(database, {
+      games: 0,
+      regionalProducts: 0,
+      subscriptions: 0,
+      subscriptionRegions: 0,
+      targets: 0,
+      snapshots: 0,
+      logs: 0,
+      health: 0,
+      notifications: 0,
+    });
+    await expectGlobalRowsPreserved(database);
   });
 
   it("并发确认相同规范化游戏只提交一份并把竞争者转换为安全冲突", async () => {
@@ -160,7 +204,7 @@ describe("PostgreSQL 订阅确认与永久删除事务", () => {
 
 const fixedNow = "2026-07-27T00:00:00.000Z";
 
-/** 合成确认包含一个已由服务重验的美区商品，固定字面值让断言不复刻生产 ID 或规范化算法。 */
+/** 合成确认至少包含美、日两个已重验地区，避免单区夹具掩盖多地区循环中途失败或关系遗漏。 */
 function confirmation(
   gameId: string,
   subscriptionId: string,
@@ -177,15 +221,132 @@ function confirmation(
       coverUrl: null,
     },
     subscriptionId,
-    regions: [{
-      id: `${gameId}-product-us`,
-      regionCode: "US",
-      currency: "USD",
-      officialPriceId: `${gameId}-official-us`,
-      productUrl: `https://www.nintendo.example/us/${gameId}`,
-      matchSource: "manual_selection",
-    }],
+    regions: [
+      {
+        id: `${gameId}-product-us`,
+        regionCode: "US",
+        currency: "USD",
+        officialPriceId: `${gameId}-official-us`,
+        productUrl: `https://www.nintendo.example/us/${gameId}`,
+        matchSource: "manual_selection",
+      },
+      {
+        id: `${gameId}-product-jp`,
+        regionCode: "JP",
+        currency: "JPY",
+        officialPriceId: `${gameId}-official-jp`,
+        productUrl: `https://store.nintendo.example/jp/${gameId}`,
+        matchSource: "manual_link",
+      },
+    ],
   };
+}
+
+/**
+ * 为永久删除构造完整依赖图：目标价、两区价格/日志/健康状态以及分别按订阅和商品关联的通知。
+ * 同时写入设置、汇率和认证单例作为不得删除的哨兵；所有值均为合成数据，不包含真实凭据或来源响应。
+ */
+async function seedDeletionDependents(
+  database: AppDatabase,
+  gameId: string,
+  subscriptionId: string,
+): Promise<void> {
+  const productIds = [`${gameId}-product-us`, `${gameId}-product-jp`];
+  await database.query(
+    `INSERT INTO subscription_region_targets (
+       subscription_id, region_code, target_amount_minor, target_state
+     ) VALUES ($1, 'US', 1500, 'met')`,
+    [subscriptionId],
+  );
+  for (const [index, productId] of productIds.entries()) {
+    const currency = index === 0 ? "USD" : "JPY";
+    await database.query(
+      `INSERT INTO price_snapshots (
+         regional_product_id, amount_minor, currency, cny_fen, source, captured_at
+       ) VALUES ($1, $2, $3, $4, 'official', $5)`,
+      [productId, 1999 + index, currency, 14300 + index, fixedNow],
+    );
+    await database.query(
+      `INSERT INTO fetch_logs (
+         regional_product_id, source, status, duration_ms, message, captured_at
+       ) VALUES ($1, 'official', 'success', 25, NULL, $2)`,
+      [productId, fixedNow],
+    );
+    await database.query(
+      `INSERT INTO regional_product_health (
+         regional_product_id, consecutive_failures, last_success_at, failure_notified, updated_at
+       ) VALUES ($1, 0, $2, FALSE, $2)`,
+      [productId, fixedNow],
+    );
+  }
+  await database.query(
+    `INSERT INTO notification_events (
+       subscription_id, regional_product_id, event_type, status, dedupe_key, created_at
+     ) VALUES
+       ($1, NULL, 'target-reached', 'pending', $2, $3),
+       (NULL, $4, 'collection-failure', 'pending', $5, $3)`,
+    [
+      subscriptionId,
+      `${subscriptionId}:target`,
+      fixedNow,
+      productIds[0],
+      `${subscriptionId}:health`,
+    ],
+  );
+  await database.query(
+    `INSERT INTO settings (
+       id, enabled_regions_json, default_search_region, created_at, updated_at
+     ) VALUES (1, '["US","JP"]'::jsonb, 'US', $1, $1)`,
+    [fixedNow],
+  );
+  await database.query(
+    `INSERT INTO exchange_rates (
+       currency, cny_rate, source, captured_at, is_stale
+     ) VALUES ('USD', 7.2, 'synthetic-central-bank', $1, FALSE)`,
+    [fixedNow],
+  );
+  await database.query(
+    `INSERT INTO admin_credentials (
+       id, password_hash, password_salt, recovery_hash, recovery_salt, created_at
+     ) VALUES (1, 'synthetic-password-hash', 'synthetic-password-salt',
+               'synthetic-recovery-hash', 'synthetic-recovery-salt', $1)`,
+    [fixedNow],
+  );
+}
+
+interface DeletionGraphCounts {
+  games: number;
+  regionalProducts: number;
+  subscriptions: number;
+  subscriptionRegions: number;
+  targets: number;
+  snapshots: number;
+  logs: number;
+  health: number;
+  notifications: number;
+}
+
+/** 逐表断言完整业务图，确保测试不会只凭主表数量误判删除或回滚正确。 */
+async function expectDeletionGraphCounts(
+  database: AppDatabase,
+  expected: DeletionGraphCounts,
+): Promise<void> {
+  await expect(countRows(database, "games")).resolves.toBe(expected.games);
+  await expect(countRows(database, "regional_products")).resolves.toBe(expected.regionalProducts);
+  await expect(countRows(database, "subscriptions")).resolves.toBe(expected.subscriptions);
+  await expect(countRows(database, "subscription_regions")).resolves.toBe(expected.subscriptionRegions);
+  await expect(countRows(database, "subscription_region_targets")).resolves.toBe(expected.targets);
+  await expect(countRows(database, "price_snapshots")).resolves.toBe(expected.snapshots);
+  await expect(countRows(database, "fetch_logs")).resolves.toBe(expected.logs);
+  await expect(countRows(database, "regional_product_health")).resolves.toBe(expected.health);
+  await expect(countRows(database, "notification_events")).resolves.toBe(expected.notifications);
+}
+
+/** 共享哨兵必须在回滚和成功删除后都保留，证明删除范围没有扩大到全局或认证状态。 */
+async function expectGlobalRowsPreserved(database: AppDatabase): Promise<void> {
+  await expect(countRows(database, "settings")).resolves.toBe(1);
+  await expect(countRows(database, "exchange_rates")).resolves.toBe(1);
+  await expect(countRows(database, "admin_credentials")).resolves.toBe(1);
 }
 
 /**
@@ -214,7 +375,19 @@ function failTransactionBeforeQuery(database: AppDatabase, queryNumber: number):
 /** 表名来自测试内部封闭白名单，动态业务值仍由生产仓储参数绑定，不能扩展为任意 SQL 输入。 */
 async function countRows(
   database: AppDatabase,
-  table: "games" | "regional_products" | "subscriptions" | "subscription_regions" | "price_snapshots",
+  table:
+    | "games"
+    | "regional_products"
+    | "subscriptions"
+    | "subscription_regions"
+    | "subscription_region_targets"
+    | "price_snapshots"
+    | "fetch_logs"
+    | "regional_product_health"
+    | "notification_events"
+    | "settings"
+    | "exchange_rates"
+    | "admin_credentials",
 ): Promise<number> {
   const result = await database.query<{ count: string }>(
     `SELECT COUNT(*) AS count FROM ${table}`,

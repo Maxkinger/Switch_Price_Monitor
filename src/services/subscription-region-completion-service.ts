@@ -14,19 +14,19 @@ type OfficialPriceIdResolver = Pick<OfficialPriceIdService, "resolve">;
 /** 复用发现服务的安全跨区解析入口；地区范围仍由服务端设置决定，浏览器不能提供地区数组。 */
 type ConfiguredRegionResolver = Pick<OfficialProductDiscoveryService, "resolveRegions">;
 
-/** 订阅不存在时专用错误供路由稳定映射为 404，不泄露 D1 查询或官方页面解析细节。 */
+/** 订阅不存在时专用错误供路由稳定映射为 404，不泄露数据库查询或官方页面解析细节。 */
 export class SubscriptionRegionCompletionNotFoundError extends Error {}
 
 /** 可预期的官方身份、地区覆盖或请求错误；路由只返回安全中文摘要和 422。 */
 export class SubscriptionRegionCompletionError extends Error {}
 
-/** 浏览器提交的补全载荷不含游戏 ID 或锚点 URL；这两项必须从当前订阅的 D1 记录读取。 */
+/** 浏览器提交的补全载荷不含游戏 ID 或锚点 URL；这两项必须从当前订阅的持久化记录读取。 */
 export interface CompletionRegionsInput {
   regions: ConfirmedRegionalProduct[];
   skippedRegionCodes: RegionCode[];
 }
 
-/** 成功结果只暴露订阅与新增地区代码，避免将 D1 主键、官方响应正文或既有商品 URL 返回浏览器。 */
+/** 成功结果只暴露订阅与新增地区代码，避免将数据库主键、官方响应正文或既有商品 URL 返回浏览器。 */
 export interface CompletionRegionsResult {
   subscriptionId: string;
   addedRegionCodes: RegionCode[];

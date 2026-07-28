@@ -41,7 +41,7 @@ function readRegions(value: unknown): RegionCode[] {
   return value as RegionCode[];
 }
 
-/** 空白字符串对时区、主题、税务州等字段没有业务含义，必须在边界拒绝而不是写入 D1。 */
+/** 空白字符串对时区、主题、税务州等字段没有业务含义，必须在边界拒绝而不是交给持久化仓储。 */
 function readString(value: unknown, message: string): string {
   if (typeof value !== "string" || value.trim().length === 0) throw new SettingsValidationError(message);
   return value;

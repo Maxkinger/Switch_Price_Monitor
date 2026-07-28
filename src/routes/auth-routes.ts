@@ -28,20 +28,24 @@ export async function handleAuthRoute(
   dependencies: AuthRouteDependencies,
 ): Promise<Response | null> {
   const path = new URL(request.url).pathname;
-  // 此公开状态端点只返回首次设置与当前 Cookie 的有效性两个布尔值，供 SPA 刷新后安全恢复界面；绝不返回令牌、管理员资料或地区配置。
-  if (request.method === "GET" && path === "/api/auth/status") {
-    return Response.json({
-      initialized: await dependencies.auth.isInitialized(),
-      authenticated: await dependencies.sessions.authenticate(
-        readSessionCookie(request.headers.get("cookie")),
-        new Date().toISOString(),
-      ),
-    });
-  }
+  const isStatus = request.method === "GET" && path === "/api/auth/status";
   // 仅列出的 POST 路由由认证模块消费；其余请求交回 Worker 主路由，避免遮蔽未来的静态资源或 API。
-  if (request.method !== "POST" || !["/api/auth/initialize", "/api/auth/login", "/api/auth/recover", "/api/auth/logout"].includes(path)) return null;
+  const isAuthAction = request.method === "POST" &&
+    ["/api/auth/initialize", "/api/auth/login", "/api/auth/recover", "/api/auth/logout"].includes(path);
+  if (!isStatus && !isAuthAction) return null;
 
   try {
+    // 此公开状态端点只返回两个布尔值；数据库异常也必须进入统一安全 500，不能把内部消息抛给运行时默认响应。
+    if (isStatus) {
+      return Response.json({
+        initialized: await dependencies.auth.isInitialized(),
+        authenticated: await dependencies.sessions.authenticate(
+          readSessionCookie(request.headers.get("cookie")),
+          new Date().toISOString(),
+        ),
+      });
+    }
+
     const auth = dependencies.auth;
     const now = new Date().toISOString();
     // 退出仅依赖 Cookie，允许空正文；其余端点才读取 JSON，避免空请求被 JSON 解析错误拦截。
@@ -77,18 +81,31 @@ export async function handleAuthRoute(
       { headers: { "set-cookie": makeSessionCookie(session.token, dependencies.cookieSecure) } },
     );
   } catch (error) {
-    const status = error instanceof ConflictError
-      ? 409
-      : error instanceof LoginLockedError
-        ? 429
-        : error instanceof InvalidCredentialsError || error instanceof InvalidRecoveryCodeError
-          ? 401
-          : error instanceof ValidationError
-            ? 422
-            : 400;
-    // 错误码供前端做无敏感信息的交互分支；错误文本不包含密码、恢复码、令牌或数据库细节。
-    return Response.json({ code: error instanceof Error && "code" in error ? error.code : "BAD_REQUEST", error: error instanceof Error ? error.message : "请求无效。" }, { status });
+    return authErrorResponse(error);
   }
+}
+
+/**
+ * 只有本模块已知的领域错误允许使用其预设安全中文文案；未知驱动、SQL、网络或非 Error 异常统一固定 500，
+ * 既不读取其 message，也不把内部错误码、表名、连接信息或认证材料返回浏览器。
+ */
+function authErrorResponse(error: unknown): Response {
+  if (error instanceof ConflictError) {
+    return Response.json({ code: error.code, error: error.message }, { status: 409 });
+  }
+  if (error instanceof LoginLockedError) {
+    return Response.json({ code: error.code, error: error.message }, { status: 429 });
+  }
+  if (error instanceof InvalidCredentialsError || error instanceof InvalidRecoveryCodeError) {
+    return Response.json({ code: error.code, error: error.message }, { status: 401 });
+  }
+  if (error instanceof ValidationError) {
+    return Response.json({ code: error.code, error: error.message }, { status: 422 });
+  }
+  return Response.json(
+    { code: "INTERNAL_ERROR", error: "认证暂时无法处理，请稍后重试。" },
+    { status: 500 },
+  );
 }
 
 /**

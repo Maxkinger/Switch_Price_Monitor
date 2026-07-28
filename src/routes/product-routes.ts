@@ -17,11 +17,11 @@ import type { SessionReader } from "./auth-guard";
 
 /**
  * 管理员商品发现、来源预览与最终确认的统一入口。搜索、链接解析、跨区匹配和来源预览保持只读；
- * 只有最终确认端点会交给服务层执行一个已完整验证的 D1 原子批次，避免向导中途取消时留下半成品映射。
+ * 只有最终确认端点会交给服务层执行已完整验证的原子仓储事务，避免向导中途取消时留下半成品映射。
  */
 export async function handleProductRoute(
   request: Request,
-  sessions: SessionReader | unknown,
+  sessions: SessionReader,
   preview: SubscriptionPreviewService,
   discovery?: Pick<OfficialProductDiscoveryService, "searchDefaultRegion" | "resolveOfficialLink" | "resolveRegions">,
   confirmation?: Pick<SubscriptionConfirmationService, "confirm">,
@@ -72,7 +72,7 @@ export async function handleProductRoute(
       return Response.json({ subscriptions: results }, { status: results.some((result) => result.status === "created") ? 201 : 200 });
     }
     const candidates = readConfirmationCandidates(await request.json<unknown>());
-    // 服务只产生瞬时 DTO；即使官方验证失败，异常也不会把用户 URL、外部响应或秘密写入 D1。
+    // 服务只产生瞬时 DTO；即使官方验证失败，异常也不会把用户 URL、外部响应或秘密写入持久化仓储。
     return Response.json({ regions: await preview.create(candidates) });
   } catch (error) {
     // 表单问题可以安全反馈给管理员；其他错误统一隐藏网络、解析和数据库内部细节。
@@ -83,7 +83,7 @@ export async function handleProductRoute(
     return Response.json(
       {
         code: isValidationError ? "VALIDATION_ERROR" : "INTERNAL_ERROR",
-        // 领域错误均是服务端预设中文文案，可安全提示管理员；网络、页面解析与 D1 错误永远不回显给浏览器。
+        // 领域错误均是服务端预设中文文案，可安全提示管理员；网络、页面解析与数据库错误永远不回显给浏览器。
         error: isValidationError ? error.message : "官方商品信息暂时无法获取，请稍后重试。",
       },
       { status: isValidationError ? 422 : 500 },

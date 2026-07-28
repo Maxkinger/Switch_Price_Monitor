@@ -2,6 +2,8 @@ import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import worker, { type Env } from "../src/worker";
+import { handleAuthRoute } from "../src/routes/auth-routes";
+import type { AuthService } from "../src/services/auth-service";
 
 describe("authentication HTTP routes", () => {
   beforeEach(async () => {
@@ -66,6 +68,33 @@ describe("authentication HTTP routes", () => {
     const logout = await call("/api/auth/logout", undefined, initialLogin.headers.get("set-cookie"));
     expect(logout.status).toBe(204);
     expect(logout.headers.get("set-cookie")).toContain("Max-Age=0");
+  });
+
+  it("未知认证依赖异常固定返回 500 且不回显内部消息", async () => {
+    /**
+     * 合成依赖模拟数据库连接或驱动异常；路由只能返回固定 INTERNAL_ERROR，
+     * 不能把可能包含 SQL、表名、连接信息或认证材料的 error.message 交给浏览器。
+     */
+    const sensitiveMessage = "synthetic database failure with internal table detail";
+    const failingAuth = {
+      isInitialized: async () => {
+        throw new Error(sensitiveMessage);
+      },
+      authenticate: async () => false,
+    } as unknown as AuthService;
+
+    const response = await handleAuthRoute(
+      new Request("https://example.test/api/auth/status"),
+      { auth: failingAuth, sessions: failingAuth, cookieSecure: true },
+    );
+
+    expect(response?.status).toBe(500);
+    const body = await response?.json<{ code: string; error: string }>();
+    expect(body).toEqual({
+      code: "INTERNAL_ERROR",
+      error: "认证暂时无法处理，请稍后重试。",
+    });
+    expect(JSON.stringify(body)).not.toContain(sensitiveMessage);
   });
 });
 

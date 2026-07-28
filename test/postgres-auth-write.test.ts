@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { AppDatabase, SqlExecutor } from "../src/server/database/types";
+import type { AuthRepository } from "../src/repositories/ports";
 import { PostgresAuthRepository } from "../src/repositories/postgres/auth-repository";
 import {
   AuthService,
   ConflictError,
   InvalidCredentialsError,
+  InvalidRecoveryCodeError,
   LoginLockedError,
 } from "../src/services/auth-service";
 import { createTestDatabase } from "./support/postgres";
@@ -107,6 +109,224 @@ describe("PostgreSQL 认证仓储与服务", () => {
       .resolves.toMatchObject({ token: expect.any(String) });
   });
 
+  it("并发使用同一恢复码只允许一次消费且最终密码属于成功请求", async () => {
+    /**
+     * 两个服务实例会在 PBKDF2 校验阶段读取同一份未消费恢复状态；数据库必须在条件 UPDATE 中再次比较恢复摘要和消费状态，
+     * 不能依赖事务外的旧快照。成功方密码由 settled 下标确定，测试不读取或输出任何派生秘密。
+     */
+    const initialized = await initialize(createAuth(database), "2026-07-27T00:00:00.000Z");
+    const passwords = [
+      "synthetic-race-password-first",
+      "synthetic-race-password-second",
+    ] as const;
+    const attempts = await Promise.allSettled([
+      createAuth(database).resetPassword(
+        initialized.recoveryCode,
+        passwords[0],
+        "2026-07-27T00:01:00.000Z",
+      ),
+      createAuth(database).resetPassword(
+        initialized.recoveryCode,
+        passwords[1],
+        "2026-07-27T00:01:01.000Z",
+      ),
+    ]);
+
+    expect(attempts.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = attempts.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    expect(rejected?.reason).toBeInstanceOf(InvalidRecoveryCodeError);
+    const winningIndex = attempts.findIndex((result) => result.status === "fulfilled");
+    await expect(
+      createAuth(database).login(passwords[winningIndex], "2026-07-27T00:02:00.000Z"),
+    ).resolves.toMatchObject({ token: expect.any(String) });
+    await expect(
+      createAuth(database).login(passwords[winningIndex === 0 ? 1 : 0], "2026-07-27T00:02:01.000Z"),
+    ).rejects.toBeInstanceOf(InvalidCredentialsError);
+  });
+
+  it("密码恢复等待已读取旧凭据的登录并撤销其随后创建的会话", async () => {
+    /**
+     * 登录在真实事务内读取旧密码派生值后暂停 verifier；恢复事务同时更新密码并准备撤销会话。
+     * 旧实现会先执行会话撤销，再被 login_attempts 行锁阻塞，随后登录插入的新会话逃过撤销；
+     * 修复后恢复必须先等待登录持有的管理员凭据共享锁，登录提交的新会话再由恢复事务统一撤销。
+     */
+    const initialized = await initialize(
+      createAuth(database),
+      "2026-07-27T00:00:00.000Z",
+    );
+    const verifierReached = createDeferred<void>();
+    const releaseVerifier = createDeferred<void>();
+    const resetTransactionStarted = createDeferred<void>();
+    const resetSessionsUpdated = createDeferred<void>();
+    const releaseResetAfterRevocation = createDeferred<void>();
+    const repository = new PostgresAuthRepository(database);
+    const syntheticSession = {
+      id: "synthetic-login-reset-race-session",
+      tokenHash: "a".repeat(64),
+      expiresAt: "2026-08-26T00:01:00.000Z",
+      createdAt: "2026-07-27T00:01:00.000Z",
+    };
+
+    let login: Promise<unknown> | undefined;
+    let reset: Promise<void> | undefined;
+    try {
+      login = repository.performLoginAttempt(
+        {
+          now: "2026-07-27T00:01:00.000Z",
+          maximumFailedLogins: 5,
+          lockedUntilOnThreshold: "2026-07-27T00:16:00.000Z",
+          session: syntheticSession,
+        },
+        async (credential) => {
+          // 非空凭据证明登录已经取得旧密码快照；暂停点位于真实仓储事务和行锁内部。
+          expect(credential).not.toBeNull();
+          verifierReached.resolve();
+          await releaseVerifier.promise;
+          return true;
+        },
+      );
+      await withinTestStage(verifierReached.promise, "登录未到达旧凭据 verifier");
+
+      const observedResetDatabase = observePasswordResetTransaction(database, {
+        onTransactionStarted: resetTransactionStarted.resolve,
+        onSessionsRevoked: resetSessionsUpdated.resolve,
+        releaseAfterSessionsRevoked: releaseResetAfterRevocation.promise,
+      });
+      reset = createAuth(observedResetDatabase).resetPassword(
+        initialized.recoveryCode,
+        replacementSyntheticPassword,
+        "2026-07-27T00:02:00.000Z",
+      );
+      await withinTestStage(
+        resetTransactionStarted.promise,
+        "密码恢复事务未启动",
+      );
+
+      /**
+       * RED 旧路径会在短窗口内完成 UPDATE sessions 并暂停；GREEN 新路径则被登录持有的
+       * admin_credentials 共享锁阻塞。短窗口只分类两种顺序，最终安全断言仍以真实会话状态为准。
+       */
+      await settlesWithinTestWindow(resetSessionsUpdated.promise);
+
+      releaseVerifier.resolve();
+      await expect(login).resolves.toBe("succeeded");
+      await withinTestStage(
+        resetSessionsUpdated.promise,
+        "恢复事务未在登录提交后完成会话撤销",
+      );
+      releaseResetAfterRevocation.resolve();
+      await expect(reset).resolves.toBeUndefined();
+
+      await expect(
+        repository.isSessionValid(
+          syntheticSession.tokenHash,
+          "2026-07-27T00:03:00.000Z",
+        ),
+      ).resolves.toBe(false);
+      await expect(countActiveSessions(database)).resolves.toBe(0);
+    } finally {
+      /**
+       * 任一阶段断言或诊断超时都必须释放两个真实事务并等待回滚/提交完成，
+       * 否则 afterEach 的 pool.end 会等待占用连接而把一个普通 RED 伪装成无限挂起。
+       */
+      releaseVerifier.resolve();
+      releaseResetAfterRevocation.resolve();
+      await Promise.allSettled([login, reset].filter(
+        (operation): operation is Promise<unknown> => operation !== undefined,
+      ));
+    }
+  }, 10_000);
+
+  it("五个并发错误登录原子累积到五并立即形成十五分钟锁定", async () => {
+    /**
+     * 所有请求故意使用相同时间并共享真实 PostgreSQL 单例行；若继续采用“先读旧值再覆盖写”，
+     * 多个请求会把 failed_count 都写成 1，本断言可稳定捕获丢失更新。
+     */
+    const auth = createAuth(database);
+    await initialize(auth, "2026-07-27T00:00:00.000Z");
+    const attempts = await Promise.allSettled(
+      Array.from({ length: 5 }, () =>
+        createAuth(database).login(
+          "synthetic-concurrent-wrong-password",
+          "2026-07-27T00:01:00.000Z",
+        )),
+    );
+    expect(attempts).toSatisfy((results: PromiseSettledResult<unknown>[]) =>
+      results.every(
+        (result) =>
+          result.status === "rejected" &&
+          result.reason instanceof InvalidCredentialsError,
+      ));
+    const stored = await database.query<{ failedCount: number; lockedUntil: Date }>(
+      `SELECT failed_count AS "failedCount",
+              locked_until AS "lockedUntil"
+         FROM login_attempts
+        WHERE id = 1`,
+    );
+    expect(stored.rows[0]?.failedCount).toBe(5);
+    expect(stored.rows[0]?.lockedUntil.toISOString()).toBe("2026-07-27T00:16:00.000Z");
+    await expect(
+      auth.login(syntheticPassword, "2026-07-27T00:15:59.999Z"),
+    ).rejects.toBeInstanceOf(LoginLockedError);
+  });
+
+  it("六个同快照并发登录只允许前五个进入密码验证并拒绝第六个正确密码", async () => {
+    /**
+     * barrier 放在旧的锁定状态读取之后，证明仅把“失败写回”改成原子递增仍不够：
+     * 第六个请求必须在 PBKDF2/密码比较前取得数据库资格，否则正确密码会绕过前五个并发失败形成的锁定。
+     */
+    await initialize(createAuth(database), "2026-07-27T00:00:00.000Z");
+    let passwordVerificationCount = 0;
+    const repository = synchronizeLoginAttemptReads(
+      new PostgresAuthRepository(database),
+      6,
+      () => {
+        passwordVerificationCount += 1;
+      },
+    );
+    const requests = [
+      ...Array.from({ length: 5 }, () =>
+        new AuthService(repository).login(
+          "synthetic-qualification-wrong-password",
+          "2026-07-27T00:01:00.000Z",
+        )),
+      new AuthService(repository).login(
+        syntheticPassword,
+        "2026-07-27T00:01:00.000Z",
+      ),
+    ];
+
+    const attempts = await Promise.allSettled(requests);
+
+    expect(attempts.slice(0, 5)).toSatisfy(
+      (results: PromiseSettledResult<unknown>[]) =>
+        results.every(
+          (result) =>
+            result.status === "rejected" &&
+            result.reason instanceof InvalidCredentialsError,
+        ),
+    );
+    expect(attempts[5]).toMatchObject({
+      status: "rejected",
+      reason: expect.any(LoginLockedError),
+    });
+    // 六个请求中只能有前五个调用密码校验回调；锁定请求必须在 PBKDF2 之前被仓储拒绝。
+    expect(passwordVerificationCount).toBe(5);
+    await expect(countActiveSessions(database)).resolves.toBe(0);
+    const stored = await database.query<{ failedCount: number; lockedUntil: Date }>(
+      `SELECT failed_count AS "failedCount",
+              locked_until AS "lockedUntil"
+         FROM login_attempts
+        WHERE id = 1`,
+    );
+    expect(stored.rows[0]?.failedCount).toBe(5);
+    expect(stored.rows[0]?.lockedUntil.toISOString()).toBe(
+      "2026-07-27T00:16:00.000Z",
+    );
+  });
+
   it("用 TIMESTAMPTZ 累积五次失败、锁定十五分钟并在到期成功后清空", async () => {
     // pg 返回 Date，仓储必须规范化为 ISO 字符串；否则服务的 Date.parse 可能错误绕过锁定或无法在到期后重置计数。
     const auth = createAuth(database);
@@ -195,6 +415,142 @@ function failTransactionBeforeQuery(database: AppDatabase, queryNumber: number):
     withAdvisoryLock: (key, work) => database.withAdvisoryLock(key, work),
     close: () => Promise.resolve(),
   };
+}
+
+/**
+ * 包装真实密码恢复事务以暴露两个确定性观察点：事务回调启动排除服务层 PBKDF2 耗时，
+ * 会话撤销完成点用于重现旧顺序。第二个观察点暂停在真实 UPDATE 之后、login_attempts DELETE 之前，
+ * 因此不会用测试桩替代数据库锁、事务提交或回滚语义。
+ */
+function observePasswordResetTransaction(
+  database: AppDatabase,
+  events: {
+    onTransactionStarted: () => void;
+    onSessionsRevoked: () => void;
+    releaseAfterSessionsRevoked: Promise<void>;
+  },
+): AppDatabase {
+  return {
+    query: (sql, parameters) => database.query(sql, parameters),
+    transaction: (work) => database.transaction(async (transaction) => {
+      // 事务回调已经取得独立连接；此信号排除服务层 PBKDF2 耗时，只观察随后两条真实 UPDATE 的锁顺序。
+      events.onTransactionStarted();
+      const observedExecutor: SqlExecutor = {
+        async query<Row>(sql: string, parameters?: readonly unknown[]) {
+          if (/DELETE\s+FROM\s+login_attempts/i.test(sql)) {
+            // 到达此语句说明前一条真实 UPDATE sessions 已完成；先暂停可稳定重现“先撤销、后插会话”的旧顺序。
+            events.onSessionsRevoked();
+            await events.releaseAfterSessionsRevoked;
+          }
+          return transaction.query<Row>(sql, parameters);
+        },
+      };
+      return work(observedExecutor);
+    }),
+    withAdvisoryLock: (key, work) => database.withAdvisoryLock(key, work),
+    close: () => Promise.resolve(),
+  };
+}
+
+/**
+ * 短窗口只判断恢复事务是否能在登录 verifier 释放前完成 sessions UPDATE：
+ * 旧实现返回 true，凭据共享锁修复后返回 false；调用方无论结果如何都会继续释放真实事务。
+ */
+async function settlesWithinTestWindow(operation: Promise<void>): Promise<boolean> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation.then(() => true),
+      new Promise<boolean>((resolve) => {
+        timeout = setTimeout(() => resolve(false), 500);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
+/**
+ * 轻量 deferred 只协调测试协程，不包含密码、恢复码或会话令牌。
+ * resolve 暴露为幂等 Promise 完成入口，使事务内部观察点无需使用定时器。
+ */
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let settled = false;
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = (value) => {
+      // finally 可能重复释放已经完成的 barrier；幂等处理避免清理路径改变原始测试结果。
+      if (settled) return;
+      settled = true;
+      complete(value);
+    };
+  });
+  return { promise, resolve };
+}
+
+/**
+ * 阶段超时只负责诊断测试编排故障，不参与事务先后顺序的业务断言。
+ * 超时后外层 finally 会释放所有 barrier，因此测试在失败时仍能回滚事务并正常关闭连接池。
+ */
+async function withinTestStage<T>(
+  operation: Promise<T>,
+  message: string,
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), 2_000);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
+/**
+ * 代理同步旧 `getLoginAttempt` 返回边界，并只为新原子端口包装密码校验回调以记录调用次数。
+ * 六个旧查询都释放连接并读到同一未锁定状态后才继续；底层资格锁、失败写和会话写仍全部使用真实 PostgreSQL。
+ */
+function synchronizeLoginAttemptReads(
+  repository: AuthRepository,
+  participants: number,
+  onPasswordVerification: () => void,
+): AuthRepository {
+  let arrived = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return new Proxy(repository, {
+    get(target, property, receiver) {
+      if (property === "getLoginAttempt") {
+        return async () => {
+          const result = await target.getLoginAttempt();
+          arrived += 1;
+          if (arrived === participants) release();
+          await gate;
+          return result;
+        };
+      }
+      if (property === "performLoginAttempt") {
+        return async (
+          input: Parameters<AuthRepository["performLoginAttempt"]>[0],
+          verifyPassword: Parameters<AuthRepository["performLoginAttempt"]>[1],
+        ) =>
+          target.performLoginAttempt(input, async (credential) => {
+            onPasswordVerification();
+            return verifyPassword(credential);
+          });
+      }
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
 }
 
 /** COUNT(*) 的 PostgreSQL bigint 由 pg 返回字符串；测试只接受安全的小计数。 */

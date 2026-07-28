@@ -59,7 +59,7 @@ export interface EnabledRegionSettingsReader {
   get(): Promise<{ enabledRegions: RegionCode[] } | null>;
 }
 
-/** 最终确认的可预期表单/官方身份错误；路由会将其安全映射为 422，不暴露外部页面或 D1 细节。 */
+/** 最终确认的可预期表单/官方身份错误；路由会将其安全映射为 422，不暴露外部页面或数据库细节。 */
 export class SubscriptionConfirmationError extends Error {}
 
 /**
@@ -80,14 +80,14 @@ export class SubscriptionConfirmationService {
   ) {}
 
   /**
-   * 先完成整批每项的官方重验证与逻辑游戏去重，再查询既有订阅，最后只把真正新建项交给一个 D1 批次。
+   * 先完成整批每项的官方重验证与逻辑游戏去重，再查询既有订阅，最后只把真正新建项交给一个原子仓储事务。
    * 因此任一候选无效、同批重复或官方验证失败都会发生在写入之前，已存在的订阅也不会被隐式覆盖。
    */
   public async confirm(inputs: ConfirmedSubscriptionInput[], now: string): Promise<SubscriptionConfirmationResult[]> {
     if (inputs.length === 0) throw new SubscriptionConfirmationError("请至少确认一个商品订阅。");
     // 关系根搜索会使用锚点标题与发行商，故必须先从官方页面重建默认区锚点；否则浏览器可保留真实 URL 却篡改文本，引导到另一游戏的日区根。
     const verifiedAnchors = await Promise.all(inputs.map((input) => this.resolveAnchorBeforeUpgradeVerification(input.selected)));
-    // 日区升级关系仍先于设置仓储与既有订阅查询整批复核；超过三项或任一外部失败都不能让 D1 进入部分确认流程。
+    // 日区升级关系仍先于设置仓储与既有订阅查询整批复核；超过三项或任一外部失败都不能让数据库进入部分确认流程。
     const upgradeItems = collectJapaneseUpgradeConfirmationItems(inputs, verifiedAnchors);
     const verifiedUpgrades = await this.japaneseUpgrades.verifyForConfirmation(upgradeItems);
     const validated = await Promise.all(inputs.map((input, index) => this.validate(input, verifiedAnchors[index], verifiedUpgrades)));
@@ -224,7 +224,7 @@ export class SubscriptionConfirmationService {
   }
 
   /**
-   * 单区候选需通过官方重读、按来源分级的身份比较与本区价格 ID 二次验证后才可进入 D1 批次。
+   * 单区候选需通过官方重读、按来源分级的身份比较与本区价格 ID 二次验证后才可进入原子仓储事务。
    * 浏览器提供的 `matchSource` 只表达管理员/系统的审计路径，不能替代官方 URL 重验，也不能影响最终写入的官方字段。
    */
   private async validateRegion(

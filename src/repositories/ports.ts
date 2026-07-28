@@ -80,9 +80,35 @@ export interface RecoveryCredential {
 export interface PasswordResetWrite {
   passwordHash: string;
   passwordSalt: string;
+  recoveryHash: string;
   recoveryUsedAt: string;
   sessionRevokedAt: string;
 }
+
+/**
+ * 一次完整登录尝试携带安全策略和预生成的会话摘要，不携带明文密码。
+ * 仓储必须先原子取得本次尝试资格，再调用密码校验回调；达到阈值后的并发请求不得执行昂贵校验。
+ */
+export interface AtomicLoginAttempt {
+  now: string;
+  maximumFailedLogins: number;
+  lockedUntilOnThreshold: string;
+  session: StoredSession;
+}
+
+/**
+ * 仓储只返回三种稳定领域结果：成功已原子建会话、密码无效已计数、当前锁定未校验。
+ * 驱动错误不得伪装为认证失败，必须继续抛出并由 API 的未知错误路径安全处理。
+ */
+export type AtomicLoginAttemptResult = "succeeded" | "invalid" | "locked";
+
+/**
+ * 密码校验回调由服务实现 PBKDF2，仓储只能提供最小派生凭据。
+ * PostgreSQL 实现会在持有单管理员失败状态行锁期间调用它，以消除“检查后再校验”的并发窗口。
+ */
+export type PasswordVerifier = (
+  credential: PasswordCredential | null,
+) => Promise<boolean>;
 
 /**
  * 平台中立认证端口把安全规则留在 AuthService，只暴露最小认证状态和原子写命令。
@@ -94,11 +120,14 @@ export interface AuthRepository {
   getLoginAttempt(): Promise<LoginAttemptRecord | null>;
   getPasswordCredential(): Promise<PasswordCredential | null>;
   createSession(session: StoredSession): Promise<void>;
+  performLoginAttempt(
+    input: AtomicLoginAttempt,
+    verifyPassword: PasswordVerifier,
+  ): Promise<AtomicLoginAttemptResult>;
   getRecoveryCredential(): Promise<RecoveryCredential | null>;
   resetPassword(input: PasswordResetWrite): Promise<void>;
   revokeSession(tokenHash: string, now: string): Promise<void>;
   isSessionValid(tokenHash: string, now: string): Promise<boolean>;
-  saveLoginAttempt(input: LoginAttemptRecord): Promise<void>;
   clearLoginAttempt(): Promise<void>;
 }
 
@@ -109,6 +138,16 @@ export interface AuthRepository {
 export class AuthInitializationConflictError extends Error {
   public constructor() {
     super("认证初始化已存在");
+  }
+}
+
+/**
+ * 恢复码在事务内条件消费失败时只抛出受控信号；服务统一转换为 InvalidRecoveryCodeError，
+ * 从而不区分恢复码错误、已使用或并发竞争失败，也不泄漏数据库影响行数。
+ */
+export class AuthRecoveryRejectedError extends Error {
+  public constructor() {
+    super("认证恢复条件未满足");
   }
 }
 
