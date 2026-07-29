@@ -15,8 +15,8 @@
 | [数据模型](architecture/data-model.md) | 业务实体、关系、保留策略与敏感数据边界 | 已确认部分 |
 | [API 设计](architecture/api-design.md) | 前后端接口边界和访问控制原则 | 已确认部分 |
 | [质量与验收策略](quality/quality-and-acceptance.md) | 可靠性、安全、测试和发布验收规则 | 已确认部分 |
-| [NAS Docker 与 PostgreSQL 迁移设计规格](superpowers/specs/2026-07-27-nas-docker-postgresql-migration-design.md) | 完全迁出 Cloudflare、本地 M1 调试、多架构 Docker Hub 发布及 DS423+ Compose 部署 | 已确认，待实施 |
-| [NAS Docker 与 PostgreSQL 迁移实施计划](superpowers/plans/2026-07-27-nas-docker-postgresql-migration.md) | 平台中立重构、PostgreSQL、Node、调度器、本地 Playwright、容器、备份、发布和 NAS 切换的测试先行步骤 | 已编写，待审阅 |
+| [NAS Docker 与 PostgreSQL 迁移设计规格](superpowers/specs/2026-07-27-nas-docker-postgresql-migration-design.md) | 完全迁出 Cloudflare、本地 M1 调试、多架构 Docker Hub 发布及 DS423+ Compose 部署 | Task 1–9 已实施；发布与 NAS 切换待 Task 10+ |
+| [NAS Docker 与 PostgreSQL 迁移实施计划](superpowers/plans/2026-07-27-nas-docker-postgresql-migration.md) | 平台中立重构、PostgreSQL、Node、调度器、本地 Playwright、容器、备份、发布和 NAS 切换的测试先行步骤 | Task 1–9 已完成；Task 10+ 待执行 |
 | [MVP 实施计划](superpowers/plans/2026-07-16-switch-price-monitor-mvp.md) | 8 个可独立验收任务的实施顺序、测试与提交点 | 已批准，执行中 |
 | [官方价格 ID 与订阅前来源预览计划](superpowers/plans/2026-07-16-official-price-id-subscription-flow.md) | 日区官方价格接口、地区价格 ID 与创建前来源预览的后端实施步骤 | 已完成，待后续前端与其他地区适配器接续 |
 | [官方订阅发现与批量确认设计](superpowers/specs/2026-07-17-official-subscription-discovery-design.md) | 官方默认区搜索、批量候选选择、跨区确认与候选卡布局 | 已确认（草图暂定） |

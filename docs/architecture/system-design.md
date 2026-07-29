@@ -161,3 +161,8 @@ Node 日区升级关系现由本地 Playwright Chromium 提供：只有 launcher
 - 每分钟锁内任务并发启动日报判断与待发送通知，两条路径共享同一 UTC ISO；每六小时锁内任务只调用一次既有组合服务，由其先执行价格历史/九十天采集日志保留清理，再运行一次与手动刷新共享的真实采集器。
 - 任务 promise 全部由调度器追踪；数据库、Telegram、价格来源或安全记录出口异常均不得形成未处理 rejection。安全失败记录只包含任务种类与已捕获计划时刻，不包含 Error、URL、价格正文、Telegram 响应或凭据。
 - `stop()` 后不再接收新工作；`waitForIdle()` 只观察已接收任务且不强制取消事务。进程关停时 HTTP 与调度任务共享一个宽限总预算，超过上限后由下一轮既有幂等和 pending 状态规则恢复。
+
+## 5. PostgreSQL 备份与空库恢复
+
+NAS 宿主使用 `scripts/backup-postgres.sh` 和 `scripts/restore-postgres.sh`，每次均显式传入 Compose 文件、project 名、应用/数据库服务、数据库、项目根、备份目录、保留数与归档路径。脚本在 postgres:17 容器内使用同主版本客户端，密码仅留在容器环境；备份先流入受限同目录临时文件、校验 custom archive 后原子改名，且只保留当前安全数据库标识归档。恢复拒绝任何非 exited/dead 的 app 状态、非普通 app owner、目录外归档和 `--clean`；空库探针覆盖用户 schema、关系、例程、类型、collation、文本搜索、运算符、publication、large object、扩展、默认权限、外部数据及其他可恢复 catalog 对象。
+备份以每库原子目录锁和 18 位单调 sequence 排序，保留数限制 1..10000；恢复以独立锁、`--single-transaction` 和两次 app 全状态复核阻止并发。一次性 app 镜像读取精确迁移 manifest 并逐字校验账本，认证状态仅允许 0 行或唯一 id=1；若 checksum、核心表或管理员 post-validation 失败，脚本只在同一锁内、再次确认 app 停止后事务性清理显式目标库内的 extension、event trigger、publication、foreign server/wrapper、large object、language 与用户 schema。该 typed cleanup 禁止使用会撤销其他数据库、表空间或配置参数授权的角色级清理命令；清理后必须由同一 catalog 探针重新证明空库，才能允许直接用合法归档重试。

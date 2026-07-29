@@ -2,7 +2,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | 已确认，实施中（PostgreSQL、Node、调度、本地 Playwright 与 M1 arm64 生产容器验收已完成；NAS、备份及发布待完成） |
+| 状态 | 已确认，实施中（Task 1–9 含备份恢复本地门禁已完成；公开多架构发布、DS423+ amd64 与 NAS 切换待 Task 10+） |
 | 日期 | 2026-07-27 |
 | 决策 | 以 Synology DS423+ 上的 Docker Compose 作为唯一生产环境，使用 Node.js 应用容器、项目专属 PostgreSQL 容器和本地 Playwright；通过 GitHub Actions 向 Docker Hub 发布公开多架构镜像。 |
 
