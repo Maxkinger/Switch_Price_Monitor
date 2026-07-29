@@ -14,6 +14,7 @@ import { PostgresManualRefreshRepository } from "../repositories/postgres/manual
 import { PostgresNotificationEventRepository } from "../repositories/postgres/notification-event-repository";
 import { PostgresPriceRepository } from "../repositories/postgres/price-repository";
 import { PostgresProductHealthRepository } from "../repositories/postgres/product-health-repository";
+import { PostgresRetentionRepository } from "../repositories/postgres/retention-repository";
 import { PostgresSettingsRepository } from "../repositories/postgres/settings-repository";
 import { PostgresSubscriptionConfirmationRepository } from "../repositories/postgres/subscription-confirmation-repository";
 import { PostgresSubscriptionDetailRepository } from "../repositories/postgres/subscription-detail-repository";
@@ -39,18 +40,35 @@ import { ManualRefreshService } from "../services/manual-refresh-service";
 import { OfficialPriceIdService } from "../services/official-price-id-service";
 import { OfficialProductDiscoveryService } from "../services/official-product-discovery-service";
 import { ProductHealthService } from "../services/product-health-service";
+import { RetentionService } from "../services/retention-service";
+import {
+  runPendingNotificationDelivery,
+  runScheduled,
+  runSixHourCollection,
+} from "../services/scheduler-service";
 import { SettingsService } from "../services/settings-service";
 import { SubscriptionConfirmationService } from "../services/subscription-confirmation-service";
 import { SubscriptionDetailService } from "../services/subscription-detail-service";
 import { SubscriptionRegionCompletionService } from "../services/subscription-region-completion-service";
 import { SubscriptionService } from "../services/subscription-service";
 import { defaultFallbackSources, SubscriptionPreviewService } from "../services/subscription-preview-service";
+import { TelegramService } from "../services/telegram-service";
 import type { AppDatabase } from "./database/types";
 import type { ServerDependencies } from "./app";
 import type { ServerConfig } from "./config";
+import type { SchedulerDependencies } from "./scheduler";
 
 /** 单个 API handler 只消费标准同源 Request；null 表示本模块未匹配，不能被当成空成功响应。 */
 export type ApiRouteHandler = (request: Request) => Promise<Response | null>;
+
+/**
+ * Node 进程装配同时拥有 HTTP 与调度边界；两者共享数据库和采集器，但 HTTP 路由无法直接启动定时任务，
+ * 调度器也不能取得 Cookie、Request 或完整运行环境。
+ */
+export interface NodeServerDependencies {
+  http: ServerDependencies;
+  scheduler: SchedulerDependencies;
+}
 
 /**
  * 按输入顺序复用同一个 Request 分发，首个非 null Response 立即结束。
@@ -74,17 +92,33 @@ export function createApiDispatcher(
  */
 export function createServerDependencies(
   database: AppDatabase,
-  config: Pick<ServerConfig, "cookieSecure">,
-): ServerDependencies {
+  config: Pick<
+    ServerConfig,
+    "cookieSecure" | "telegramBotToken" | "telegramChatId"
+  >,
+): NodeServerDependencies {
+  if (
+    (config.telegramBotToken === undefined)
+    !== (config.telegramChatId === undefined)
+  ) {
+    // 配置解析通常已保证成对；装配层仍独立拒绝半套凭据，错误码不插入 token 或 chat id。
+    throw new Error("SCHEDULER_TELEGRAM_CREDENTIALS_INCOMPLETE");
+  }
   const auth = new AuthService(new PostgresAuthRepository(database));
   const settingsRepository = new PostgresSettingsRepository(database);
   const settings = new SettingsService(settingsRepository);
-  const dashboard = new DashboardService(new PostgresDashboardRepository(database));
+  const dashboardRepository = new PostgresDashboardRepository(database);
+  const dashboard = new DashboardService(dashboardRepository);
   const history = new HistoryService(new PostgresHistoryRepository(database));
   const exports = new ExportService(new PostgresExportRepository(database));
+  /**
+   * 同一个无状态 LiveCollectionRunner 同时交给手动刷新与六小时调度。
+   * 两条入口仍由 HTTP 认证和 advisory lock 分别控制，绝不共享手动刷新时间记录或形成待执行队列。
+   */
+  const liveCollection = createLiveCollectionRunner(database);
   const refresh = new ManualRefreshService(
     new PostgresManualRefreshRepository(database),
-    createLiveCollectionRunner(database),
+    liveCollection,
   );
 
   const officialPages = createOfficialNintendoProductPageResolver();
@@ -122,7 +156,7 @@ export function createServerDependencies(
     discovery,
   );
 
-  return {
+  const http: ServerDependencies = {
     dispatchApi: createApiDispatcher([
       (request) => handleAuthRoute(request, {
         auth,
@@ -151,6 +185,58 @@ export function createServerDependencies(
       ),
     ]),
   };
+  const notificationEvents = new PostgresNotificationEventRepository(database);
+  const telegram = config.telegramBotToken === undefined
+    ? undefined
+    : new TelegramService({
+      botToken: config.telegramBotToken,
+      // 成对检查后 chat id 必然存在；不使用空字符串回退，避免把配置错误发送到外部 API。
+      chatId: config.telegramChatId as string,
+    });
+  const scheduler: SchedulerDependencies = {
+    database,
+    async runMinute(scheduledAt): Promise<void> {
+      /**
+       * 两条分钟路径并发启动并收到完全相同的 ISO；日报失败不能阻止 pending 通知开始重试，
+       * 任一路径异常由外层调度器统一转换为不含 Error 的安全失败事件。
+       */
+      const results = await Promise.allSettled([
+        runScheduled(scheduledAt, {
+          settings: settingsRepository,
+          overview: dashboardRepository,
+          telegram,
+        }),
+        runPendingNotificationDelivery(scheduledAt, {
+          events: notificationEvents,
+          marker: notificationEvents,
+          telegram,
+        }),
+      ]);
+      if (results.some((result) => result.status === "rejected")) {
+        /**
+         * 必须在两条路径全部 settle 后才让 advisory-lock 回调失败，避免日报先失败时提前释放锁，
+         * 让仍在投递的 pending 与下一分钟重复执行。固定错误不保留 cause/reason，原数据库或网络异常
+         * 不得越过装配边界进入日志、调度失败事件或测试快照。
+         */
+        throw new Error("SCHEDULER_MINUTE_TASK_FAILED");
+      }
+    },
+    async runSixHour(scheduledAt): Promise<void> {
+      // 既有组合服务已经固定“先保留、后一次采集”顺序；装配层不得再重复调用任一子步骤。
+      await runSixHourCollection(scheduledAt, {
+        settings: settingsRepository,
+        retention: new RetentionService(
+          new PostgresRetentionRepository(database),
+        ),
+        collection: liveCollection,
+      });
+    },
+    recordSafeFailure(input): void {
+      // 只记录固定摘要、任务枚举和已捕获 UTC；不接收 Error、SQL、URL、价格正文或 Telegram 响应。
+      console.error("Node 定时任务执行失败。", input);
+    },
+  };
+  return { http, scheduler };
 }
 
 /**

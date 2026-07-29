@@ -16,7 +16,7 @@ type PendingNotificationDeliveryRunner = (
 
 describe("scheduled daily report dispatch", () => {
   it("dispatches the Chinese daily report only at the configured local minute", async () => {
-    // Cron 以 UTC 触发而管理员按本地时间设定日报；测试固定北京时间 09:00，确保时区换算而非 UTC 字符串比较决定是否发送。
+    // Node 调度器以 UTC 触发而管理员按本地时间设定日报；测试固定北京时间 09:00，确保时区换算而非 UTC 字符串比较决定是否发送。
     const telegram = { send: vi.fn<(messages: TelegramMessage[]) => Promise<Array<{ index: number; delivered: boolean; status: number | null }>>>().mockResolvedValue([{ index: 0, delivered: true, status: 200 }]) };
     const overview = { getOverview: vi.fn<() => Promise<{ subscriptions: DailyReportSubscription[] }>>().mockResolvedValue({ subscriptions: [subscription] }) };
     const settings = { get: vi.fn<() => Promise<{ timezone: string; dailyReportTime: string }>>().mockResolvedValue({ timezone: "Asia/Shanghai", dailyReportTime: "09:00" }) };
@@ -32,7 +32,7 @@ describe("scheduled daily report dispatch", () => {
   });
 
   it("does not load price data when Telegram credentials are unavailable", async () => {
-    // Secret 尚未配置时不应读取全部价格历史或尝试外部请求；部署初期可安全运行 Cron，待管理员完成秘密配置后自动生效。
+    // Telegram 凭据尚未配置时不应读取全部价格历史或尝试外部请求；部署初期可安全运行调度器，待管理员完成秘密配置后自动生效。
     const overview = { getOverview: vi.fn<() => Promise<{ subscriptions: DailyReportSubscription[] }>>() };
     const settings = { get: vi.fn<() => Promise<{ timezone: string; dailyReportTime: string }>>().mockResolvedValue({ timezone: "Asia/Shanghai", dailyReportTime: "09:00" }) };
 
@@ -50,7 +50,7 @@ describe("scheduled daily report dispatch", () => {
   });
 
   it("marks an immediate notification as delivered only after Telegram accepts it", async () => {
-    // 同一事件会在 Cron 重试时再次被读取；只有 Telegram 明确成功才允许更新审计状态，避免网络失败造成消息永久丢失。
+    // 同一事件会在下一分钟调度重试时再次被读取；只有 Telegram 明确成功才允许更新审计状态，避免网络失败造成消息永久丢失。
     const runner: PendingNotificationDeliveryRunner = runPendingNotificationDelivery;
     const event: PendingNotificationEvent = { regionalProductId: "product-us", eventType: "collection-failure", dedupeKey: "product-us:collection-failure:1", createdAt: "2026-07-16T01:00:00.000Z", gameNameZh: "胡闹厨房 2", regionCode: "US" };
     const events = { pending: vi.fn<() => Promise<PendingNotificationEvent[]>>().mockResolvedValue([event]) };
@@ -63,7 +63,7 @@ describe("scheduled daily report dispatch", () => {
   });
 
   it("keeps a failed immediate notification pending for a later retry", async () => {
-    // Telegram 网络或服务端错误不能被误记为送达；不调用标记仓储可保留 pending 事件，下一分钟 Cron 才能安全重试。
+    // Telegram 网络或服务端错误不能被误记为送达；不调用标记仓储可保留 pending 事件，下一分钟调度才能安全重试。
     const runner: PendingNotificationDeliveryRunner = runPendingNotificationDelivery;
     const event: PendingNotificationEvent = { regionalProductId: "product-jp", eventType: "collection-recovered", dedupeKey: "product-jp:collection-recovered:1", createdAt: "2026-07-16T01:00:00.000Z", gameNameZh: "胡闹厨房 2", regionCode: "JP" };
     const events = { pending: vi.fn<() => Promise<PendingNotificationEvent[]>>().mockResolvedValue([event]) };
