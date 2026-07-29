@@ -61,6 +61,22 @@ Node.js 22 入口现已独立构建到 `dist/server`，React 只构建到 `dist/
 
 Node 日区升级关系现由本地 Playwright Chromium 提供：只有 launcher 模块可以导入 Playwright，并固定调用本地 `chromium.launch` 的无头模式；不提供远程端点、CDP、持久上下文、调试端口、用户目录或跨请求保活能力。关系适配器只接收 `launch/newContext/newPage/goto/locator/close` 窄接口，不取得 PostgreSQL、Telegram、HTTP 或调度器依赖。空批次及全部非法根不会启动浏览器；有效批次只启动一次，最多三个根各用全新 context/page 串行运行，每项三十秒且不重试，最终按 page、context、browser 释放。启动、导航和清理异常统一转换为不含路径、页面正文、Cookie、进程或堆栈的安全业务分类。Worker 入口仅保留迁移回归且不再装配浏览器能力。
 
+### 2.3 Docker 运行合同
+
+应用镜像现使用 Node.js 22 Bookworm glibc 多阶段构建：完整依赖和生产依赖分别以 `npm ci` 从同一 lockfile 安装，前端与服务端构建产物分别进入 `dist/client` 和 `dist/server`。最终层只复制生产依赖、双构建产物、`migrations/postgres` 与必要 package 元数据；源码、测试、Git、环境文件、文档、本地数据库和备份均由显式 Docker ignore 排除。`playwright@1.62.0` 在 BuildKit 当前平台安装对应 Chromium 和 Debian 系统依赖，不包含 arm64/amd64 下载分支，因此同一 Dockerfile 可分别由 M1 与发布流水线构建。
+
+最终容器固定使用 UID/GID 10001、可写 HOME/缓存/临时目录和只读浏览器安装，并由 tini 回收 Node/Chromium 子进程。镜像只声明默认 HTTP 3000，健康检查只访问容器回环 `/api/health`，启动命令只执行 `node dist/server/index.js`；数据库、CDP 和调试端口既不声明也不映射。
+
+生产 Compose 恰好包含 `app` 与 `postgres` 两个常驻服务。`app` 只拉取 `${DOCKERHUB_IMAGE}:${APP_VERSION}` 且在版本缺失时于解析阶段失败，是唯一拥有 NAS host port 的服务；`postgres:17` 只以 `expose` 向 Compose 内部网络标注 5432，并把显式 `${POSTGRES_DATA_DIR}` bind mount 用作持久化目录。两项服务均使用 `unless-stopped` 与健康检查，app 等待数据库 healthy。
+
+官方 PostgreSQL 镜像必须在空数据目录引导时保留一个独立 bootstrap 管理角色；该角色及其随机密码只进入 postgres 容器，不能出现在 app 环境或 `DATABASE_URL`。随 Compose 分发的只读 `docker/postgres/init-app-role.sh` 只在 initdb 阶段执行一次，通过 psql 环境变量和 `%I`/`%L` 安全引用，在单事务内创建 `LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS` 普通应用角色，并把专属数据库和 public schema 所有权交给它。bootstrap 与 app 密码必须在任何 psql 前证明非空且互不相同，比较失败只退出而不输出值。app 从首次连接和第一条迁移 SQL 起只使用该普通角色的 `DATABASE_URL`；PostgreSQL 健康检查必须使用普通角色及其 `PGPASSWORD`，以 Compose 服务名 `postgres` 进入容器网络 SCRAM host 规则，再由 `current_user` 证明可登录且五项集群权限均关闭。官方镜像的 Unix socket、`127.0.0.1` 与 `::1` 默认 trust 规则不能证明密码，bootstrap 角色代查也不能算健康。
+
+首次生产启动的 `${POSTGRES_DATA_DIR}` 必须是已创建且权限正确的空项目目录；官方 entrypoint 对非空数据目录不会执行 init hook，此时若普通角色缺失或仍有集群级权限，健康检查必须保持失败并阻止 app 启动，不能静默退回 bootstrap 管理连接。NAS 的最小部署资产因此是生产 Compose、未提交 `.env`、只读 init hook 与固定公开 app 镜像，不包含应用源码或构建工具。
+
+数据库、Cookie 与可选 Telegram 凭据只由未提交的运行时 `.env` 注入。M1 开发继续在宿主机运行 `npm run dev`，隔离测试 PostgreSQL 使用同一双角色 init hook，只把普通 `switch_test` 暴露到 `127.0.0.1:54329` 并使用可销毁 tmpfs，不连接 NAS 数据。
+
+控制任务已在 M1 独占完成 `linux/arm64` 生产验收：本地镜像约 546 MB，镜像架构为 arm64、默认用户为 `10001:10001`；临时生产 Compose 的 app/postgres 均 healthy，app 容器实际 UID 为 10001，PostgreSQL host bindings 为空。容器内 Chromium 已完成 loopback fixture 导航与清理；首次管理员初始化、登录和设置读取成功，重启 app/postgres 后初始化状态保持。普通数据库角色经真实查询证明 `rolsuper`、`rolcreaterole`、`rolcreatedb`、`rolreplication` 与 `rolbypassrls` 全部为 false。该证据仅完成 M1 arm64 本地生产形态，不表示 GitHub Actions 双架构 manifest 已发布或 DS423+ 已切换。
+
 ## 3. 核心数据流
 
 ### 3.1 新建订阅

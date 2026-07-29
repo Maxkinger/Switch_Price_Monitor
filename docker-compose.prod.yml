@@ -1,0 +1,94 @@
+# 生产 Compose 只运行应用与项目专属 PostgreSQL；NAS 需本文件、未提交 `.env`、`docker/postgres/init-app-role.sh` 和固定公开镜像，无需应用源码或构建工具。
+name: switch-price-monitor
+
+# 扩展字段只负责让 Compose 在解析阶段拒绝缺失版本/仓库；app.image 仍保持可审计的 `${DOCKERHUB_IMAGE}:${APP_VERSION}` 精确引用。
+x-required-release:
+  dockerhub-image: "${DOCKERHUB_IMAGE:?DOCKERHUB_IMAGE_REQUIRED}"
+  app-version: "${APP_VERSION:?APP_VERSION_REQUIRED}"
+
+services:
+  app:
+    # 生产只能拉取 GitHub Actions 已发布的固定镜像，禁止 build 或 latest 让 NAS 得到未经门禁的本地产物。
+    image: "${DOCKERHUB_IMAGE}:${APP_VERSION}"
+    restart: unless-stopped
+    init: true
+    # UID/GID 与 Dockerfile 固定身份一致；Compose 不能通过 root 覆盖镜像的最小权限边界。
+    user: "10001:10001"
+    depends_on:
+      postgres:
+        # Node 只在项目数据库可接受连接后启动；应用自身仍负责迁移锁、校验和与失败退出。
+        condition: service_healthy
+    environment:
+      # 所有运行秘密只从 NAS 未提交 `.env` 注入；变量缺失时 Compose 在容器创建前失败，不能使用示例默认密码。
+      PORT: "${PORT:-3000}"
+      DATABASE_URL: "${DATABASE_URL:?DATABASE_URL_REQUIRED}"
+      COOKIE_SECURE: "${COOKIE_SECURE:?COOKIE_SECURE_REQUIRED}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+      MAXIMUM_BODY_BYTES: "${MAXIMUM_BODY_BYTES:-1048576}"
+      SHUTDOWN_GRACE_MS: "${SHUTDOWN_GRACE_MS:-10000}"
+    ports:
+      # app 是唯一发布宿主端口的服务；该映射只承载同源 HTTP API/前端，不发布 Chromium、CDP 或数据库。
+      - target: "${PORT:-3000}"
+        published: "${APP_PORT:?APP_PORT_REQUIRED}"
+        protocol: tcp
+        host_ip: "0.0.0.0"
+    healthcheck:
+      # 回环健康检查只读取公开 PORT 并访问固定 API；不会显示数据库 URL、Cookie 或 Telegram 凭据。
+      test:
+        - CMD
+        - node
+        - -e
+        - "const p=process.env.PORT||'3000';fetch('http://127.0.0.1:'+p+'/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    # Chromium 只使用容器共享内存，不获得 host 网络、特权模式或远程调试端口。
+    shm_size: "1gb"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  postgres:
+    # 固定 PostgreSQL 17 主版本以匹配迁移、备份和恢复工具；补丁更新由受控镜像拉取与验收处理。
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      # POSTGRES_* 只创建容器内部 bootstrap 管理角色；应用永远不取得这些值，也不得用该角色执行查询。
+      POSTGRES_DB: "${POSTGRES_DB:?POSTGRES_DB_REQUIRED}"
+      POSTGRES_USER: "${POSTGRES_USER:?POSTGRES_USER_REQUIRED}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD_REQUIRED}"
+      # APP_DATABASE_* 只供首次 init hook 创建普通数据库所有者；应用仅取得已编码的 DATABASE_URL，不取得原始密码变量。
+      APP_DATABASE_USER: "${APP_DATABASE_USER:?APP_DATABASE_USER_REQUIRED}"
+      APP_DATABASE_PASSWORD: "${APP_DATABASE_PASSWORD:?APP_DATABASE_PASSWORD_REQUIRED}"
+    expose:
+      # expose 只是 Compose 内部网络元数据，不会向 NAS 或局域网发布 5432；生产严禁添加 ports。
+      - "5432"
+    volumes:
+      # 显式项目目录 bind mount 便于群晖备份；首次启动必须为空，既有非空目录不会执行 init hook，角色健康检查将拒绝 app 启动。
+      # 路径必须由 `.env` 给出，不能使用匿名卷或复用其他项目数据。
+      - type: bind
+        source: "${POSTGRES_DATA_DIR:?POSTGRES_DATA_DIR_REQUIRED}"
+        target: /var/lib/postgresql/data
+      # 初始化脚本是随 Compose 分发的只读部署资产，不进入 app 镜像；只有空数据目录会由官方 entrypoint 执行一次。
+      - type: bind
+        source: ./docker/postgres/init-app-role.sh
+        target: /docker-entrypoint-initdb.d/010-init-app-role.sh
+        read_only: true
+    healthcheck:
+      # 普通角色必须经 Compose 服务名 postgres 进入容器网络 SCRAM 规则，再以 current_user 自证五项集群级能力关闭；本机 trust 或 bootstrap 代查均不算健康。
+      # PGPASSWORD 只作为该 psql 子进程环境变量，不进入参数、SQL或输出；失败只返回非零状态，绝不显示密码。
+      test:
+        - CMD-SHELL
+        - >-
+          test "$$(PGPASSWORD="$${APP_DATABASE_PASSWORD}"
+          psql --host postgres --username "$${APP_DATABASE_USER}" --dbname "$${POSTGRES_DB}"
+          --tuples-only --no-align --command
+          "SELECT rolcanlogin AND NOT (rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls)
+          FROM pg_roles WHERE rolname = current_user")" = "t"
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s

@@ -149,6 +149,16 @@
 - 在已登录管理员会话中搜索美区 `Overcooked! 2 - Nintendo Switch 2 Edition Upgrade Pack` 并执行只读跨区核验。MX、BR、HK 首次均自动匹配；JP 首次按设计独立降级为“暂不可用”，页面没有在同一请求内自动重试。管理员显式点击一次“重新核验”后，JP 返回 `automatic`，标题为 `Overcooked® 2 - オーバークック２ Nintendo Switch 2 Edition アップグレードパス`，同时保留其他三区的自动结果。
 - 部署后验收共启动两次日区 Browser Run 请求；每次请求均由既有请求生命周期负责关闭，不启用 keep-alive 或跨请求复用。验收没有点击“确认订阅”、价格来源写入、手动刷新、删除或 Telegram，因此没有创建或修改订阅、地区映射、价格快照、目标价或通知；也没有读取或记录 Cookie、密码、恢复码、Browser Session 标识、页面正文、截图、Trace、网络归档或异常堆栈。
 
+### 3.18 NAS Docker 静态合同与 M1 生产形态验收（2026-07-29）
+
+- Docker 静态合同先因 Dockerfile、生产 Compose、env 示例和 PostgreSQL init hook 缺失得到有效 RED；实现后 `npm run test:docker-config` 共 14 项全部通过，覆盖 Node 22 Bookworm 多阶段构建、精确 Playwright Chromium、非 root/tini/健康检查、最小复制集、双架构无硬编码、app/postgres 两服务、唯一 HTTP host port、数据库内部 5432、固定应用版本、build context 排除和运行时秘密引用。
+- 官方 `postgres:17` 的 `POSTGRES_USER` 会成为 bootstrap 超级用户，且 PostgreSQL 拒绝当前角色修改自身超级状态；因此未保留不可执行的“应用迁移自降权”方案。生产与开发 Compose 改用双角色：bootstrap 用户只存在于 postgres 环境，只读 init hook 在首次空数据目录内以单事务创建 `NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS LOGIN` 普通应用数据库所有者，app 只取得普通角色 URL。
+- init hook 使用 psql `\getenv` 接收密码，避免密码出现在进程参数；动态角色、密码和数据库名分别经 `%I`/`%L` 引用，脚本不启用 xtrace、不输出凭据，并由 `bash -n` 通过语法检查。独立审查进一步要求 bootstrap/app 两个密码都在 psql 前验证非空且互不相同。系统化调试证明官方镜像对 Unix socket、`127.0.0.1` 与 `::1` 使用 trust，错误密码仍能连接；健康检查因此改为普通应用用户携带 `PGPASSWORD`、以 Compose 服务名 `postgres` 进入容器网络 SCRAM host 规则，并依据 `current_user` 验证登录与五项权限。实测正确密码退出 0 且 `inet_client_addr` 为容器网络地址，错误密码退出 2。
+- `${POSTGRES_DATA_DIR}` 首次必须为空；官方入口对非空目录不会再次执行 hook，健康检查必须保持失败并阻止 app 启动。NAS 部署资产现包括生产 Compose、未提交 `.env`、`docker/postgres/init-app-role.sh` 与固定公开镜像；init hook 由 `.dockerignore` 排除，不进入 app 镜像层。
+- 控制任务已独占构建 `linux/arm64` 镜像，大小约 546 MB，inspect 结果为 arm64 与默认用户 `10001:10001`。临时生产 Compose 中 app/postgres 均 healthy，app 实际 UID 为 10001，PostgreSQL host bindings 为空；容器内 Chromium loopback 成功完成启动、导航与清理。
+- 同一临时栈从空库完成首次管理员初始化、登录和设置读取，restart app/postgres 后 initialized 状态仍保持；普通数据库角色的 `rolsuper`、`rolcreaterole`、`rolcreatedb`、`rolreplication`、`rolbypassrls` 全部为 false。
+- 最终门禁通过完整测试 78 个文件、435 项，DOM 4 个文件、16 项，Docker 合同 14/14，以及 TypeScript、双生产构建与 `git diff --check`。本验收没有发布 Docker Hub manifest，也没有连接或修改 NAS/Cloudflare 生产资源。
+
 ## 4. 验收原则
 
 - 不把“请求成功”当作“价格正确”：必须通过商品身份校验。

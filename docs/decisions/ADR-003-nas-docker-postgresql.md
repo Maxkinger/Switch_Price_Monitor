@@ -2,7 +2,7 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | 已确认，待实施 |
+| 状态 | 已确认，实施中（PostgreSQL、Node、调度、本地 Playwright 与 M1 arm64 生产容器验收已完成；NAS、备份及发布待完成） |
 | 日期 | 2026-07-27 |
 | 决策 | 以 Synology DS423+ 上的 Docker Compose 作为唯一生产环境，使用 Node.js 应用容器、项目专属 PostgreSQL 容器和本地 Playwright；通过 GitHub Actions 向 Docker Hub 发布公开多架构镜像。 |
 
@@ -20,8 +20,9 @@
 4. 日区升级包浏览器关系发现改为镜像内固定版本的 Playwright 与 Chromium，并保持现有 URL 白名单、批量上限、隔离上下文、超时和保存前复核规则。
 5. 本地 M1 支持开发模式和生产 Compose 验收；GitHub Actions 对正式 Git 标签构建并发布 `linux/arm64` 与 `linux/amd64` 的 Docker Hub 公开镜像。
 6. NAS 的 Compose 只引用固定镜像版本，不包含源码构建；运行时秘密只通过未提交的 `.env` 注入。
-7. 不迁移现有 D1 数据，NAS 从全新数据库初始化。
-8. NAS 完成功能等价、备份恢复和版本回滚验收后，停止并清理 Cloudflare 生产资源；实施完成前 ADR-001 仍描述当前生产环境。
+7. 官方 PostgreSQL 镜像的 `POSTGRES_USER` 只作为容器内部 bootstrap 管理角色；只读 init hook 在首次空数据目录中创建无集群级权限的普通应用数据库所有者，应用只取得该普通角色 URL。bootstrap 用户名与密码不得进入 app 环境。
+8. 不迁移现有 D1 数据，NAS 从全新数据库初始化。
+9. NAS 完成功能等价、备份恢复和版本回滚验收后，停止并清理 Cloudflare 生产资源；实施完成前 ADR-001 仍描述当前生产环境。
 
 ## 考虑过的方案
 
@@ -47,6 +48,8 @@
 - PostgreSQL 迁移必须保持事务语义和至少一个应用版本的回滚兼容窗口。
 - 应用进程内调度器必须使用 PostgreSQL advisory lock 防止重复采集和通知。
 - 本地和生产镜像需要固定 Playwright 与 Chromium 版本，并分别验证 arm64 与 amd64。
+- 已落地的 Dockerfile 以 Node 22 Bookworm 多阶段构建、lockfile 安装、固定非 root UID/GID、tini 和最小复制集实现同一镜像合同；生产 Compose 只保留固定版本 app 与内部 PostgreSQL 17。M1 已完成约 546 MB arm64 镜像、双服务健康、UID 10001、数据库端口隔离、真实 Chromium loopback、认证设置与重启持久性验收；DS423+ amd64 和公开多架构发布仍需后续验证。
+- PostgreSQL 官方入口不会自动创建普通应用角色；NAS 除 Compose 与 `.env` 外还须保留仓库随附的只读 init hook。该脚本只在首次空数据目录执行，既不能在既有卷上补救错误角色，也不能替代升级迁移；健康检查必须由普通角色经 Compose 服务名进入容器网络 SCRAM 规则并验证最终权限后才允许 app 启动，不能使用官方本机 trust 规则或 bootstrap 代查。
 - 局域网 HTTP 首阶段允许显式配置非 `Secure` Cookie；未来接入 HTTPS 或 FRP 时必须启用 `Secure`，但不在本次范围中实现公网入口。
 - Docker Hub、GitHub Actions、数据库和 Telegram 凭据均不得进入镜像层、源码、普通日志或文档。
 - 完整设计与验收标准见 [NAS Docker 与 PostgreSQL 迁移设计规格](../superpowers/specs/2026-07-27-nas-docker-postgresql-migration-design.md)。

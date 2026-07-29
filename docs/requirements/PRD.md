@@ -121,6 +121,6 @@
 - 页面以个人桌面管理场景为主，同时保持基本窄屏可用性。
 - 目标生产环境为 Synology DS423+ 上的 Docker Compose：一个 Node.js 应用容器提供前端、API、定时任务和本地 Playwright，一个项目专属 PostgreSQL 容器保存数据；完成等价验收后停止使用 Cloudflare，不维护双平台兼容层。
 - 本地 Apple Silicon M1 必须支持开发调试和生产形态 Compose 验收；正式 Git 标签由 GitHub Actions 在全部质量门禁通过后向 Docker Hub 公开仓库发布 `linux/arm64` 与 `linux/amd64` 多架构镜像。
-- NAS 只通过固定镜像版本和 Compose 启动，不在设备上构建源码。PostgreSQL 与 Chromium 调试端口不得向局域网暴露，数据库、Telegram 和认证秘密不得进入镜像层或仓库。
+- NAS 只通过固定镜像版本、Compose、未提交 `.env` 和随 Compose 分发的只读 PostgreSQL init hook 启动，不在设备上构建应用源码。首次 PostgreSQL 数据目录必须为空；init hook 仅在空目录引导期用独立 bootstrap 管理角色创建无集群级权限的普通应用角色，app 只取得普通角色 `DATABASE_URL`，不得取得 bootstrap 用户或密码。非空错误目录不会执行 hook，数据库健康检查必须阻止 app 启动。PostgreSQL 与 Chromium 调试端口不得向局域网暴露，数据库、Telegram 和认证秘密不得进入镜像层或仓库。
 - NAS 使用全新 PostgreSQL 数据库，不迁移 D1 历史；必须提供版本化迁移、事务原子性、调度互斥、备份恢复和至少一个应用版本的回滚兼容窗口。
 - 首阶段只验收局域网访问并保留完整单管理员认证。HTTP 模式可由显式配置关闭 Cookie `Secure`；未来接入 HTTPS 或 FRP 时必须重新启用，公网入口不属于本次迁移范围。

@@ -1,0 +1,46 @@
+# 源码控制与自动化元数据不参与镜像构建，既缩小上下文，也避免分支、远程地址或工作树路径进入镜像层。
+.git
+.worktrees
+.github
+.superpowers
+
+# 所有本地环境文件默认排除；仅安全占位示例允许进入构建上下文供合同审查，但 Dockerfile不会复制它。
+.env
+.env.*
+!.env.example
+
+# 依赖和构建结果必须在锁定的容器阶段重建，禁止复用宿主机 M1 产物污染 amd64 发布层。
+node_modules
+dist
+coverage
+*.log
+npm-debug.log*
+
+# 测试、设计文档与本地夹具不属于运行镜像；发布门禁在镜像构建前独立执行这些资产。
+test
+docs
+# PostgreSQL init hook 由 Compose 作为只读部署资产挂载，不属于 app 镜像构建上下文。
+docker/postgres
+
+# PostgreSQL 数据、备份与临时目录永远是运行时宿主 bind mount，不能被发送到 Docker daemon。
+postgres-data
+backups
+tmp
+.tmp
+
+# 编辑器和操作系统元数据没有运行价值，并可能包含绝对本机路径。
+.idea
+.vscode
+.DS_Store
+Thumbs.db
+
+# 私钥、证书与常见本地数据库扩展一律排除；真实凭据只能通过未提交的运行时 env 注入。
+*.pem
+*.key
+*.crt
+*.cer
+*.p12
+*.pfx
+*.jks
+*.sqlite
+*.sqlite3

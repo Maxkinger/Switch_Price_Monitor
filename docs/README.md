@@ -57,7 +57,7 @@
 | [解决方案设计规格](superpowers/specs/2026-07-16-switch-price-monitor-design.md) | 已确认产品设计与官方价格 ID/创建前来源预览边界 | 已确认 |
 | [ADR-001：部署架构](decisions/ADR-001-cloudflare-workers-d1.md) | 采用 Cloudflare Workers Static Assets 与 D1 的决策 | 已确认 |
 | [ADR-002：价格来源验证](decisions/ADR-002-price-provider-validation.md) | 来源准入、五区可行性与回退边界 | 已确认部分 |
-| [ADR-003：NAS Docker 与 PostgreSQL](decisions/ADR-003-nas-docker-postgresql.md) | Node 应用、专属 PostgreSQL、本地 Playwright 与多架构镜像的目标部署决策 | 已确认，待实施 |
+| [ADR-003：NAS Docker 与 PostgreSQL](decisions/ADR-003-nas-docker-postgresql.md) | Node 应用、专属 PostgreSQL、本地 Playwright 与多架构镜像的目标部署决策 | 已确认，实施中 |
 
 ## 变更规则
 

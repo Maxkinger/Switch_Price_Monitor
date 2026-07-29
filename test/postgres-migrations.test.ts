@@ -78,6 +78,42 @@ describe("PostgreSQL 初始 schema", () => {
     expect(indexes.rows.map((row) => row.indexname)).toEqual(expectedBusinessIndexes);
   });
 
+  it("从空库完成全部迁移后使用 Compose 预建的普通应用角色", async () => {
+    const role = await database.query<{
+      role_name: string;
+      is_superuser: boolean;
+      can_create_role: boolean;
+      can_create_database: boolean;
+      can_replicate: boolean;
+      can_bypass_rls: boolean;
+    }>(`
+      SELECT
+        current_user AS role_name,
+        rolsuper AS is_superuser,
+        rolcreaterole AS can_create_role,
+        rolcreatedb AS can_create_database,
+        rolreplication AS can_replicate,
+        rolbypassrls AS can_bypass_rls
+      FROM pg_roles
+      WHERE rolname = current_user
+    `);
+
+    /**
+     * Compose init hook 用独立 bootstrap 管理角色创建 switch_test；应用迁移从第一条 SQL 起就不得拥有集群级能力。
+     * 测试 URL 保持普通角色，既验证生产双角色模型，也避免测试辅助 DROP SCHEMA 获得跨数据库权限。
+     */
+    expect(role.rows).toEqual([
+      {
+        role_name: "switch_test",
+        is_superuser: false,
+        can_create_role: false,
+        can_create_database: false,
+        can_replicate: false,
+        can_bypass_rls: false,
+      },
+    ]);
+  });
+
   it("把布尔、时间、JSON、身份主键和整数金额映射为 PostgreSQL 原生类型", async () => {
     const columns = await database.query<{
       table_name: string;

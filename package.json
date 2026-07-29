@@ -19,6 +19,12 @@
       "playwright": "playwright 是 Node 日区升级关系的生产运行时依赖；版本必须精确锁定，使本地、Docker 与 NAS 使用同一 Chromium 客户端和浏览器修订。",
       "isolation": "每批只启动一个本地无头 Chromium；最多三个根各用全新 context/page 串行核验，最终关闭所有资源且不复用 Cookie 或会话。",
       "secrets": "浏览器异常、本机路径、页面正文、Cookie、端点和进程信息不得进入 API、数据库或普通日志。"
+    },
+    "dockerRuntimeConfigurationRationaleZh": {
+      "reproducibility": "Docker 构建的完整依赖与生产依赖都使用 package-lock.json 和 npm ci；最终镜像只复制生产依赖、双构建产物与不可变 PostgreSQL 迁移。",
+      "architecture": "Dockerfile 不拼接 CPU 架构下载地址；BuildKit 在 M1 linux/arm64 和 DS423+ linux/amd64 当前平台安装与精确 Playwright 版本匹配的 Chromium。",
+      "secrets": "Docker build 不接收数据库、Telegram、Cookie 或会话秘密；生产 Compose 只从未提交的运行时 env 引用凭据，bootstrap 管理密码仅进入 postgres，app 只取得普通角色 DATABASE_URL，合同测试也只使用公开假值。",
+      "permissions": "运行镜像与 Compose 固定 UID/GID 10001 并使用 init；仅应用 HTTP 映射 NAS 端口，PostgreSQL 与 Chromium 都保持容器内部可达。"
     }
   },
   "scripts": {
@@ -32,7 +38,8 @@
     "preview": "vite preview",
     "deploy": "node ./scripts/deploy-production.mjs",
     "test": "vitest",
-    "test:dom": "vitest --config vitest.dom.config.mts"
+    "test:dom": "vitest --config vitest.dom.config.mts",
+    "test:docker-config": "node --test test/docker-config.test.mjs"
   },
   "dependencies": {
     "@hono/node-server": "2.0.12",

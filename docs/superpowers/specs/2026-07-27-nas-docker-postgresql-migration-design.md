@@ -127,7 +127,7 @@ Cookie 固定使用 `HttpOnly` 与 `SameSite=Strict`。局域网 HTTP 首阶段�
 
 使用 `pg` 连接池与显式参数化 SQL，不引入 ORM。原因是当前仓储已经使用清晰的 SQL 和行模型转换，直接迁移能减少业务层改动并保留查询可审计性。
 
-默认连接池上限为 5，满足单管理员和定时任务场景。数据库名、用户和密码由 Compose 环境注入；项目用户只拥有本项目数据库所需权限，不使用 PostgreSQL 超级用户运行应用查询。
+默认连接池上限为 5，满足单管理员和定时任务场景。官方镜像的 `POSTGRES_USER` 仅用于首次空目录引导并保留在 postgres 容器；只读 init hook 用该 bootstrap 管理角色在单事务中创建独立普通项目所有者，明确关闭超级、建角、建库、复制和绕过 RLS 能力。应用从第一次连接起只取得普通角色 `DATABASE_URL`，不取得 bootstrap 用户名或密码。
 
 ### 6.2 类型与约束
 
@@ -212,11 +212,12 @@ Dockerfile 使用多阶段构建：
 /volume1/docker/switch-price-monitor/
   ├─ docker-compose.yml
   ├─ .env
+  ├─ docker/postgres/init-app-role.sh
   ├─ postgres-data/
   └─ backups/
 ```
 
-实际根目录由 `.env` 显式指定，不在仓库中硬编码用户卷名。PostgreSQL 数据和备份使用可由群晖备份工具识别的独立目录。只有应用 HTTP 端口映射到 NAS。
+实际根目录由 `.env` 显式指定，不在仓库中硬编码用户卷名。`postgres-data` 首次启动必须为空；官方入口对非空目录不会再次执行 init hook，普通角色健康检查必须保持失败并阻止 app 启动。init hook 是只读部署资产，由 `.dockerignore` 排除且不进入 app 镜像。PostgreSQL 数据和备份使用可由群晖备份工具识别的独立目录。只有应用 HTTP 端口映射到 NAS。
 
 ### 9.3 配置
 
@@ -224,7 +225,7 @@ Dockerfile 使用多阶段构建：
 
 - Docker Hub 镜像名与固定版本。
 - 应用监听端口和 NAS 映射端口。
-- PostgreSQL 数据库名、应用用户和随机密码。
+- PostgreSQL 数据库名、bootstrap 管理用户/随机密码、普通应用用户/独立随机密码，以及只使用普通角色的 URL 编码 `DATABASE_URL`。
 - `COOKIE_SECURE` 与日志级别。
 - 可选 Telegram Bot Token 与 Chat ID。
 - 数据、备份目录及备份保留份数。
@@ -365,7 +366,7 @@ NAS 通过修改 `APP_VERSION`、拉取镜像并重建 `app` 容器升级。生�
 8. PostgreSQL 事务失败时没有部分订阅、部分删除或错误通知状态。
 9. 备份可恢复到全新 PostgreSQL 数据库并通过登录与核心读取校验。
 10. GitHub Actions 在发布标签上生成同时包含 arm64 与 amd64 的公开 Docker Hub 镜像。
-11. DS423+ 只凭 Compose、`.env` 和固定镜像标签即可启动，不需要源码和构建工具。
+11. DS423+ 只凭 Compose、`.env`、只读 PostgreSQL init hook 和固定镜像标签即可从空数据目录启动，不需要应用源码和构建工具。
 12. NAS 上 PostgreSQL 和 Chromium 没有对局域网暴露端口。
 13. 全部测试、类型检查、生产构建、容器检查、敏感信息扫描和注释一致性检查通过。
 14. 生产源码、依赖与部署配置不再引用 Wrangler、D1、Worker Handler、Cloudflare Cron 或 Browser Binding。
