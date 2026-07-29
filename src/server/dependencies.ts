@@ -1,8 +1,14 @@
 import { createFrankfurterExchangeRateProvider } from "../providers/frankfurter-exchange-rate";
-import { createNintendoPriceApiProvider } from "../providers/official-nintendo-price-api";
+import {
+  createNintendoOfficialPriceQuoteResolver,
+  createNintendoPriceApiProvider,
+} from "../providers/official-nintendo-price-api";
+import { createOfficialJapaneseUpgradeRootSearch } from "../providers/official-japanese-upgrade-root";
 import { createOfficialNintendoProductPageResolver } from "../providers/official-nintendo-product-page";
 import { createOfficialNintendoSearch } from "../providers/official-nintendo-search";
 import { createOfficialProviderRegistry } from "../providers/official-provider-registry";
+import { createLocalBrowserLauncher } from "../providers/playwright/browser-launcher";
+import { createJapaneseUpgradeBrowserBatch } from "../providers/playwright/japanese-upgrade-browser";
 import { ProviderChain } from "../providers/provider-chain";
 import { PostgresAuthRepository } from "../repositories/postgres/auth-repository";
 import { PostgresCollectionRepository } from "../repositories/postgres/collection-repository";
@@ -33,7 +39,7 @@ import { DailyCnyRateService } from "../services/daily-cny-rate-service";
 import { DashboardService } from "../services/dashboard-service";
 import { ExportService } from "../services/export-service";
 import { HistoryService } from "../services/history-service";
-import type { JapaneseUpgradeRelationService } from "../services/japanese-upgrade-relation-service";
+import { createJapaneseUpgradeRelationService } from "../services/japanese-upgrade-relation-service";
 import { JapaneseSubscriptionConfirmationService } from "../services/japanese-subscription-confirmation-service";
 import { LiveCollectionRunner } from "../services/live-collection-runner";
 import { ManualRefreshService } from "../services/manual-refresh-service";
@@ -125,10 +131,16 @@ export function createServerDependencies(
   const officialSearch = createOfficialNintendoSearch();
   const officialPriceIds = new OfficialPriceIdService(createNintendoPriceApiProvider());
   /**
-   * Task 7 才会提供本地 Playwright。此处的窄占位对所有日区升级关系操作抛固定内部错误：
-   * 不导入 Worker Browser Binding、不伪造候选，也不允许保存前复核绕过；路由会把异常转换为安全通用响应。
+   * Node 商品发现与保存前确认共享同一套本地关系依赖：每次实际批处理只启动一个 Chromium，
+   * 最多三个根使用全新上下文串行核验。浏览器 launcher 不接收数据库、Telegram、HTTP 或调度器对象。
    */
-  const japaneseUpgradeRelations = createUnavailableJapaneseUpgradeRelations();
+  const japaneseUpgradeRelations = createJapaneseUpgradeRelationService(
+    createOfficialJapaneseUpgradeRootSearch(),
+    createJapaneseUpgradeBrowserBatch(
+      createLocalBrowserLauncher({ headless: true }),
+    ),
+    createNintendoOfficialPriceQuoteResolver(),
+  );
   const discovery = new OfficialProductDiscoveryService(
     settingsRepository,
     officialSearch,
@@ -259,28 +271,4 @@ function createLiveCollectionRunner(database: AppDatabase): LiveCollectionRunner
     previousOfficial: prices,
     events: notifications,
   });
-}
-
-/** Task 7 替换此错误与占位对象；固定错误不包含锚点 URL、官方响应、浏览器状态或运行时秘密。 */
-class JapaneseUpgradeRelationsUnavailableError extends Error {
-  public constructor() {
-    super("NODE_JAPANESE_UPGRADE_RELATIONS_UNAVAILABLE");
-  }
-}
-
-/** 任何关系入口都明确失败，避免未接入 Playwright 时返回可被误解为官方成功的空证据。 */
-function createUnavailableJapaneseUpgradeRelations(): JapaneseUpgradeRelationService {
-  return {
-    async discover() {
-      throw new JapaneseUpgradeRelationsUnavailableError();
-    },
-    async resolveManual() {
-      throw new JapaneseUpgradeRelationsUnavailableError();
-    },
-    async verifyForConfirmation(items) {
-      // 无升级包时返回空证据不会绕过验证；只有实际需要关系能力时才阻断普通商品订阅流程。
-      if (items.length === 0) return new Map();
-      throw new JapaneseUpgradeRelationsUnavailableError();
-    },
-  };
 }

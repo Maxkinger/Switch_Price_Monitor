@@ -20,7 +20,12 @@ export default defineConfig({
           // 旧 `.ts` 测试仍由 D1 迁移 setup 初始化；显式排除 PostgreSQL 与 Node HTTP 用例可保护三种运行时边界，
           // 防止 Node 文件系统、监听端口或进程信号 API 被 Miniflare 误当作 Worker 模块加载。
           include: ["test/**/*.test.ts"],
-          exclude: ["test/postgres-*.test.ts", "test/server-*.test.ts"],
+          exclude: [
+            "test/postgres-*.test.ts",
+            "test/server-*.test.ts",
+            "test/playwright-*.test.ts",
+            "test/japanese-upgrade-browser.test.ts",
+          ],
           setupFiles: ["./test/apply-migrations.ts"],
         },
       },
@@ -37,9 +42,14 @@ export default defineConfig({
         test: {
           name: "server",
           environment: "node",
-          // Node HTTP 三批测试只使用临时目录、临时端口和注入生命周期，不连接 NAS、生产数据库或真实进程信号。
-          include: ["test/server-*.test.ts"],
-          // 生命周期用例共享本机监听资源；串行文件可使端口关停断言稳定且不掩盖连接泄漏。
+          // Node HTTP 与本地 Playwright 测试只使用临时目录、回环端口和注入生命周期；
+          // 浏览器 smoke 不访问任天堂或公网，必须在真实 Node 环境运行而不能误入迁移期 Worker 隔离池。
+          include: [
+            "test/server-*.test.ts",
+            "test/playwright-*.test.ts",
+            "test/japanese-upgrade-browser.test.ts",
+          ],
+          // 生命周期用例共享本机监听资源或 Chromium 进程；串行文件可使关停断言稳定且不掩盖资源泄漏。
           fileParallelism: false,
         },
       },

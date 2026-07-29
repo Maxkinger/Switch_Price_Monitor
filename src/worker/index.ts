@@ -1,6 +1,7 @@
 /**
  * Worker HTTP 入口把健康检查、认证 API 与静态前端资源分层处理。
- * 当前 Worker 入口负责装配平台中立的价格提供方，并保留 D1、Browser Binding 与 Telegram 凭据等 Cloudflare 专属能力；浏览器不会获得这些后端依赖的直接访问能力。
+ * 当前 Worker 入口只保留迁移回归所需的 D1 与 Telegram Cloudflare 能力；本地 Chromium 只由 Node 入口装配，
+ * Worker 对日区升级关系固定安全失败，且不会获得这些后端依赖的直接访问能力。
  */
 // 路由、服务、仓储及非 Browser 的提供方均与 Worker 生命周期无关；Worker 只承担依赖装配，便于后续 Node 运行时和测试复用同一业务实现。
 import { handleAuthRoute } from "../routes/auth-routes";
@@ -11,9 +12,7 @@ import { handleManualRefreshRoute } from "../routes/manual-refresh-routes";
 import { handleProductRoute } from "../routes/product-routes";
 import { handleSettingsRoute } from "../routes/settings-routes";
 import { handleSubscriptionRoute } from "../routes/subscription-routes";
-import { createNintendoOfficialPriceQuoteResolver, createNintendoPriceApiProvider } from "../providers/official-nintendo-price-api";
-import { createOfficialJapaneseUpgradeRootSearch } from "../providers/official-japanese-upgrade-root";
-import { createJapaneseUpgradeBrowserBatch } from "./providers/japanese-upgrade-browser";
+import { createNintendoPriceApiProvider } from "../providers/official-nintendo-price-api";
 import { createOfficialProviderRegistry } from "../providers/official-provider-registry";
 import { ProviderChain } from "../providers/provider-chain";
 import { createFrankfurterExchangeRateProvider } from "../providers/frankfurter-exchange-rate";
@@ -54,14 +53,12 @@ import { defaultFallbackSources, SubscriptionPreviewService } from "../services/
 import { SubscriptionConfirmationService } from "../services/subscription-confirmation-service";
 import { SubscriptionRegionCompletionService } from "../services/subscription-region-completion-service";
 import { JapaneseSubscriptionConfirmationService } from "../services/japanese-subscription-confirmation-service";
-import { createJapaneseUpgradeRelationService } from "../services/japanese-upgrade-relation-service";
+import type { JapaneseUpgradeRelationService } from "../services/japanese-upgrade-relation-service";
 import { TelegramService } from "../services/telegram-service";
 
 export interface Env {
   /** 静态资源绑定仅服务前端文件；所有敏感业务操作必须走下方 Worker API。 */
   ASSETS: Fetcher;
-  /** Browser Binding 只服务日区升级关系；不得传入价格采集、Cron、通知或前端响应，避免扩大浏览器会话的使用范围。 */
-  BROWSER: Fetcher;
   /** D1 是价格历史与管理员配置的唯一持久化入口，前端绝不能直接访问。 */
   DB: D1Database;
   /** Telegram 凭据仅由 Cloudflare Secret 在运行时注入；可选字段使未配置部署安全跳过日报。 */
@@ -117,12 +114,8 @@ const worker: ExportedHandler<Env> = {
     // 商品发现与最终确认必须在会话守卫前由路由统一保护；每个请求构造无状态服务，避免在 Worker 实例间缓存候选 URL 或外部响应。
     const officialPages = createOfficialNintendoProductPageResolver();
     const officialSearch = createOfficialNintendoSearch();
-    // 每个进入商品路由分发阶段的请求只构造一个无状态关系服务；只有认证后的相关端点才会实际启动 Browser，不进入采集、Cron、通知或 D1 层。
-    const japaneseUpgradeRelations = createJapaneseUpgradeRelationService(
-      createOfficialJapaneseUpgradeRootSearch(),
-      createJapaneseUpgradeBrowserBatch(env.BROWSER),
-      createNintendoOfficialPriceQuoteResolver(),
-    );
+    // Worker 仅作迁移回归，不加载 Node Playwright；相关入口固定安全失败，普通商品流程仍保持原有行为。
+    const japaneseUpgradeRelations = createWorkerUnavailableJapaneseUpgradeRelations();
     // 同一个官方解析器同时提供详情复核与港区一层关系能力；发现服务仍通过两个窄接口消费，避免把递归展开权限泄漏给普通详情调用方。
     const officialDiscovery = new OfficialProductDiscoveryService(
       new SettingsRepository(env.DB),
@@ -234,3 +227,29 @@ function createLiveCollectionRunner(env: Env): LiveCollectionRunner {
 }
 
 export default worker;
+
+/** 迁移期 Worker 不具备本地 Chromium；固定错误不包含 URL、页面正文、本机路径、进程或外部异常。 */
+class WorkerJapaneseUpgradeRelationsUnavailableError extends Error {
+  public constructor() {
+    super("WORKER_JAPANESE_UPGRADE_RELATIONS_UNAVAILABLE");
+  }
+}
+
+/**
+ * Worker 兼容入口不能静态导入 Node Playwright；三个关系入口显式失败，避免伪造官方证据。
+ * 空确认批次仍返回空映射，使不含日区升级包的普通订阅继续完成既有 D1 迁移回归。
+ */
+function createWorkerUnavailableJapaneseUpgradeRelations(): JapaneseUpgradeRelationService {
+  return {
+    async discover() {
+      throw new WorkerJapaneseUpgradeRelationsUnavailableError();
+    },
+    async resolveManual() {
+      throw new WorkerJapaneseUpgradeRelationsUnavailableError();
+    },
+    async verifyForConfirmation(items) {
+      if (items.length === 0) return new Map();
+      throw new WorkerJapaneseUpgradeRelationsUnavailableError();
+    },
+  };
+}

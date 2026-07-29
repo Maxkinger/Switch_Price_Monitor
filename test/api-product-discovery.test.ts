@@ -259,12 +259,11 @@ async function initializeAndLogin(): Promise<string> {
   return login.headers.get("set-cookie") ?? "";
 }
 
-/** 静态资源与 Browser Binding 桩件若被调用会失败，确保旧发现 API 测试不意外进入前端回退或消耗受控浏览器会话。 */
+/** 静态资源桩件若被调用会失败；Worker 迁移回归不装配 Node Chromium，避免认证辅助请求误入前端回退。 */
 function workerEnv(): Env {
   return {
     DB: env.DB,
     ASSETS: { fetch: async () => new Response("unexpected asset request", { status: 500 }) } as unknown as Fetcher,
-    BROWSER: { fetch: async () => new Response("unexpected browser binding request", { status: 500 }) } as unknown as Fetcher,
   };
 }
 

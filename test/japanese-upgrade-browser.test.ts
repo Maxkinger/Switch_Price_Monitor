@@ -2,20 +2,20 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { JapaneseUpgradeRootCandidate } from "../src/providers/official-japanese-upgrade-root";
 import { normalizeJapaneseUpgradeUrl } from "../src/providers/japanese-upgrade-browser";
-import { createJapaneseUpgradeBrowserBatch } from "../src/worker/providers/japanese-upgrade-browser";
+import { createJapaneseUpgradeBrowserBatch } from "../src/providers/playwright/japanese-upgrade-browser";
 
 /**
- * Browser Run 批处理器测试只使用窄内存替身，不得启动真实浏览器或访问任天堂网络。
+ * 本地 Playwright 批处理器测试只使用窄内存替身，不得启动真实浏览器或访问任天堂网络。
  * 这样既能稳定证明每个候选的无痕隔离和关闭顺序，也避免测试采集页面、Cookie 或会话数据。
  */
-describe("Japanese upgrade Browser Run batch", () => {
+describe("Japanese upgrade local Playwright batch", () => {
   it("uses one browser and a fresh serial context for every valid root", async () => {
     // 两个根必须共享一次请求级浏览器，但上下文和页面必须逐项新建，禁止跨商品复用缓存或登录状态。
     const events: string[] = [];
-    const batch = createJapaneseUpgradeBrowserBatch({} as Fetcher, async () => fakeBrowser(events, [
+    const batch = createJapaneseUpgradeBrowserBatch(browserLauncher(async () => fakeBrowser(events, [
       [visibleUpgradeLink("https://store-jp.nintendo.com/item/software/D70050000064985")],
       [visibleUpgradeLink("https://store-jp.nintendo.com/item/software/D70050000064986/")],
-    ]));
+    ])));
 
     const result = await batch.resolve([
       root("https://store-jp.nintendo.com/item/software/D70010000106252/"),
@@ -34,9 +34,9 @@ describe("Japanese upgrade Browser Run batch", () => {
   });
 
   it("returns an empty map without launching for an empty request", async () => {
-    // 空批次不应消耗 Browser Run 启动配额；这也是避免无业务输入仍创建会话的资源边界。
+    // 空批次不应启动 Chromium 进程；这也是避免无业务输入仍创建本地会话的资源边界。
     const launchBrowser = vi.fn();
-    const result = await createJapaneseUpgradeBrowserBatch({} as Fetcher, launchBrowser).resolve([], new AbortController().signal);
+    const result = await createJapaneseUpgradeBrowserBatch(browserLauncher(launchBrowser)).resolve([], new AbortController().signal);
 
     expect(result).toEqual(new Map());
     expect(launchBrowser).not.toHaveBeenCalled();
@@ -46,7 +46,7 @@ describe("Japanese upgrade Browser Run batch", () => {
     // 根 URL 虽通常来自上游官方解析器，适配器仍必须自行拒绝 query，防止未来调用方把它变成 SSRF 导航入口。
     const launchBrowser = vi.fn();
     const unsafeRoot = "https://store-jp.nintendo.com/item/software/D70010000106252/?next=https://evil.example";
-    const result = await createJapaneseUpgradeBrowserBatch({} as Fetcher, launchBrowser)
+    const result = await createJapaneseUpgradeBrowserBatch(browserLauncher(launchBrowser))
       .resolve([root(unsafeRoot)], new AbortController().signal);
 
     expect(result.get(unsafeRoot)).toEqual({ status: "browser-unavailable" });
@@ -57,7 +57,7 @@ describe("Japanese upgrade Browser Run batch", () => {
     // JavaScript 的 `$` 会在末尾换行前匹配；根地址必须整串精确匹配，避免换行后的附加输入绕过启动前 SSRF 白名单。
     const launchBrowser = vi.fn();
     const unsafeRoot = "https://store-jp.nintendo.com/item/software/D70010000106252/\n";
-    const result = await createJapaneseUpgradeBrowserBatch({} as Fetcher, launchBrowser)
+    const result = await createJapaneseUpgradeBrowserBatch(browserLauncher(launchBrowser))
       .resolve([root(unsafeRoot)], new AbortController().signal);
 
     expect(result.get(unsafeRoot)).toEqual({ status: "browser-unavailable" });
@@ -69,9 +69,9 @@ describe("Japanese upgrade Browser Run batch", () => {
     const events: string[] = [];
     const unsafeRoot = "https://evil.example/item/software/D70010000106252/";
     const validRoot = "https://store-jp.nintendo.com/item/software/D70010000106253";
-    const result = await createJapaneseUpgradeBrowserBatch({} as Fetcher, async () => fakeBrowser(events, [
+    const result = await createJapaneseUpgradeBrowserBatch(browserLauncher(async () => fakeBrowser(events, [
       [visibleUpgradeLink("/item/software/D70050000064985/")],
-    ])).resolve([root(unsafeRoot), root(validRoot)], new AbortController().signal);
+    ]))).resolve([root(unsafeRoot), root(validRoot)], new AbortController().signal);
 
     expect(result.get(unsafeRoot)).toEqual({ status: "browser-unavailable" });
     expect(result.get(validRoot)).toEqual({ status: "success", upgradeUrl: "https://store-jp.nintendo.com/item/software/D70050000064985/" });
@@ -96,10 +96,10 @@ describe("Japanese upgrade Browser Run batch", () => {
 
   it("accepts a same-site relative target and deduplicates repeated official links", async () => {
     // DOM 中重复的同一官方链接不应误判为多个候选；相对路径只在固定官方 origin 下解析，不能继承页面以外的主机。
-    const batch = createJapaneseUpgradeBrowserBatch({} as Fetcher, async () => fakeBrowser([], [[
+    const batch = createJapaneseUpgradeBrowserBatch(browserLauncher(async () => fakeBrowser([], [[
       visibleUpgradeLink("/item/software/D70050000064985"),
       visibleUpgradeLink("https://store-jp.nintendo.com/item/software/D70050000064985/"),
-    ]]));
+    ]])));
     const productUrl = "https://store-jp.nintendo.com/item/software/D70010000106252/";
     const result = await batch.resolve([root(productUrl)], new AbortController().signal);
 
@@ -111,11 +111,11 @@ describe("Japanese upgrade Browser Run batch", () => {
     const missingUrl = "https://store-jp.nintendo.com/item/software/D70010000106252/";
     const multipleUrl = "https://store-jp.nintendo.com/item/software/D70010000106253/";
     const invalidUrl = "https://store-jp.nintendo.com/item/software/D70010000106254/";
-    const batch = createJapaneseUpgradeBrowserBatch({} as Fetcher, async () => fakeBrowser([], [
+    const batch = createJapaneseUpgradeBrowserBatch(browserLauncher(async () => fakeBrowser([], [
       [hiddenUpgradeLink("https://store-jp.nintendo.com/item/software/D70050000064985/")],
       [visibleUpgradeLink("/item/software/D70050000064985/"), visibleUpgradeLink("/item/software/D70050000064986/")],
       [visibleUpgradeLink("https://evil.example/item/software/D70050000064985/")],
-    ]));
+    ])));
     const result = await batch.resolve([root(missingUrl), root(multipleUrl), root(invalidUrl)], new AbortController().signal);
 
     expect(result.get(missingUrl)).toEqual({ status: "blocked-or-missing" });
@@ -123,12 +123,26 @@ describe("Japanese upgrade Browser Run batch", () => {
     expect(result.get(invalidUrl)).toEqual({ status: "invalid-official-url" });
   });
 
+  it("maps a local Chromium launch failure to a fixed result without leaking its marker", async () => {
+    // 启动错误可能包含本机路径、进程参数或底层浏览器信息；公开结果只能保留固定分类且不能自动重试。
+    const marker = "LOCAL_BROWSER_PATH_AND_PROCESS_MARKER";
+    const launch = vi.fn().mockRejectedValue(new Error(marker));
+    const productUrl = "https://store-jp.nintendo.com/item/software/D70010000106252/";
+
+    const result = await createJapaneseUpgradeBrowserBatch(browserLauncher(launch))
+      .resolve([root(productUrl)], new AbortController().signal);
+
+    expect(result.get(productUrl)).toEqual({ status: "browser-unavailable" });
+    expect(JSON.stringify([...result.values()])).not.toContain(marker);
+    expect(launch).toHaveBeenCalledOnce();
+  });
+
   it("closes the browser once when navigation throws and does not relaunch", async () => {
     // 非超时运行错误不得携带底层细节或触发重试；即使导航失败，也必须最终关闭本页、上下文及唯一浏览器。
-    // 生产 close 契约始终返回 Promise；替身也必须异步，才能验证 closeSafely 处理的是远端关闭的拒绝而非错误夹具。
+    // 生产 close 契约始终返回 Promise；替身也必须异步，才能验证 closeSafely 处理的是浏览器关闭拒绝而非错误夹具。
     const close = vi.fn(async () => undefined);
     const launchBrowser = vi.fn().mockResolvedValue(failingBrowser(new Error("do not expose runtime details"), close));
-    const batch = createJapaneseUpgradeBrowserBatch({} as Fetcher, launchBrowser);
+    const batch = createJapaneseUpgradeBrowserBatch(browserLauncher(launchBrowser));
 
     await batch.resolve([root("https://store-jp.nintendo.com/item/software/D70010000106252/")], new AbortController().signal);
 
@@ -137,11 +151,11 @@ describe("Japanese upgrade Browser Run batch", () => {
   });
 
   it("maps a Playwright navigation TimeoutError without retrying", async () => {
-    // Cloudflare/Playwright 的超时名称是可安全分类的控制信息；不返回异常正文，且单项最多尝试一次以保护每日配额。
+    // Playwright 的超时名称是可安全分类的控制信息；不返回异常正文，且单项最多尝试一次以限制本机与官方站点负载。
     const timeout = Object.assign(new Error("navigation exceeded limit"), { name: "TimeoutError" });
     // 超时夹具同样保留异步关闭形状，避免同步 undefined 干扰本例只关心的 TimeoutError 分类。
     const launchBrowser = vi.fn().mockResolvedValue(failingBrowser(timeout, vi.fn(async () => undefined)));
-    const result = await createJapaneseUpgradeBrowserBatch({} as Fetcher, launchBrowser)
+    const result = await createJapaneseUpgradeBrowserBatch(browserLauncher(launchBrowser))
       .resolve([root("https://store-jp.nintendo.com/item/software/D70010000106252/")], new AbortController().signal);
 
     expect(result.get("https://store-jp.nintendo.com/item/software/D70010000106252/")).toEqual({ status: "timeout" });
@@ -149,17 +163,17 @@ describe("Japanese upgrade Browser Run batch", () => {
   });
 
   it("closes a context that resolves after timeout without opening a late page", async () => {
-    // newContext 不能接受 AbortSignal；30 秒先向调用方返回 timeout，若远端随后才交付上下文，适配器只能立即清理，绝不能开始页面或导航。
+    // newContext 不能接受本业务 AbortSignal；30 秒先向调用方返回 timeout，若异步调用随后才交付上下文，适配器只能立即清理，绝不能开始页面或导航。
     vi.useFakeTimers();
     try {
       const lateContext = deferred<ReturnType<typeof contextWithPage>>();
       const lateNewPage = vi.fn(async () => pageWithUpgradeLink("/item/software/D70050000064985/"));
       const lateContextClose = vi.fn(async () => undefined);
       const browserClose = vi.fn(async () => undefined);
-      const batch = createJapaneseUpgradeBrowserBatch({} as Fetcher, async () => ({
+      const batch = createJapaneseUpgradeBrowserBatch(browserLauncher(async () => ({
         newContext: () => lateContext.promise,
         close: browserClose,
-      }));
+      })));
       const productUrl = "https://store-jp.nintendo.com/item/software/D70010000106252/";
       const resolution = batch.resolve([root(productUrl)], new AbortController().signal);
 
@@ -188,14 +202,14 @@ describe("Japanese upgrade Browser Run batch", () => {
       const firstLateClose = vi.fn(async () => undefined);
       const secondGoto = vi.fn(async () => undefined);
       let contextCount = 0;
-      const batch = createJapaneseUpgradeBrowserBatch({} as Fetcher, async () => ({
+      const batch = createJapaneseUpgradeBrowserBatch(browserLauncher(async () => ({
         newContext: async () => {
           contextCount += 1;
           if (contextCount === 1) return { newPage: firstNewPage, close: firstContextClose };
           return contextWithPage(pageWithUpgradeLink("/item/software/D70050000064985/", secondGoto));
         },
         close: async () => undefined,
-      }));
+      })));
       const firstUrl = "https://store-jp.nintendo.com/item/software/D70010000106252/";
       const secondUrl = "https://store-jp.nintendo.com/item/software/D70010000106253/";
       const resolution = batch.resolve([root(firstUrl), root(secondUrl)], new AbortController().signal);
@@ -232,7 +246,7 @@ describe("Japanese upgrade Browser Run batch", () => {
       const firstContextClose = vi.fn(async () => Promise.reject(new Error("context close detail")));
       const secondContext = vi.fn();
       let contextCount = 0;
-      const batch = createJapaneseUpgradeBrowserBatch({} as Fetcher, async () => ({
+      const batch = createJapaneseUpgradeBrowserBatch(browserLauncher(async () => ({
         newContext: async () => {
           contextCount += 1;
           if (contextCount === 1) return { newPage: () => pendingPage.promise, close: firstContextClose };
@@ -240,7 +254,7 @@ describe("Japanese upgrade Browser Run batch", () => {
           return contextWithPage(pageWithUpgradeLink("/item/software/D70050000064985/"));
         },
         close: async () => undefined,
-      }));
+      })));
       const firstUrl = "https://store-jp.nintendo.com/item/software/D70010000106252/";
       const secondUrl = "https://store-jp.nintendo.com/item/software/D70010000106253/";
       const resolution = batch.resolve([root(firstUrl), root(secondUrl)], new AbortController().signal);
@@ -260,7 +274,7 @@ describe("Japanese upgrade Browser Run batch", () => {
   });
 
   it("waits for a timed-out page close before starting the next root", async () => {
-    // 已交付页面的 goto 可能仍在远端执行；timeout 后必须先确认 page → context 关闭，才可创建下一项 context，避免同一 browser 出现并发业务操作。
+    // 已交付页面的 goto 可能仍在浏览器进程执行；timeout 后必须先确认 page → context 关闭，才可创建下一项 context，避免同一 browser 出现并发业务操作。
     vi.useFakeTimers();
     try {
       const firstGoto = deferred<void>();
@@ -269,7 +283,7 @@ describe("Japanese upgrade Browser Run batch", () => {
       const firstLocator = vi.fn(() => ({ all: async () => [] }));
       const secondGoto = vi.fn(async () => undefined);
       let contextCount = 0;
-      const batch = createJapaneseUpgradeBrowserBatch({} as Fetcher, async () => ({
+      const batch = createJapaneseUpgradeBrowserBatch(browserLauncher(async () => ({
         newContext: async () => {
           contextCount += 1;
           if (contextCount === 1) {
@@ -286,7 +300,7 @@ describe("Japanese upgrade Browser Run batch", () => {
           return contextWithPage(pageWithUpgradeLink("/item/software/D70050000064985/", secondGoto));
         },
         close: async () => { events.push("browser-close"); },
-      }));
+      })));
       const firstUrl = "https://store-jp.nintendo.com/item/software/D70010000106252/";
       const secondUrl = "https://store-jp.nintendo.com/item/software/D70010000106253/";
       const resolution = batch.resolve([root(firstUrl), root(secondUrl)], new AbortController().signal);
@@ -322,7 +336,7 @@ describe("Japanese upgrade Browser Run batch", () => {
     try {
       const pageClose = deferred<void>();
       const events: string[] = [];
-      const batch = createJapaneseUpgradeBrowserBatch({} as Fetcher, async () => ({
+      const batch = createJapaneseUpgradeBrowserBatch(browserLauncher(async () => ({
         newContext: async () => ({
           newPage: async () => ({
             goto: async () => undefined,
@@ -332,7 +346,7 @@ describe("Japanese upgrade Browser Run batch", () => {
           close: async () => { events.push("context-close"); },
         }),
         close: async () => { events.push("browser-close"); },
-      }));
+      })));
       const productUrl = "https://store-jp.nintendo.com/item/software/D70010000106252/";
       let settled = false;
       const resolution = batch.resolve([root(productUrl)], new AbortController().signal).then((result) => { settled = true; return result; });
@@ -354,8 +368,8 @@ describe("Japanese upgrade Browser Run batch", () => {
   });
 
   it("does not replace a successful business result when resource cleanup fails", async () => {
-    // close 失败可能来自已断开的远端会话；业务结论已经由受控 DOM 证据得到，不能因清理异常改写或泄漏错误内容。
-    const batch = createJapaneseUpgradeBrowserBatch({} as Fetcher, async () => ({
+    // close 失败可能来自已退出的本地进程；业务结论已经由受控 DOM 证据得到，不能因清理异常改写或泄漏错误内容。
+    const batch = createJapaneseUpgradeBrowserBatch(browserLauncher(async () => ({
       newContext: async () => ({
         newPage: async () => ({
           goto: async () => undefined,
@@ -365,7 +379,7 @@ describe("Japanese upgrade Browser Run batch", () => {
         close: async () => Promise.reject(new Error("context cleanup detail")),
       }),
       close: async () => Promise.reject(new Error("browser cleanup detail")),
-    }));
+    })));
     const productUrl = "https://store-jp.nintendo.com/item/software/D70010000106252/";
     const result = await batch.resolve([root(productUrl)], new AbortController().signal);
 
@@ -377,7 +391,7 @@ describe("Japanese upgrade Browser Run batch", () => {
     const launchBrowser = vi.fn();
     const roots = Array.from({ length: 4 }, (_, index) => root(`https://store-jp.nintendo.com/item/software/D7001000010625${index}/`));
 
-    await expect(createJapaneseUpgradeBrowserBatch({} as Fetcher, launchBrowser).resolve(roots, new AbortController().signal))
+    await expect(createJapaneseUpgradeBrowserBatch(browserLauncher(launchBrowser)).resolve(roots, new AbortController().signal))
       .rejects.toThrow("一次最多核验 3 个日区升级包");
     expect(launchBrowser).not.toHaveBeenCalled();
   });
@@ -437,7 +451,7 @@ function failingBrowser(error: Error, close: () => Promise<void>) {
       newPage: async () => ({
         goto: async () => Promise.reject(error),
         locator: () => ({ all: async () => [] }),
-        // Page 关闭是异步远端资源释放；用异步 mock 保持与 BrowserPageLike 契约一致。
+        // Page 关闭是异步浏览器资源释放；用异步 mock 保持与 BrowserPageLike 契约一致。
         close: vi.fn(async () => undefined),
       }),
       // Context 也必须异步关闭，确保测试只检验业务失败分类而不会由夹具制造 TypeError。
@@ -448,7 +462,7 @@ function failingBrowser(error: Error, close: () => Promise<void>) {
 }
 
 /**
- * 构造可控延迟 Promise，专门模拟 Browser Run 在 30 秒后才交付 context/page 的竞态。
+ * 构造可控延迟 Promise，专门模拟 Playwright 在 30 秒后才交付 context/page 的竞态。
  * 测试通过它证明迟到资源只会被关闭，不需要真实网络、浏览器进程或会话内容。
  */
 function deferred<T>() {
@@ -473,8 +487,16 @@ function contextWithPage(page: ReturnType<typeof pageWithUpgradeLink>) {
 
 /**
  * 刷新有限轮微任务，让窄替身中的 context → page → goto/locator 续体及安全关闭调用完成，而不依赖真实时钟。
- * 固定上限只服务于内存替身的确定性调度，不模拟 Browser Run 的时间；真正的 30 秒边界始终由 fake timer 显式推进。
+ * 固定上限只服务于内存替身的确定性调度，不模拟 Chromium 的真实时间；真正的 30 秒边界始终由 fake timer 显式推进。
  */
 async function flushMicrotasks(): Promise<void> {
   for (let index = 0; index < 12; index += 1) await Promise.resolve();
+}
+
+/**
+ * 将单个可观察启动函数包进批准的窄 launcher 契约；替身不接受远程 endpoint、持久目录或运行环境，
+ * 因而测试一旦错误扩展本地启动参数就会在类型和调用形状上同时失败。
+ */
+function browserLauncher<T>(launch: () => Promise<T>) {
+  return { launch };
 }

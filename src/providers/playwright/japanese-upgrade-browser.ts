@@ -1,15 +1,13 @@
-import { launch, type BrowserWorker } from "@cloudflare/playwright";
-
-import type { JapaneseUpgradeRootCandidate } from "../../providers/official-japanese-upgrade-root";
+import type { JapaneseUpgradeRootCandidate } from "../official-japanese-upgrade-root";
 import {
   JapaneseUpgradeBatchLimitError,
   normalizeJapaneseUpgradeUrl,
   type JapaneseUpgradeBrowserBatch,
   type JapaneseUpgradeBrowserResult,
-} from "../../providers/japanese-upgrade-browser";
+} from "../japanese-upgrade-browser";
 
 /** 页面适配面刻意缩小到本任务所需操作，测试因此无需模拟真实浏览器、HTML、Cookie 或任意 Playwright API。 */
-interface BrowserPageLike {
+export interface BrowserPageLike {
   goto(url: string, options: { waitUntil: "domcontentloaded"; timeout: number }): Promise<unknown>;
   locator(selector: string): {
     all(): Promise<Array<{
@@ -22,31 +20,34 @@ interface BrowserPageLike {
 }
 
 /** 每项必须新建无痕上下文；不暴露复用、存储或会话管理接口以防后续调用绕开隔离要求。 */
-interface BrowserContextLike {
+export interface BrowserContextLike {
   newPage(): Promise<BrowserPageLike>;
   close(): Promise<void>;
 }
 
 /** 请求级浏览器只负责创建上下文与最终关闭，禁止 keep_alive、连接复用和会话 ID 读取。 */
-interface BrowserLike {
+export interface BrowserLike {
   newContext(): Promise<BrowserContextLike>;
   close(): Promise<void>;
 }
 
-/** 可注入的启动函数只用于窄测试替身；生产实现固定使用 Cloudflare Binding 启动一次浏览器。 */
-type BrowserLauncher = (binding: Fetcher) => Promise<BrowserLike>;
+/**
+ * launcher 只承诺本地启动一个浏览器；不接受远程 endpoint、持久化目录或运行环境，
+ * 从类型边界阻止关系适配器连接远程 Browser Server、CDP 会话或跨请求保活实例。
+ */
+export interface BrowserLauncher {
+  launch(): Promise<BrowserLike>;
+}
 
-/** 单项导航加页面关系提取的统一上限；没有重试，避免 Browser Run 额度或排队限制被单请求放大。 */
+/** 单项导航加页面关系提取的统一上限；没有重试，避免 Chromium 进程负载或外部页面请求被单次操作放大。 */
 const itemTimeoutMs = 30_000;
 
 /**
- * 创建日区升级路径的请求级 Browser Run 适配器。
- * Binding 在公共 Env 契约中保持 Fetcher；Cloudflare Playwright 的公开类型要求 BrowserWorker，故只在此受控边界作窄转换，
- * 不把 BrowserWorker 或 Browser Run 细节泄漏给路由、服务、D1、Cron 或前端层。
+ * 创建日区升级路径的请求级本地 Chromium 适配器。
+ * 关系层只接收窄 launcher，不把 Playwright 模块、进程路径或浏览器运行细节泄漏给路由、服务、PostgreSQL、调度器或前端层。
  */
 export function createJapaneseUpgradeBrowserBatch(
-  binding: Fetcher,
-  launchBrowser: BrowserLauncher = async (browserBinding) => launch(browserBinding as unknown as BrowserWorker),
+  launcher: BrowserLauncher,
 ): JapaneseUpgradeBrowserBatch {
   return {
     async resolve(roots, signal) {
@@ -66,8 +67,8 @@ export function createJapaneseUpgradeBrowserBatch(
 
       let browser: BrowserLike | undefined;
       try {
-        browser = await launchBrowser(binding);
-        // 串行处理可避免同一请求内并发上下文争抢 Browser Run 配额；已交付页面的关闭屏障未确认前绝不进入下一个根。
+        browser = await launcher.launch();
+        // 串行处理可避免同一请求内并发上下文争抢 Chromium 资源；已交付页面的关闭屏障未确认前绝不进入下一个根。
         for (let index = 0; index < validRoots.length; index += 1) {
           const root = validRoots[index];
           const resolved = await resolveOne(browser, root, signal);
@@ -79,12 +80,12 @@ export function createJapaneseUpgradeBrowserBatch(
           }
         }
       } catch {
-        // 启动失败或未预料的批处理错误均只填充未完成项；不得把错误正文、堆栈或远端会话数据写入输出。
+        // 启动失败或未预料的批处理错误均只填充未完成项；不得把错误正文、堆栈、本机路径或进程信息写入输出。
         for (const root of validRoots) {
           if (!results.has(root.productUrl)) results.set(root.productUrl, { status: "browser-unavailable" });
         }
       } finally {
-        // 浏览器关闭是尽力而为的生命周期清理；远端关闭失败不能覆盖任何已得出的业务分类。
+        // 浏览器关闭是尽力而为的生命周期清理；本地进程关闭失败不能覆盖任何已得出的业务分类。
         await closeSafely(browser);
       }
       return results;
@@ -94,7 +95,7 @@ export function createJapaneseUpgradeBrowserBatch(
 
 /**
  * 对一个已验证根执行独立上下文核验。整个导航和 DOM 关系读取共享 30 秒失败边界；任一阶段没有重试，
- * 因为二次访问可能产生新的排队或页面状态，既浪费免费额度也不能增加可审计的官方证据。
+ * 因为二次访问可能产生新的页面状态并放大本机与官方站点负载，也不能增加可审计的官方证据。
  */
 async function resolveOne(
   browser: BrowserLike,
@@ -216,7 +217,7 @@ function isJapaneseRootUrl(value: string): boolean {
 class ItemTimeoutError extends Error {}
 
 /**
- * 单项资源的可取消所有权。Browser Run 的 newContext/newPage 不接受 AbortSignal，故 timeout 后不能仅靠 Promise.race 忽略它们：
+ * 单项资源的可取消所有权。Playwright 的 newContext/newPage 不接受本业务 AbortSignal，故 timeout 后不能仅靠 Promise.race 忽略它们：
  * 已交付 page 的关闭必须形成 page → context 屏障，迟到资源在 adopt 时立即关闭；每个业务 await 后由 assertActive 阻断后续导航和 DOM 读取。
  */
 class ItemLifecycle {
@@ -300,7 +301,7 @@ class ItemLifecycle {
 }
 
 /**
- * 关闭远端浏览器资源时吞掉异常正文并只返回是否已确认完成；清理不是本项业务结果的证据来源。
+ * 关闭本地浏览器资源时吞掉异常正文并只返回是否已确认完成；清理不是本项业务结果的证据来源。
  * 参数只要求 close 能力，以复用同一规则处理 page、context 和 browser，且不会记录任何会话或异常细节。
  */
 async function closeSafely(resource: { close(): Promise<void> } | undefined): Promise<boolean> {
