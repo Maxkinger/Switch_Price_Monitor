@@ -239,68 +239,29 @@ describe("PostgreSQL 认证仓储与服务", () => {
     }
   }, 10_000);
 
-  it("五个并发错误登录原子累积到五并立即形成十五分钟锁定", async () => {
+  it("五个并发错误登录形成锁定后在密码验证前拒绝后续正确密码", async () => {
     /**
-     * 所有请求故意使用相同时间并共享真实 PostgreSQL 单例行；若继续采用“先读旧值再覆盖写”，
-     * 多个请求会把 failed_count 都写成 1，本断言可稳定捕获丢失更新。
-     */
-    const auth = createAuth(database);
-    await initialize(auth, "2026-07-27T00:00:00.000Z");
-    const attempts = await Promise.allSettled(
-      Array.from({ length: 5 }, () =>
-        createAuth(database).login(
-          "synthetic-concurrent-wrong-password",
-          "2026-07-27T00:01:00.000Z",
-        )),
-    );
-    expect(attempts).toSatisfy((results: PromiseSettledResult<unknown>[]) =>
-      results.every(
-        (result) =>
-          result.status === "rejected" &&
-          result.reason instanceof InvalidCredentialsError,
-      ));
-    const stored = await database.query<{ failedCount: number; lockedUntil: Date }>(
-      `SELECT failed_count AS "failedCount",
-              locked_until AS "lockedUntil"
-         FROM login_attempts
-        WHERE id = 1`,
-    );
-    expect(stored.rows[0]?.failedCount).toBe(5);
-    expect(stored.rows[0]?.lockedUntil.toISOString()).toBe("2026-07-27T00:16:00.000Z");
-    await expect(
-      auth.login(syntheticPassword, "2026-07-27T00:15:59.999Z"),
-    ).rejects.toBeInstanceOf(LoginLockedError);
-  });
-
-  it("六个同快照并发登录只允许前五个进入密码验证并拒绝第六个正确密码", async () => {
-    /**
-     * barrier 放在旧的锁定状态读取之后，证明仅把“失败写回”改成原子递增仍不够：
-     * 第六个请求必须在 PBKDF2/密码比较前取得数据库资格，否则正确密码会绕过前五个并发失败形成的锁定。
+     * 五个错误请求仍真实并发竞争 PostgreSQL 单例状态，完成后必须串行累计到五次并形成锁定。
+     * 正确密码只在锁定已提交后发起，因此本用例验证锁定会在 PBKDF2/密码比较前短路，
+     * 不把客户端 Promise 数组顺序误当作 PostgreSQL 对真正并发事务的锁授予承诺。
      */
     await initialize(createAuth(database), "2026-07-27T00:00:00.000Z");
     let passwordVerificationCount = 0;
-    const repository = synchronizeLoginAttemptReads(
+    const repository = observePasswordVerifications(
       new PostgresAuthRepository(database),
-      6,
       () => {
         passwordVerificationCount += 1;
       },
     );
-    const requests = [
-      ...Array.from({ length: 5 }, () =>
+    const attempts = await Promise.allSettled(
+      Array.from({ length: 5 }, () =>
         new AuthService(repository).login(
-          "synthetic-qualification-wrong-password",
+          "synthetic-concurrent-wrong-password",
           "2026-07-27T00:01:00.000Z",
         )),
-      new AuthService(repository).login(
-        syntheticPassword,
-        "2026-07-27T00:01:00.000Z",
-      ),
-    ];
+    );
 
-    const attempts = await Promise.allSettled(requests);
-
-    expect(attempts.slice(0, 5)).toSatisfy(
+    expect(attempts).toSatisfy(
       (results: PromiseSettledResult<unknown>[]) =>
         results.every(
           (result) =>
@@ -308,14 +269,21 @@ describe("PostgreSQL 认证仓储与服务", () => {
             result.reason instanceof InvalidCredentialsError,
         ),
     );
-    expect(attempts[5]).toMatchObject({
-      status: "rejected",
-      reason: expect.any(LoginLockedError),
-    });
-    // 六个请求中只能有前五个调用密码校验回调；锁定请求必须在 PBKDF2 之前被仓储拒绝。
+    expect(passwordVerificationCount).toBe(5);
+    await expect(
+      new AuthService(repository).login(
+        syntheticPassword,
+        "2026-07-27T00:15:59.999Z",
+      ),
+    ).rejects.toBeInstanceOf(LoginLockedError);
+    // 活跃锁定请求不得进入密码校验；计数必须保持为前五个错误请求对应的五次。
     expect(passwordVerificationCount).toBe(5);
     await expect(countActiveSessions(database)).resolves.toBe(0);
-    const stored = await database.query<{ failedCount: number; lockedUntil: Date }>(
+
+    const stored = await database.query<{
+      failedCount: number;
+      lockedUntil: Date;
+    }>(
       `SELECT failed_count AS "failedCount",
               locked_until AS "lockedUntil"
          FROM login_attempts
@@ -326,6 +294,84 @@ describe("PostgreSQL 认证仓储与服务", () => {
       "2026-07-27T00:16:00.000Z",
     );
   });
+
+  it("成功登录删除失败状态时并发错误登录仍原子取得新的失败窗口", async () => {
+    /**
+     * 先提交一次错误登录以建立既有 login_attempts，再让合法登录锁定该行并暂停于真实 DELETE 之前。
+     * 第二个错误登录把旧 SELECT FOR UPDATE 或新原子 upsert 先提交给 PostgreSQL，随后才释放合法登录；
+     * 旧路径会在删除提交后观察到缺行，原子 upsert 则必须取得新的失败窗口。协调器不读取任何参数。
+     */
+    await initialize(createAuth(database), "2026-07-27T00:00:00.000Z");
+    await expect(
+      createAuth(database).login(
+        "synthetic-preexisting-wrong-password",
+        "2026-07-27T00:00:30.000Z",
+      ),
+    ).rejects.toBeInstanceOf(InvalidCredentialsError);
+    const successfulLoginReachedDelete = createDeferred<void>();
+    const invalidLoginSubmittedLockingQuery = createDeferred<void>();
+    const releaseSuccessfulLoginDelete = createDeferred<void>();
+    const coordinatedDatabase = coordinateLoginAttemptDeletionRace(database, {
+      onSuccessfulLoginReachedDelete: successfulLoginReachedDelete.resolve,
+      onInvalidLoginSubmittedLockingQuery:
+        invalidLoginSubmittedLockingQuery.resolve,
+      releaseSuccessfulLoginDelete: releaseSuccessfulLoginDelete.promise,
+    });
+    const auth = createAuth(coordinatedDatabase);
+    let successfulLogin: Promise<unknown> | undefined;
+    let invalidLogin: Promise<unknown> | undefined;
+
+    try {
+      successfulLogin = auth.login(
+        syntheticPassword,
+        "2026-07-27T00:01:00.000Z",
+      );
+      await withinTestStage(
+        successfulLoginReachedDelete.promise,
+        "合法登录未到达失败状态删除边界",
+      );
+
+      invalidLogin = auth.login(
+        "synthetic-delete-race-wrong-password",
+        "2026-07-27T00:01:01.000Z",
+      );
+      await withinTestStage(
+        invalidLoginSubmittedLockingQuery.promise,
+        "并发错误登录未提交失败状态锁定语句",
+      );
+
+      releaseSuccessfulLoginDelete.resolve();
+      await expect(successfulLogin).resolves.toMatchObject({
+        token: expect.any(String),
+      });
+      await expect(invalidLogin).rejects.toBeInstanceOf(
+        InvalidCredentialsError,
+      );
+
+      const stored = await database.query<{
+        failedCount: number;
+        lockedUntil: Date | null;
+      }>(
+        `SELECT failed_count AS "failedCount",
+                locked_until AS "lockedUntil"
+           FROM login_attempts
+          WHERE id = 1`,
+      );
+      expect(stored.rows).toEqual([
+        { failedCount: 1, lockedUntil: null },
+      ]);
+      await expect(countActiveSessions(database)).resolves.toBe(1);
+    } finally {
+      // 任何 RED 断言或阶段诊断失败都释放真实事务，避免 pool.end 被占用连接无限阻塞。
+      releaseSuccessfulLoginDelete.resolve();
+      await Promise.allSettled(
+        [successfulLogin, invalidLogin].filter(
+          (operation): operation is Promise<unknown> =>
+            operation !== undefined,
+        ),
+      );
+    }
+  }, 10_000);
 
   it("用 TIMESTAMPTZ 累积五次失败、锁定十五分钟并在到期成功后清空", async () => {
     // pg 返回 Date，仓储必须规范化为 ISO 字符串；否则服务的 Date.parse 可能错误绕过锁定或无法在到期后重置计数。
@@ -513,32 +559,80 @@ async function withinTestStage<T>(
 }
 
 /**
- * 代理同步旧 `getLoginAttempt` 返回边界，并只为新原子端口包装密码校验回调以记录调用次数。
- * 六个旧查询都释放连接并读到同一未锁定状态后才继续；底层资格锁、失败写和会话写仍全部使用真实 PostgreSQL。
+ * 仅协调本用例按顺序启动的两个登录事务：第一个在真实失败状态 DELETE 前暂停；
+ * 第二个把旧 SELECT FOR UPDATE 或新原子 upsert 交给真实 SqlExecutor 后才发出到达信号。
+ * 包装器不检查 parameters，因而不收集密码派生值或会话摘要；事务语义仍完全使用生产 AppDatabase。
  */
-function synchronizeLoginAttemptReads(
+function coordinateLoginAttemptDeletionRace(
+  database: AppDatabase,
+  events: {
+    onSuccessfulLoginReachedDelete: () => void;
+    onInvalidLoginSubmittedLockingQuery: () => void;
+    releaseSuccessfulLoginDelete: Promise<void>;
+  },
+): AppDatabase {
+  let transactionOrder = 0;
+  return {
+    query: (sql, parameters) => database.query(sql, parameters),
+    transaction: (work) => {
+      const currentOrder = transactionOrder;
+      transactionOrder += 1;
+      return database.transaction(async (transaction) => {
+        const coordinatedExecutor: SqlExecutor = {
+          async query<Row>(
+            sql: string,
+            parameters?: readonly unknown[],
+          ) {
+            if (
+              currentOrder === 0 &&
+              /DELETE\s+FROM\s+login_attempts/i.test(sql)
+            ) {
+              events.onSuccessfulLoginReachedDelete();
+              await events.releaseSuccessfulLoginDelete;
+            }
+            const isOldLockingSelect =
+              /SELECT[\s\S]+FROM\s+login_attempts[\s\S]+FOR\s+UPDATE/i.test(
+                sql,
+              );
+            const isAtomicLockingUpsert =
+              /INSERT\s+INTO\s+login_attempts[\s\S]+ON\s+CONFLICT[\s\S]+DO\s+UPDATE[\s\S]+RETURNING/i.test(
+                sql,
+              );
+            if (
+              currentOrder === 1 &&
+              (isOldLockingSelect || isAtomicLockingUpsert)
+            ) {
+              // 先调用真实 executor，再发信号，保证控制协程释放 DELETE 时锁定语句已进入 PostgreSQL。
+              const pendingQuery = transaction.query<Row>(
+                sql,
+                parameters,
+              );
+              events.onInvalidLoginSubmittedLockingQuery();
+              return pendingQuery;
+            }
+            return transaction.query<Row>(sql, parameters);
+          },
+        };
+        return work(coordinatedExecutor);
+      });
+    },
+    withAdvisoryLock: (key, work) => database.withAdvisoryLock(key, work),
+    close: () => Promise.resolve(),
+  };
+}
+
+/**
+ * 只统计真实原子登录端口实际进入密码校验的次数；不读取凭据内容，也不改变数据库事务、锁或返回值。
+ * 调用方用它证明活跃锁定会在 PBKDF2 前短路，而不是尝试规定真正并发事务的数据库锁授予顺序。
+ */
+function observePasswordVerifications(
   repository: AuthRepository,
-  participants: number,
   onPasswordVerification: () => void,
 ): AuthRepository {
-  let arrived = 0;
-  let release!: () => void;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
   return new Proxy(repository, {
     get(target, property, receiver) {
-      if (property === "getLoginAttempt") {
-        return async () => {
-          const result = await target.getLoginAttempt();
-          arrived += 1;
-          if (arrived === participants) release();
-          await gate;
-          return result;
-        };
-      }
       if (property === "performLoginAttempt") {
-        return async (
+        return (
           input: Parameters<AuthRepository["performLoginAttempt"]>[0],
           verifyPassword: Parameters<AuthRepository["performLoginAttempt"]>[1],
         ) =>

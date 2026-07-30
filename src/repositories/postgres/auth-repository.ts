@@ -122,27 +122,26 @@ export class PostgresAuthRepository implements AuthRepository {
       const credential = credentialResult.rows[0] ?? null;
 
       /**
-       * 单例失败状态随后以 FOR UPDATE 锁定。并发首次登录的 INSERT 冲突会等待前一事务，
-       * 因而每个请求都在上一个请求完成计数、清理或建会话后才取得资格，不能共享未锁定快照。
+       * 单条 upsert 同时确保单例状态存在、取得冲突行排他锁并返回当前值。合法登录可能在等待事务提交前
+       * 删除该行；DO UPDATE/INSERT 的 PostgreSQL 冲突重试与同语句 RETURNING 可避免随后 SELECT 观察到缺行。
+       * 自赋值只保留串行化后的失败次数和锁定截止时间，表中没有更新时间触发器，不改变业务状态。
        */
-      await transaction.query(
+      const attemptResult = await transaction.query<LoginAttemptRow>(
         `INSERT INTO login_attempts (id, failed_count, locked_until)
          VALUES (1, 0, NULL)
-         ON CONFLICT (id) DO NOTHING`,
-      );
-      const attemptResult = await transaction.query<LoginAttemptRow>(
-        `SELECT failed_count AS "failedCount",
-                locked_until AS "lockedUntil"
-           FROM login_attempts
-          WHERE id = 1
-          FOR UPDATE`,
+         ON CONFLICT (id) DO UPDATE
+           SET failed_count = login_attempts.failed_count,
+               locked_until = login_attempts.locked_until
+         RETURNING failed_count AS "failedCount",
+                   locked_until AS "lockedUntil"`,
       );
       const attempt = attemptResult.rows[0];
+      // RETURNING 正常必须产生一行；不变量错误保持通用且不得附带 SQL、参数、凭据或驱动详情。
       if (!attempt) throw new Error("登录资格锁定未返回状态");
 
       const nowMs = Date.parse(input.now);
       const lockedUntilMs = attempt.lockedUntil?.getTime() ?? null;
-      // 活跃锁定必须在读取凭据和 PBKDF2 之前返回，避免第六个并发正确密码绕过五次失败阈值。
+      // 活跃锁定必须在 PBKDF2/密码比较之前返回，避免后续正确密码绕过五次失败阈值或消耗验证资源。
       if (lockedUntilMs !== null && lockedUntilMs > nowMs) return "locked";
 
       // 已到期锁定开启新的失败窗口；本次错误应从一次重新累计，而非沿用旧的五次以上计数。
