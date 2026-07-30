@@ -1096,6 +1096,9 @@ git push
 ### Task 10: Add CI and Tagged Multi-Architecture Docker Hub Releases
 
 **Files:**
+- Modify: `Dockerfile` — pin all build/runtime Node stages to one exact audited patch release.
+- Modify: `package.json` — add the structured YAML contract dependency, workflow gate scripts, and Chinese security rationale.
+- Modify: `package-lock.json` — lock the exact YAML parser dependency used by the workflow contracts.
 - Create: `.github/workflows/ci.yml`
 - Create: `.github/workflows/release-image.yml`
 - Create: `test/github-actions-release.test.mjs`

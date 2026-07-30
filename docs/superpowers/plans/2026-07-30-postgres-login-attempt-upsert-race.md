@@ -414,15 +414,17 @@ git push origin codex/nas-docker-postgresql
 ### Task 2: Re-run the Task 10 Gate and Finalize Its Separate Delivery
 
 **Files:**
+- Modify: `docs/superpowers/plans/2026-07-30-postgres-login-attempt-upsert-race.md`
+- Modify: `docs/superpowers/plans/2026-07-27-nas-docker-postgresql-migration.md`
 - Modify: `docs/README.md`
 - Modify: `docs/quality/quality-and-acceptance.md`
+- Modify: `.github/workflows/release-image.yml`
+- Modify: `test/github-actions-release.test.mjs`
 - Preserve and verify existing Task 10 changes:
   - `Dockerfile`
   - `package.json`
   - `package-lock.json`
   - `.github/workflows/ci.yml`
-  - `.github/workflows/release-image.yml`
-  - `test/github-actions-release.test.mjs`
 
 **Interfaces:**
 - Consumes: Task 1 的已推送原子 upsert 修复、现有 Docker/Compose 合同、GitHub Actions 合同和本地 M1 Docker Desktop。
@@ -443,7 +445,7 @@ git push origin codex/nas-docker-postgresql
 
 - Task 10 提交前完整门禁曾在 435 项测试中的并发登录用例暴露“登录资格锁定未返回状态”；隔离重复运行再次复现，确认是成功登录删除 `login_attempts` 与等待事务执行 `DO NOTHING` 后再读取之间的真实竞态，而非断言噪声。
 - 新增真实 PostgreSQL 确定性事务协调测试，在旧两语句实现下稳定得到预期 RED；改用单条 `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` 后，错误登录稳定返回无效凭据并进入新的第一次失败窗口，合法登录会话仍原子提交且只保存摘要。
-- 竞态与六请求阈值组合连续 20 次通过；完整认证、迁移、项目测试、DOM、Chromium、类型、构建、Docker/工作流合同、中文注释、空白和双架构构建门禁均通过。过程未读取或输出真实密码、哈希、盐、恢复码、Cookie、数据库凭据或 Docker Hub Secrets，也未推送镜像、创建标签或修改 NAS/Cloudflare 资源。
+- 缺行竞态与“并发五次错误后正确密码锁定”组合连续 20 次通过；完整认证、迁移、项目测试、DOM、Chromium、类型、构建、Docker/工作流合同、中文注释、空白和双架构构建门禁均通过。过程未读取或输出真实密码、哈希、盐、恢复码、Cookie、数据库凭据或 Docker Hub Secrets，也未推送镜像、创建标签或修改 NAS/Cloudflare 资源。
 ```
 
 最终测试数量必须用本轮命令的真实输出替换上一段第三条中的概述；不得猜测或沿用失败前计数。
@@ -490,7 +492,9 @@ git status --short
 git diff -- Dockerfile package.json package-lock.json \
   .github/workflows/ci.yml .github/workflows/release-image.yml \
   test/github-actions-release.test.mjs \
-  docs/README.md docs/quality/quality-and-acceptance.md
+  docs/README.md docs/quality/quality-and-acceptance.md \
+  docs/superpowers/plans/2026-07-27-nas-docker-postgresql-migration.md \
+  docs/superpowers/plans/2026-07-30-postgres-login-attempt-upsert-race.md
 ```
 
 人工确认：
@@ -509,7 +513,9 @@ git diff -- Dockerfile package.json package-lock.json \
 git add Dockerfile package.json package-lock.json \
   .github/workflows/ci.yml .github/workflows/release-image.yml \
   test/github-actions-release.test.mjs \
-  docs/README.md docs/quality/quality-and-acceptance.md
+  docs/README.md docs/quality/quality-and-acceptance.md \
+  docs/superpowers/plans/2026-07-27-nas-docker-postgresql-migration.md \
+  docs/superpowers/plans/2026-07-30-postgres-login-attempt-upsert-race.md
 git commit -m "ci: 发布多架构 Docker 镜像"
 git push origin codex/nas-docker-postgresql
 ```

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
-# Node 22 与服务端 tsup 目标一致；Bookworm 是 Playwright 支持的 glibc Debian，禁止改用缺少官方浏览器支持的 Alpine。
-FROM node:22-bookworm-slim AS dependencies
+# Node 22.20.0 与本地/CI 运行时精确一致；具体补丁防止发布构建随浮动标签漂移，Bookworm 则提供 Playwright 支持的 glibc Debian。
+FROM node:22.20.0-bookworm-slim AS dependencies
 WORKDIR /app
 
 # 依赖层只复制清单并执行 lockfile 驱动的完整安装，确保 M1 arm64 与 DS423+ amd64 都由 BuildKit 当前平台解析原生包。
@@ -15,14 +15,14 @@ COPY src ./src
 RUN npm run build
 
 # 生产依赖独立安装，不能从完整依赖层删除 dev 包后复用，以免 npm prune 留下不可审计的构建期文件。
-FROM node:22-bookworm-slim AS production-dependencies
+FROM node:22.20.0-bookworm-slim AS production-dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev \
     && npm cache clean --force
 
-# 最终层仍使用同一 Node 22 glibc 基础；Playwright 根据当前 BuildKit 平台安装与精确 npm 版本匹配的 Chromium，不拼接架构 URL。
-FROM node:22-bookworm-slim AS runtime
+# 最终层仍使用同一 Node 22.20.0 glibc 基础；Playwright 根据当前 BuildKit 平台安装与精确 npm 版本匹配的 Chromium，不拼接架构 URL。
+FROM node:22.20.0-bookworm-slim AS runtime
 ENV NODE_ENV=production \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     HOME=/home/app \

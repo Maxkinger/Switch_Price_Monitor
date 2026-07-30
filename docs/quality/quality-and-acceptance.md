@@ -159,6 +159,29 @@
 - 同一临时栈从空库完成首次管理员初始化、登录和设置读取，restart app/postgres 后 initialized 状态仍保持；普通数据库角色的 `rolsuper`、`rolcreaterole`、`rolcreatedb`、`rolreplication`、`rolbypassrls` 全部为 false。
 - 最终门禁通过完整测试 78 个文件、435 项，DOM 4 个文件、16 项，Docker 合同 14/14，以及 TypeScript、双生产构建与 `git diff --check`。本验收没有发布 Docker Hub manifest，也没有连接或修改 NAS/Cloudflare 生产资源。
 
+### 3.19 GitHub Actions CI 与标签发布合同验收（2026-07-29）
+
+- 工作流合同测试先因 `.github/workflows/ci.yml` 与 `.github/workflows/release-image.yml` 均不存在得到单一有效 RED；实现后 9 项结构化 YAML 合同全部通过。测试使用直接、精确锁定的 `yaml` 开发依赖解析 job、service、step、permissions 与 inputs，不把脆弱正则当作工作流结构；仅中文注释一致性这种不可执行的人类约束读取注释文本。
+- 普通分支 push 与 pull request 使用 `contents: read` 最小权限，在 PostgreSQL 17.10 临时 service 上执行完整 Vitest/PostgreSQL 集成测试、DOM、真实 Chromium 生命周期烟雾测试、TypeScript、生产构建、Docker/Compose 合同、工作流合同、中文注释、空白和 Gitleaks 秘密扫描，再以 Buildx 验证 `linux/arm64,linux/amd64`。空白门禁显式检查 PR base 或 push before 到 head 的已提交差异，首次 push 安全退化为当前提交；标签路径检查标签目标提交，不依赖 checkout 后必然干净的工作区。该路径没有 Docker Hub login、push、Secrets 引用或 `latest` 标签。
+- 标签工作流只监听 `v*`，但在任何 Docker Hub 登录前还必须把 `github.ref_name` 严格验证为无前导零的 `vX.Y.Z`。本地 shell fixture 已证明 `v1.2.3` 生成 `1.2.3`、`1.2`、`sha-0123456789ab` 和 `latest`，并拒绝普通分支名、不完整版本、预发布后缀和前导零版本。
+- 发布 job 必须依赖同一提交重新完成的完整 quality job，且只读取 `DOCKERHUB_USERNAME` 与 `DOCKERHUB_TOKEN` 两个 GitHub Repository secrets。登录令牌仅进入固定 SHA 的官方 Docker login action password input，不由 shell 输出、构建参数、缓存或 OCI 标签传递。
+- 发布镜像固定同时构建 `linux/arm64,linux/amd64`，并附加 source、revision、version、created 四项 OCI 可追溯元数据。npm 缓存由 lockfile 驱动，Buildx 缓存 scope 同时包含 `package-lock.json` 与 `Dockerfile` 哈希；所有缓存都排除 PostgreSQL 运行数据、浏览器 profile、Cookie 与秘密。
+- checkout、Node、QEMU、Buildx、Docker login 和 build-push 均固定到经官方版本标签核对的 40 位提交 SHA；Dockerfile 三个外部基础阶段统一固定 `node:22.20.0-bookworm-slim`，PostgreSQL service 固定到 `postgres:17.10-bookworm`。Gitleaks 固定为 8.30.1，并在执行前验证官方 linux_x64 归档 SHA-256。任何升级都必须同时修改可信 pin 合同并重新审查。
+- 最终本地门禁通过完整测试 78 个文件、435 项，DOM 4 个文件、16 项，独立 Chromium 生命周期 4 项，Docker 合同 14/14，工作流合同 9/9，以及 TypeScript、生产构建、中文注释、`git diff --check` 和 actionlint 1.7.12。M1 Docker Desktop 还以 cache-only 方式实际完成 `linux/arm64,linux/amd64` 双架构构建，两个平台均走完固定 Node 基础、npm ci、生产构建、Playwright Chromium 和非 root 运行层；未登录或推送镜像。
+- 本轮只创建和本地验证工作流，没有配置、读取或打印真实 Docker Hub Secrets，没有登录 Docker Hub、推送 manifest、创建 Git 标签或更新 `latest`。首次公开发布仍需管理员另行确认精确语义版本。
+- 独立审查随后发现两个 quality job 错把 runner host PostgreSQL 映射与连接串设为 `5432`，这会被 `requireTestDatabaseUrl()` 的破坏性测试安全守卫确定性拒绝；两份工作流现均明确映射 `54329:5432` 并连接 `127.0.0.1:54329`，与唯一允许的临时 `switch_test` 目标一致。合同先得到端口 `5432:5432` 与期望 `54329:5432` 的 RED，修复后以结构化 YAML 精确检查 service 映射、连接串及守卫值。
+- 同次审查还以真实临时 Git merge commit fixture 证明原发布空白命令漏过只存在于 merge 父差异的尾随空格；发布 workflow 已使用 `git diff-tree -m --check --root -r` 展开每个父提交，fixture 直接执行 workflow 精确 shell 后通过。普通 CI 合同现在同时拒绝 `DOCKERHUB_USERNAME`、`DOCKERHUB_TOKEN` 与任意 `${{ secrets.* }}` 表达式。`npm run test:github-actions` 本轮实际为 9/9，工作流中文注释合同、actionlint 和最终空白检查均通过。
+- 最终权限审查明确区分 Docker Hub 身份能力：Team/Business 组织可用 OAT 对单一 `switch-price-monitor` 仓库授予 Image Pull/Push；免费/个人 PAT 原生只有 Read/Write/Delete、没有单仓库授权，因此必须使用只拥有目标公开仓库的专用 Docker ID，并创建不含 Delete 的 Read/Write PAT。`DOCKERHUB_USERNAME` 对应专用 ID 或组织 namespace，token 必须与该身份匹配；工作流的 `${DOCKERHUB_IMAGE}@push` login scope 只限制凭据注入 Buildx 的目标 push 路径，是纵深防御而非改变 PAT 本身权限。
+- 同仓库 release workflow 现使用 `release-${{ github.repository }}` 全局不可取消队列，并在完整历史 checkout 后、Docker Hub 登录前直接遍历严格 `vX.Y.Z` 标签，只允许仓库最高语义版本继续。合同以真实临时 Git 仓库证明 `v1.2.3` 在 `v1.2.4` 已存在时失败、`v1.2.4` 通过；队列与最高版本守卫共同防止旧流程回退 `X.Y`/`latest`，不依赖 GitHub 未承诺的排队顺序。最终工作流合同实际为 9/9。
+
+### 3.20 PostgreSQL 登录失败状态并发竞态回归（2026-07-30）
+
+- Task 10 提交前完整门禁曾在 435 项测试中的并发登录用例暴露“登录资格锁定未返回状态”；隔离重复运行再次复现，确认是成功登录删除 `login_attempts` 与等待事务执行 `DO NOTHING` 后再读取之间的真实竞态，而非断言噪声。
+- 新增真实 PostgreSQL 确定性事务协调测试，在旧两语句实现下稳定得到预期 RED；改用单条 `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` 后，错误登录稳定返回无效凭据并进入新的第一次失败窗口，合法登录会话仍原子提交且只保存摘要。
+- 缺行竞态与“并发五次错误后正确密码锁定”组合连续 20 次通过；本轮完整 Vitest 为 78 个文件、435 项，DOM 为 4 个文件、16 项，独立 Chromium 生命周期为 4 项，Docker 合同为 14/14，工作流合同为 9/9，工作流中文注释为 1/1，且 TypeScript、生产构建、actionlint 1.7.12、`git diff --check` 与 `linux/arm64,linux/amd64` cache-only 双架构构建均通过。过程未读取或输出真实密码、哈希、盐、恢复码、Cookie、数据库凭据或 Docker Hub Secrets，也未推送镜像、创建标签或修改 NAS/Cloudflare 资源。
+- 后续 Task 10 独立复验已让两份 CI quality job 的本机临时 PostgreSQL 端口与本竞态回归所用 `requireTestDatabaseUrl()` 安全守卫精确统一为 `54329`，因此 CI 不会在执行真实 PostgreSQL 回归前因错误目标被拒绝。该修正没有修改认证源码、竞态测试、迁移或凭据边界；工作流合同仍为实际 9/9。
+- 最终发布安全修正只涉及 release 身份 scope、凭据说明、全局串行与最高严格语义版本守卫，没有修改本 PostgreSQL 竞态实现或回归用例；真实 Git tag fixture 与工作流合同仍为 9/9，首次真实标签发布继续等待管理员单独确认。
+
 ## 4. 验收原则
 
 - 不把“请求成功”当作“价格正确”：必须通过商品身份校验。

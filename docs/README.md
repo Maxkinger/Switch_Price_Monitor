@@ -1,7 +1,7 @@
 # Switch Price Monitor 文档中心
 
 状态：开发进行中
-最后更新：2026-07-27
+最后更新：2026-07-30
 
 本目录按产品、架构与决策分类维护。每个需求或设计部分经确认后，应同步更新相应文档，并在需求追踪表中记录状态。
 
@@ -15,8 +15,9 @@
 | [数据模型](architecture/data-model.md) | 业务实体、关系、保留策略与敏感数据边界 | 已确认部分 |
 | [API 设计](architecture/api-design.md) | 前后端接口边界和访问控制原则 | 已确认部分 |
 | [质量与验收策略](quality/quality-and-acceptance.md) | 可靠性、安全、测试和发布验收规则 | 已确认部分 |
-| [NAS Docker 与 PostgreSQL 迁移设计规格](superpowers/specs/2026-07-27-nas-docker-postgresql-migration-design.md) | 完全迁出 Cloudflare、本地 M1 调试、多架构 Docker Hub 发布及 DS423+ Compose 部署 | Task 1–9 已实施；发布与 NAS 切换待 Task 10+ |
-| [NAS Docker 与 PostgreSQL 迁移实施计划](superpowers/plans/2026-07-27-nas-docker-postgresql-migration.md) | 平台中立重构、PostgreSQL、Node、调度器、本地 Playwright、容器、备份、发布和 NAS 切换的测试先行步骤 | Task 1–9 已完成；Task 10+ 待执行 |
+| [NAS Docker 与 PostgreSQL 迁移设计规格](superpowers/specs/2026-07-27-nas-docker-postgresql-migration-design.md) | 完全迁出 Cloudflare、本地 M1 调试、多架构 Docker Hub 发布及 DS423+ Compose 部署 | Task 1–10 已实施；首次外部发布与 NAS 切换待单独确认 |
+| [NAS Docker 与 PostgreSQL 迁移实施计划](superpowers/plans/2026-07-27-nas-docker-postgresql-migration.md) | 平台中立重构、PostgreSQL、Node、调度器、本地 Playwright、容器、备份、发布和 NAS 切换的测试先行步骤 | Task 1–10 已完成；Task 11+ 待执行 |
+| [PostgreSQL 登录失败状态并发竞态修复设计规格](superpowers/specs/2026-07-30-postgres-login-attempt-upsert-race-design.md) | 用单条原子 upsert 消除成功登录删除状态与并发登录锁定读取之间的缺行窗口 | 已实施并通过确定性 PostgreSQL 回归 |
 | [MVP 实施计划](superpowers/plans/2026-07-16-switch-price-monitor-mvp.md) | 8 个可独立验收任务的实施顺序、测试与提交点 | 已批准，执行中 |
 | [官方价格 ID 与订阅前来源预览计划](superpowers/plans/2026-07-16-official-price-id-subscription-flow.md) | 日区官方价格接口、地区价格 ID 与创建前来源预览的后端实施步骤 | 已完成，待后续前端与其他地区适配器接续 |
 | [官方订阅发现与批量确认设计](superpowers/specs/2026-07-17-official-subscription-discovery-design.md) | 官方默认区搜索、批量候选选择、跨区确认与候选卡布局 | 已确认（草图暂定） |
@@ -58,6 +59,23 @@
 | [ADR-001：部署架构](decisions/ADR-001-cloudflare-workers-d1.md) | 采用 Cloudflare Workers Static Assets 与 D1 的决策 | 已确认 |
 | [ADR-002：价格来源验证](decisions/ADR-002-price-provider-validation.md) | 来源准入、五区可行性与回退边界 | 已确认部分 |
 | [ADR-003：NAS Docker 与 PostgreSQL](decisions/ADR-003-nas-docker-postgresql.md) | Node 应用、专属 PostgreSQL、本地 Playwright 与多架构镜像的目标部署决策 | 已确认，实施中 |
+
+## GitHub Actions 与 Docker Hub 一次性设置
+
+Task 10 已提供普通 CI 和标签发布两个工作流，但仓库所有者必须先完成以下一次性外部设置。配置阶段不得把真实用户名、访问令牌、恢复码、数据库密码或 Telegram 凭据写入 Git、工单、截图或构建日志。
+
+1. 在 Docker Hub 创建公开仓库 `switch-price-monitor`。公开只代表镜像层可拉取；运行时 `.env`、PostgreSQL 数据目录、备份、Cookie 和 Telegram 配置都不得进入镜像。
+2. 根据 Docker Hub 方案二选一创建专用发布身份，不能把个人账号的普通 PAT 描述为原生单仓库 token：
+   - Team/Business 组织仓库：使用 [Organization access token](https://docs.docker.com/enterprise/security/access-tokens/)，只给 `switch-price-monitor` 仓库授予 Image Pull 与 Image Push，不授予组织管理权限或其他仓库权限。
+   - 免费/个人方案：创建专用于自动发布的 Docker ID，使该账号只拥有目标公开仓库；再按 [Personal access token](https://docs.docker.com/security/access-tokens/) 创建 Read/Write PAT，不授予 Delete。个人 PAT 原生权限只有 Read、Write、Delete，没有单仓库授权能力，因此仓库隔离来自专用 Docker ID 的所有权边界，而不是 PAT 自身。
+3. 在 GitHub 仓库的 `Settings → Secrets and variables → Actions` 中新增两个 Repository secrets：
+   - `DOCKERHUB_USERNAME`：免费/个人路径填写上述专用 Docker ID；组织路径填写组织 namespace。
+   - `DOCKERHUB_TOKEN`：填写与该 Docker ID 或组织 namespace 匹配的 Read/Write PAT 或 OAT；不要填写账号密码、Delete PAT 或其他身份的 token。
+4. 发布登录按 [docker/login-action 的 scope 说明](https://github.com/docker/login-action?tab=readme-ov-file#set-scopes-for-the-authentication-token) 把凭据只注入 `${DOCKERHUB_USERNAME}/switch-price-monitor@push` 的 Buildx 路径。这是运行时纵深限制，不会把个人 PAT 本身变成单仓库 token，也不能替代上一步的 OAT 仓库授权或专用 Docker ID 隔离。
+5. 普通分支 push 和 pull request 只执行测试、构建、秘密扫描与双架构构建验证，工作流中没有 Docker Hub 登录或推送步骤，也不会更新 `latest`。
+6. 只有严格匹配 `vX.Y.Z`、且仍是仓库最高严格语义版本的 Git 标签会在完整质量门禁通过后发布 `X.Y.Z`、`X.Y`、`sha-<12 位提交>` 和 `latest` 四个标签。同仓库发布进入不可取消的单队列，最高版本守卫仍在登录前独立执行，不能依赖队列顺序防止旧流程回退 `X.Y` 或 `latest`。创建并推送首个发布标签会产生真实外部发布，必须由管理员另行确认精确版本后执行。
+
+GitHub Secrets 的值无法从仓库文件恢复。轮换 token 时只更新 GitHub Secret，不修改工作流、Compose 或文档；若令牌疑似泄露，应先在 Docker Hub 撤销，再按对应 OAT/PAT 路径创建最小权限替代令牌。
 
 ## 变更规则
 

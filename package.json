@@ -21,10 +21,14 @@
       "secrets": "浏览器异常、本机路径、页面正文、Cookie、端点和进程信息不得进入 API、数据库或普通日志。"
     },
     "dockerRuntimeConfigurationRationaleZh": {
-      "reproducibility": "Docker 构建的完整依赖与生产依赖都使用 package-lock.json 和 npm ci；最终镜像只复制生产依赖、双构建产物与不可变 PostgreSQL 迁移。",
+      "reproducibility": "Docker 三阶段统一固定 Node 22.20.0 Bookworm Slim；完整依赖与生产依赖都使用 package-lock.json 和 npm ci，最终镜像只复制生产依赖、双构建产物与不可变 PostgreSQL 迁移。",
       "architecture": "Dockerfile 不拼接 CPU 架构下载地址；BuildKit 在 M1 linux/arm64 和 DS423+ linux/amd64 当前平台安装与精确 Playwright 版本匹配的 Chromium。",
       "secrets": "Docker build 不接收数据库、Telegram、Cookie 或会话秘密；生产 Compose 只从未提交的运行时 env 引用凭据，bootstrap 管理密码仅进入 postgres，app 只取得普通角色 DATABASE_URL，合同测试也只使用公开假值。",
       "permissions": "运行镜像与 Compose 固定 UID/GID 10001 并使用 init；仅应用 HTTP 映射 NAS 端口，PostgreSQL 与 Chromium 都保持容器内部可达。"
+    },
+    "githubActionsContractRationaleZh": {
+      "yaml": "yaml 仅用于测试阶段把 GitHub Actions 工作流解析为结构化数据，避免用脆弱文本匹配误判发布权限、触发器、平台或标签合同；它不会进入生产依赖或运行镜像。",
+      "secrets": "合同测试只验证 GitHub Secrets 的引用名称和登录边界，绝不读取、构造、打印或快照化 Docker Hub 用户名与访问令牌。"
     }
   },
   "scripts": {
@@ -39,7 +43,9 @@
     "deploy": "node ./scripts/deploy-production.mjs",
     "test": "vitest",
     "test:dom": "vitest --config vitest.dom.config.mts",
-    "test:docker-config": "node --test test/docker-config.test.mjs"
+    "test:docker-config": "node --test test/docker-config.test.mjs",
+    "test:github-actions": "node --test test/github-actions-release.test.mjs",
+    "test:workflow-comments": "node --test --test-name-pattern=\"工作流中文注释与安全边界保持一致\" test/github-actions-release.test.mjs"
   },
   "dependencies": {
     "@hono/node-server": "2.0.12",
@@ -67,6 +73,7 @@
     "typescript": "^5.8.3",
     "vite": "^7.0.6",
     "vitest": "^4.1.0",
-    "wrangler": "4.112.0"
+    "wrangler": "4.112.0",
+    "yaml": "2.9.0"
   }
 }

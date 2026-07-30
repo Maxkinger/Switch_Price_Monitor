@@ -1,0 +1,161 @@
+name: CI
+
+# 普通 CI 只验证分支和拉取请求；显式配置 branches 后，标签 push 不会进入此工作流。
+# 该边界保证外部 PR 与普通分支既拿不到 Docker Hub 凭据，也没有任何镜像推送步骤。
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+# 所有 job 默认只有读取仓库内容的最小权限；本工作流不授予 packages 或 id-token 写权限。
+permissions:
+  contents: read
+
+concurrency:
+  # 同一 PR/分支只保留最新验证，避免旧提交继续占用 PostgreSQL、Chromium 与双架构构建资源。
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: 完整质量门禁
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      # 扫描器版本与归档摘要同时锁定；下载内容被篡改或上游重打包时必须立即失败。
+      GITLEAKS_VERSION: "8.30.1"
+      GITLEAKS_LINUX_X64_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+
+    services:
+      postgres:
+        # PostgreSQL 固定到 17 系列的具体补丁和 Debian 变体，避免 CI 随浮动标签静默变化。
+        image: postgres:17.10-bookworm
+        env:
+          # 这些值仅属于一次性 CI service，不对应 NAS 或任何真实数据库凭据。
+          POSTGRES_DB: switch_test
+          POSTGRES_USER: switch_test
+          POSTGRES_PASSWORD: switch_test
+        ports:
+          # runner 必须通过 54329 连接临时 service，精确匹配测试 DROP SCHEMA 前只允许的本机安全端口。
+          - 54329:5432
+        options: >-
+          --health-cmd "pg_isready -U switch_test -d switch_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    steps:
+      # Actions 全部固定到不可变提交 SHA；尾注保留人工可读版本，便于受控升级与审计。
+      - name: 检出精确提交
+        id: checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # Gitleaks 必须取得完整历史；仍关闭持久化凭据，避免后续脚本获得 GitHub 写入能力。
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 安装固定 Node.js
+        id: setup_node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22.20.0"
+          cache: npm
+          # npm 缓存只由 lockfile 驱动，不包含 node_modules、运行数据或任何秘密。
+          cache-dependency-path: package-lock.json
+
+      - name: 按 lockfile 安装依赖
+        id: install_dependencies
+        run: npm ci
+
+      - name: 安装与 Playwright 锁定版本匹配的 Chromium
+        id: install_chromium
+        # 浏览器只在临时 runner 内使用；不缓存 profile、Cookie、页面或会话数据。
+        run: npx --no-install playwright install --with-deps chromium
+
+      - name: 运行单元与 PostgreSQL 集成测试
+        id: unit_and_integration
+        run: npx vitest run
+        env:
+          # 连接只指向上方临时 PostgreSQL service 的受守卫 54329 host 端口，测试结束即销毁。
+          TEST_DATABASE_URL: postgres://switch_test:switch_test@127.0.0.1:54329/switch_test
+
+      - name: 运行 DOM 交互测试
+        id: dom
+        run: npm run test:dom -- --run
+
+      - name: 运行 Chromium 生命周期烟雾测试
+        id: chromium_smoke
+        # 显式覆盖真实浏览器启动/导航/关闭，不能用纯 mock 代替 NAS 浏览器边界。
+        run: npx vitest run test/playwright-browser-launcher.test.ts
+
+      - name: TypeScript 严格检查
+        id: typecheck
+        run: npx tsc --noEmit
+
+      - name: 构建生产客户端与 Node 服务
+        id: production_build
+        run: npm run build
+
+      - name: 验证 Docker 与 Compose 静态合同
+        id: docker_contract
+        run: npm run test:docker-config
+
+      - name: 验证 GitHub Actions 发布合同
+        id: workflow_contract
+        run: npm run test:github-actions
+
+      - name: 验证工作流中文注释与安全边界一致
+        id: comment_consistency
+        # 单独门禁确保认证、标签、缓存、数据库与浏览器边界不会在重构时失去解释。
+        run: npm run test:workflow-comments
+
+      - name: 检查空白与补丁格式
+        id: whitespace
+        # PR 使用 base SHA，分支 push 使用 before SHA；首次 push 的全零 SHA 则安全退化为检查当前提交。
+        env:
+          DIFF_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ -n "${DIFF_BASE_SHA:-}" ]] \
+            && [[ ! "${DIFF_BASE_SHA}" =~ ^0+$ ]] \
+            && git cat-file -e "${DIFF_BASE_SHA}^{commit}" 2>/dev/null; then
+            git diff --check "${DIFF_BASE_SHA}...${GITHUB_SHA}"
+          else
+            git show --check --format= "${GITHUB_SHA}"
+          fi
+
+      - name: 扫描 Git 历史中的秘密
+        id: secret_scan
+        # 不使用漂移的第三方 action；先校验官方归档摘要，再扫描且对命中内容做脱敏。
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl --fail --location --silent --show-error \
+            --output "${archive}" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          printf '%s  %s\n' "${GITLEAKS_LINUX_X64_SHA256}" "${archive}" | sha256sum --check
+          mkdir gitleaks-bin
+          tar -xzf "${archive}" -C gitleaks-bin gitleaks
+          ./gitleaks-bin/gitleaks git --redact --no-banner
+
+      - name: 启用双架构模拟
+        id: setup_qemu
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+
+      - name: 创建隔离 Buildx 构建器
+        id: setup_buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: 验证 arm64 与 amd64 镜像构建
+        id: docker_build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: linux/arm64,linux/amd64
+          push: false
+          # scope 同时含 lockfile 与 Dockerfile 哈希；缓存只保存构建层，不保存运行目录或 Secrets。
+          cache-from: type=gha,scope=ci-${{ hashFiles('package-lock.json', 'Dockerfile') }}
+          cache-to: type=gha,mode=max,scope=ci-${{ hashFiles('package-lock.json', 'Dockerfile') }}
