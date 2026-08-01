@@ -182,14 +182,22 @@
 - 后续 Task 10 独立复验已让两份 CI quality job 的本机临时 PostgreSQL 端口与本竞态回归所用 `requireTestDatabaseUrl()` 安全守卫精确统一为 `54329`，因此 CI 不会在执行真实 PostgreSQL 回归前因错误目标被拒绝。该修正没有修改认证源码、竞态测试、迁移或凭据边界；工作流合同仍为实际 9/9。
 - 最终发布安全修正只涉及 release 身份 scope、凭据说明、全局串行与最高严格语义版本守卫，没有修改本 PostgreSQL 竞态实现或回归用例；真实 Git tag fixture 与工作流合同仍为 9/9，首次真实标签发布继续等待管理员单独确认。
 
-### 3.21 GitHub Actions PostgreSQL 双角色初始化修复（2026-08-01，本地回归通过，远程 CI 待核验）
+### 3.21 GitHub Actions PostgreSQL 双角色初始化修复（2026-08-01，本地回归及远程数据库门禁通过）
 
 - 远程 run `30510098237` 在 435 项中通过 434 项；唯一失败显示 `switch_test` 的 `rolsuper`、`rolcreaterole`、`rolcreatedb`、`rolreplication`、`rolbypassrls` 均为 true。根因是官方 PostgreSQL 镜像把 `POSTGRES_USER` 建成 bootstrap 超级用户，而不是 PostgreSQL 测试随机失败；本地 Compose 已用独立 `switch_test_admin` 再由 init hook 建立普通应用角色。
 - 合同测试先行得到有效 RED：`npm run test:github-actions` 的 9 项中 7 项通过、2 项失败；普通 CI 精确步骤序列缺少 `initialize_postgres_role`，发布 quality job 的 `POSTGRES_USER` 实际为 `switch_test` 而非 `switch_test_admin`。YAML 解析、工作流文件加载和既有无关合同均正常，因此失败精确覆盖本次权限模型缺口。
 - 最小修复让普通 CI 与发布 quality job 都以 `switch_test_admin`/独立临时假密码引导 `switch_test`，健康检查只验证已存在的管理角色；checkout 后、测试前通过 `job.services.postgres.id` 向 service 容器执行既有 `docker/postgres/init-app-role.sh`，并经 GitHub service 网络别名 `postgres` 进入 SCRAM host 规则，以应用连接确认可登录且五项集群权限均为 false。没有内联复制角色 SQL；仅 runner 测试 URL 保持受守卫的 `switch_test@127.0.0.1:54329`，不得与容器内自检的网络入口混淆。
 - GREEN 实际结果：`npm run test:github-actions` 为 9/9，`npm run test:workflow-comments` 为 1/1，`actionlint .github/workflows/ci.yml .github/workflows/release-image.yml` 与 `git diff --check` 均以 0 退出。新增/修改的测试与 workflow 注释均复核为说明了官方 bootstrap 语义、临时假值边界、初始化时序、TCP 身份验证和最小权限安全原因，且与实现一致。
 - Docker Desktop 恢复后，`docker info --format '{{.ServerVersion}}'` 返回 29.6.2；`docker compose -f docker-compose.dev.yml up -d postgres` 后专用 PostgreSQL 为 healthy，且仅映射 `127.0.0.1:54329->5432/tcp`。完整本地门禁实际通过：Vitest 78 个文件、435 项；DOM 4 个文件、16 项；Chromium 生命周期 1 个文件、4 项；Docker 合同 14/14；Actions 合同 9/9；工作流中文注释 1/1；`npx tsc --noEmit`、`npm run build`、actionlint 与 `git diff --check` 均以 0 退出。
-- 本轮没有真实秘密、Docker Hub 登录或镜像推送、Git 标签、NAS 或 Cloudflare 写入。远程新 run URL、结论和 job 计数须在实际提交并完成新 run 后填写；在此之前不得宣称远程 CI 已通过。
+- 本轮没有真实秘密、Docker Hub 登录或镜像推送、Git 标签、NAS 或 Cloudflare 写入。远程 run `30685133376` 已证明本节数据库修复及其后续测试通过，但完整 quality job 随后被既有 Gitleaks 历史命中阻止；整体 CI 状态由下一节继续记录，不能把数据库门禁通过误写成完整 CI 通过。
+
+### 3.22 Gitleaks 精确历史基线修复（2026-08-01，本地通过，远程待核验）
+
+- 提交 `5fa2c06` 触发的远程 run `30685133376` 已通过 PostgreSQL service 初始化、普通角色 SCRAM 权限自检、435 项 Vitest、16 项 DOM、4 项 Chromium、类型检查、生产构建、Docker/Actions/注释合同与空白检查；这证明原 434/435 权限失败已修复。随后 Gitleaks 扫描 161 个提交并报告七个命中，质量 job 因此失败，QEMU、Buildx 与双架构镜像构建均按安全边界没有启动。
+- 使用与 CI 相同的 Gitleaks `8.30.1`，并以官方 checksums 文件校验 M1 对应归档后，本地完全复现七个历史命中：两项来自源码中已注明为任天堂官网公开只读搜索配置的同一值，五项来自认证实施计划中的固定测试密码样例；报告全程使用 100% 脱敏，未把命中原文写入日志、文档或基线。
+- 合同测试先得到有效 RED：10 项中 8 项通过，扫描步骤缺少显式基线路径且 `.gitleaksignore` 不存在。最小修复新增只含七个 `提交:路径:规则:行号` 精确 fingerprint 的根目录基线，并让普通 CI 与发布 quality job 以 `${GITHUB_WORKSPACE}/.gitleaksignore` 锚定文件；没有按规则、整份文件或正则扩大例外，也不受 runner 当前目录漂移影响。
+- GREEN 实际结果：Actions 合同 10/10、中文注释合同 1/1、actionlint 与 `git diff --check` 均退出 0；同版本 Gitleaks 再次扫描 161 个提交得到 `no leaks found`。额外的临时高熵假令牌不在基线中，扫描仍报告一项命中并退出 1，证明精确历史基线不会吞掉未来新增秘密。
+- 本次没有修改历史提交、暴露命中值、关闭 Gitleaks 规则、登录 Docker Hub、创建标签或推送镜像。新的远程 run 尚待本修复提交并推送后核验；在完整质量门禁成功前不得把 CI 状态标为完成。
 
 ## 4. 验收原则
 

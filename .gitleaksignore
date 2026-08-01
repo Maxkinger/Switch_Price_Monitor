@@ -1,0 +1,9 @@
+# 本基线只排除已经逐项人工核验的历史误报；每行是提交、路径、规则和行号组成的精确 Gitleaks 指纹。
+# 任天堂条目是官网公开页面使用的只读搜索配置，认证计划条目是固定测试密码；不得改成路径、规则或正则级放行。
+cde06674220cd5fb37542507cd20ddbe3689312d:src/worker/providers/official-nintendo-search.ts:algolia-api-key:11
+2786df5de0deb1f3be307b75e4ba702a8f580577:docs/superpowers/plans/2026-07-17-authentication-entry.md:generic-api-key:60
+2786df5de0deb1f3be307b75e4ba702a8f580577:docs/superpowers/plans/2026-07-17-authentication-entry.md:generic-api-key:63
+2786df5de0deb1f3be307b75e4ba702a8f580577:docs/superpowers/plans/2026-07-17-authentication-entry.md:generic-api-key:74
+2786df5de0deb1f3be307b75e4ba702a8f580577:docs/superpowers/plans/2026-07-17-authentication-entry.md:generic-api-key:158
+2786df5de0deb1f3be307b75e4ba702a8f580577:docs/superpowers/plans/2026-07-17-authentication-entry.md:generic-api-key:163
+fe4da7f57f97ae260b9bf3a0729223acb93d4ad6:src/worker/providers/official-nintendo-search.ts:generic-api-key:11

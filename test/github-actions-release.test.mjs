@@ -19,6 +19,19 @@ const workflowPaths = {
 const disposablePostgresUrl =
   "postgres://switch_test:switch_test@127.0.0.1:54329/switch_test";
 /**
+ * Gitleaks 历史基线只允许七个已经人工核验的精确指纹：公开只读任天堂搜索配置，
+ * 以及认证计划中的固定测试密码。指纹包含提交、路径、规则和行号，不能退化为按规则或整文件放行。
+ */
+const acceptedHistoricalLeakFingerprints = [
+  "cde06674220cd5fb37542507cd20ddbe3689312d:src/worker/providers/official-nintendo-search.ts:algolia-api-key:11",
+  "2786df5de0deb1f3be307b75e4ba702a8f580577:docs/superpowers/plans/2026-07-17-authentication-entry.md:generic-api-key:60",
+  "2786df5de0deb1f3be307b75e4ba702a8f580577:docs/superpowers/plans/2026-07-17-authentication-entry.md:generic-api-key:63",
+  "2786df5de0deb1f3be307b75e4ba702a8f580577:docs/superpowers/plans/2026-07-17-authentication-entry.md:generic-api-key:74",
+  "2786df5de0deb1f3be307b75e4ba702a8f580577:docs/superpowers/plans/2026-07-17-authentication-entry.md:generic-api-key:158",
+  "2786df5de0deb1f3be307b75e4ba702a8f580577:docs/superpowers/plans/2026-07-17-authentication-entry.md:generic-api-key:163",
+  "fe4da7f57f97ae260b9bf3a0729223acb93d4ad6:src/worker/providers/official-nintendo-search.ts:generic-api-key:11",
+];
+/**
  * 固定表来自对应官方仓库的具体版本标签；合同同时验证 action 名与完整提交，
  * 防止把任意 40 位字符串误当成可信 pin，版本升级必须在审查后显式修改此表。
  */
@@ -383,8 +396,26 @@ contractTest("Actions、PostgreSQL 服务与扫描器均固定不可漂移版本
       "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb",
     );
     assert.match(secretScan.run, /sha256sum --check/);
-    assert.match(secretScan.run, /gitleaks git --redact --no-banner/);
+    assert.match(
+      secretScan.run,
+      /gitleaks git --gitleaks-ignore-path "\$\{GITHUB_WORKSPACE\}\/\.gitleaksignore" --redact --no-banner/,
+      "秘密扫描必须用 GITHUB_WORKSPACE 锚定精确指纹文件，不能受 runner 当前工作目录或 defaults 漂移影响",
+    );
   }
+});
+
+contractTest("Gitleaks 历史基线只放行七个已核验的精确指纹", () => {
+  const ignorePath = resolve(repositoryRoot, ".gitleaksignore");
+  assert.ok(existsSync(ignorePath), "缺少受审查的 Gitleaks 历史基线");
+  const fingerprints = readFileSync(ignorePath, "utf8")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("#"));
+  assert.deepEqual(
+    fingerprints,
+    acceptedHistoricalLeakFingerprints,
+    "历史基线只能逐条使用 Gitleaks 指纹，不得按路径、规则或正则扩大例外范围",
+  );
 });
 
 contractTest("工作流中文注释与安全边界保持一致", () => {

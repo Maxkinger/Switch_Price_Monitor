@@ -159,6 +159,7 @@ jobs:
       - name: 扫描 Git 历史中的秘密
         id: secret_scan
         # 不使用漂移的第三方 action；先校验官方归档摘要，再扫描且对命中内容做脱敏。
+        # 根目录基线只含七个经人工核验的精确历史指纹；用 GITHUB_WORKSPACE 锚定文件，防止 runner 工作目录变化扩大或跳过例外边界。
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -169,7 +170,7 @@ jobs:
           printf '%s  %s\n' "${GITLEAKS_LINUX_X64_SHA256}" "${archive}" | sha256sum --check
           mkdir gitleaks-bin
           tar -xzf "${archive}" -C gitleaks-bin gitleaks
-          ./gitleaks-bin/gitleaks git --redact --no-banner
+          ./gitleaks-bin/gitleaks git --gitleaks-ignore-path "${GITHUB_WORKSPACE}/.gitleaksignore" --redact --no-banner
 
       - name: 启用双架构模拟
         id: setup_qemu

@@ -18,8 +18,8 @@
 | [NAS Docker 与 PostgreSQL 迁移设计规格](superpowers/specs/2026-07-27-nas-docker-postgresql-migration-design.md) | 完全迁出 Cloudflare、本地 M1 调试、多架构 Docker Hub 发布及 DS423+ Compose 部署 | Task 1–10 已实施；首次外部发布与 NAS 切换待单独确认 |
 | [NAS Docker 与 PostgreSQL 迁移实施计划](superpowers/plans/2026-07-27-nas-docker-postgresql-migration.md) | 平台中立重构、PostgreSQL、Node、调度器、本地 Playwright、容器、备份、发布和 NAS 切换的测试先行步骤 | Task 1–10 已完成；Task 11+ 待执行 |
 | [PostgreSQL 登录失败状态并发竞态修复设计规格](superpowers/specs/2026-07-30-postgres-login-attempt-upsert-race-design.md) | 用单条原子 upsert 消除成功登录删除状态与并发登录锁定读取之间的缺行窗口 | 已实施并通过确定性 PostgreSQL 回归 |
-| [GitHub Actions PostgreSQL 双角色初始化修复设计规格](superpowers/specs/2026-08-01-github-actions-postgres-dual-role-design.md) | 让普通 CI 与发布门禁复用生产初始化脚本，以独立管理角色创建最小权限应用角色 | 已实施并通过本地完整回归；远程 CI 待提交、推送并完成后核验 |
-| [GitHub Actions PostgreSQL 双角色初始化修复实施计划](superpowers/plans/2026-08-01-github-actions-postgres-dual-role.md) | 双角色 CI 合同、初始化与权限自检的测试先行执行步骤 | 已实施并通过本地完整回归；远程 CI 待提交、推送并完成后核验 |
+| [GitHub Actions PostgreSQL 双角色初始化修复设计规格](superpowers/specs/2026-08-01-github-actions-postgres-dual-role-design.md) | 让普通 CI 与发布门禁复用生产初始化脚本，以独立管理角色创建最小权限应用角色 | 双角色远程门禁已通过；Gitleaks 精确历史基线本地通过、远程待提交核验 |
+| [GitHub Actions PostgreSQL 双角色初始化修复实施计划](superpowers/plans/2026-08-01-github-actions-postgres-dual-role.md) | 双角色 CI 合同、初始化与权限自检的测试先行执行步骤 | 双角色远程门禁已通过；Gitleaks 精确历史基线本地通过、远程待提交核验 |
 | [MVP 实施计划](superpowers/plans/2026-07-16-switch-price-monitor-mvp.md) | 8 个可独立验收任务的实施顺序、测试与提交点 | 已批准，执行中 |
 | [官方价格 ID 与订阅前来源预览计划](superpowers/plans/2026-07-16-official-price-id-subscription-flow.md) | 日区官方价格接口、地区价格 ID 与创建前来源预览的后端实施步骤 | 已完成，待后续前端与其他地区适配器接续 |
 | [官方订阅发现与批量确认设计](superpowers/specs/2026-07-17-official-subscription-discovery-design.md) | 官方默认区搜索、批量候选选择、跨区确认与候选卡布局 | 已确认（草图暂定） |

@@ -242,3 +242,11 @@ git push origin codex/nas-docker-postgresql
 使用 `gh run list` 找到上述新提交的普通 CI run，再用 `gh run view` 等待结束并读取 job。Expected：`完整质量门禁` conclusion 为 `success`，所有后续步骤实际执行，不能只依据本地通过宣称远程修复完成。
 
 如果新 run 失败，先读取失败日志并重新进入系统化调试；不得直接重跑来掩盖确定性配置问题。远程通过后才把质量记录与 README 状态更新为“已完成”，若这需要新的文档提交，仍须按项目规则再次取得提交并推送确认。
+
+远程 run `30685133376` 已证明双角色初始化、435 项 Vitest、DOM、Chromium、类型、构建及静态合同通过，随后在 Gitleaks 全历史扫描因七个既有误报失败。后续修复必须遵循以下额外边界：
+
+- 新增 `.gitleaksignore`，只逐行记录已人工核验的七个精确 fingerprint；不得按整个规则、路径或正则放行。
+- 两份 workflow 必须显式传入 `--gitleaks-ignore-path "${GITHUB_WORKSPACE}/.gitleaksignore"`，以检出根目录锚定精确文件，避免 runner 当前目录或 `defaults.run.working-directory` 漂移。
+- 合同测试必须精确锁定七个 fingerprint 和扫描命令；先得到缺文件/缺参数的 RED，再实现 GREEN。
+- 使用与 CI 相同的 Gitleaks `8.30.1` 重新扫描完整 161 个提交并得到零命中；另用不在基线中的一次性假令牌夹具确认新命中仍以非零退出。
+- 再次提交前必须更新质量记录并取得用户确认；推送后等待新的完整远程 run，不能只重跑失败的旧 run。
