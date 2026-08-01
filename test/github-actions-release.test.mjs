@@ -58,6 +58,7 @@ contractTest("普通 push 与 PR 运行完整质量门禁且没有发布权限",
     stepIds(quality),
     [
       "checkout",
+      "initialize_postgres_role",
       "setup_node",
       "install_dependencies",
       "install_chromium",
@@ -445,6 +446,83 @@ function assertPostgresAndBrowserGate(job) {
   assert.equal(job?.services?.postgres?.image, "postgres:17.10-bookworm");
   // GitHub Actions 需要从 runner host 访问 service；发布 54329:5432 才与破坏性测试的单一安全守卫一致。
   assert.deepEqual(job?.services?.postgres?.ports, ["54329:5432"]);
+  // 此合同防止工作流再次把 switch_test 交给官方镜像 bootstrap 成超级用户、跳过普通角色自检，或让 loopback trust 把错误应用密码误报为安全。
+  const postgresEnvironment = job?.services?.postgres?.env;
+  assert.equal(postgresEnvironment.POSTGRES_DB, "switch_test");
+  assert.equal(postgresEnvironment.POSTGRES_USER, "switch_test_admin");
+  assert.equal(postgresEnvironment.POSTGRES_PASSWORD, "switch_test_admin");
+  assert.equal(postgresEnvironment.APP_DATABASE_USER, "switch_test");
+  assert.equal(postgresEnvironment.APP_DATABASE_PASSWORD, "switch_test");
+  assert.notEqual(
+    postgresEnvironment.POSTGRES_USER,
+    postgresEnvironment.APP_DATABASE_USER,
+    "CI bootstrap 管理角色不得与应用迁移角色合并",
+  );
+  assert.notEqual(
+    postgresEnvironment.POSTGRES_PASSWORD,
+    postgresEnvironment.APP_DATABASE_PASSWORD,
+    "CI 管理密码与应用密码必须保持不同的临时假值",
+  );
+  assert.match(
+    job.services.postgres.options,
+    /pg_isready -U switch_test_admin -d switch_test/,
+    "service 启动健康检查必须使用初始化时已存在的管理角色",
+  );
+
+  const stepSequence = stepIds(job);
+  const checkoutIndex = stepSequence.indexOf("checkout");
+  const initializeIndex = stepSequence.indexOf("initialize_postgres_role");
+  const testIndex = stepSequence.indexOf("unit_and_integration");
+  assert.ok(
+    checkoutIndex >= 0 && checkoutIndex < initializeIndex && initializeIndex < testIndex,
+    "应用角色初始化必须在检出脚本之后、PostgreSQL 测试之前",
+  );
+
+  const initializeRole = findStep(job, "initialize_postgres_role");
+  assert.equal(
+    initializeRole.env.POSTGRES_SERVICE_ID,
+    "${{ job.services.postgres.id }}",
+  );
+  assert.match(
+    initializeRole.run,
+    /docker exec --interactive "\$\{POSTGRES_SERVICE_ID\}" bash -s < docker\/postgres\/init-app-role\.sh/,
+  );
+  assert.match(
+    initializeRole.run,
+    /PGPASSWORD="\$\{APP_DATABASE_PASSWORD\}" psql/,
+    "自检必须实际把应用密码交给 psql，而不能只保留未使用的环境变量",
+  );
+  assert.match(
+    initializeRole.run,
+    /--username "\$\{APP_DATABASE_USER\}"/,
+    "自检必须以普通应用角色登录，不能改用 bootstrap 管理角色绕过权限边界",
+  );
+  assert.match(
+    initializeRole.run,
+    /--host postgres/,
+    "自检必须经 service 网络别名进入 SCRAM host 规则，才能验证应用密码",
+  );
+  assert.doesNotMatch(
+    initializeRole.run,
+    /--host 127\.0\.0\.1/,
+    "自检不得使用 loopback trust；否则错误密码仍可能被 PostgreSQL 接受",
+  );
+  assert.match(
+    initializeRole.run,
+    /--command "SELECT rolcanlogin AND NOT \(\s*rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls\s*\) FROM pg_roles WHERE rolname = current_user"/s,
+    "自检查询必须同时要求可登录并拒绝五项集群级权限",
+  );
+  assert.match(initializeRole.run, /rolcanlogin/);
+  assert.match(initializeRole.run, /rolsuper/);
+  assert.match(initializeRole.run, /rolcreaterole/);
+  assert.match(initializeRole.run, /rolcreatedb/);
+  assert.match(initializeRole.run, /rolreplication/);
+  assert.match(initializeRole.run, /rolbypassrls/);
+  assert.match(
+    initializeRole.run,
+    /test "\$\{role_is_safe\}" = "t"/,
+    "自检必须把角色查询的唯一真值作为阻止后续测试的失败边界",
+  );
   assert.equal(
     findStep(job, "unit_and_integration").env.TEST_DATABASE_URL,
     disposablePostgresUrl,

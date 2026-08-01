@@ -18,7 +18,7 @@
 
 ### 2.2 非目标
 
-- 不修改生产 Compose、开发 Compose、PostgreSQL 初始化脚本或业务迁移。
+- 不修改生产 Compose、开发 Compose、PostgreSQL 初始化脚本的执行逻辑或业务迁移；新增调用方式必须同步修正脚本职责注释，保证注释与实现一致。
 - 不创建自定义 PostgreSQL CI 镜像，不引入新的镜像发布链。
 - 不重试或弱化失败的权限断言；权限模型错误必须继续阻止普通 CI 和镜像发布。
 - 不创建版本标签、不登录 Docker Hub，也不推送镜像。
@@ -65,6 +65,7 @@ GREEN 后运行 Actions 合同、工作流中文注释检查、`actionlint`、�
 
 - 修改 `.github/workflows/ci.yml`。
 - 修改 `.github/workflows/release-image.yml`。
+- 仅修改 `docker/postgres/init-app-role.sh` 的职责注释，说明 Compose initdb 与全新 CI service 两种一次性调用边界；不修改 SQL 或执行逻辑。
 - 修改 `test/github-actions-release.test.mjs`。
 - 修改 `docs/quality/quality-and-acceptance.md`，记录远程失败、根因、RED/GREEN 与远程复验结果。
 - 新增本设计规格及后续实施计划，并更新 `docs/README.md` 索引。

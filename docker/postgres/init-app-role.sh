@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
-# 本脚本只由官方 postgres:17 在全新空数据目录的 initdb 阶段执行；重复容器启动不会再次处理 initdb.d 文件。
-# bootstrap 管理角色保留在 postgres 容器内部，应用从第一条迁移 SQL 起只使用下面创建的普通数据库所有者。
+# 本脚本既供生产/开发 Compose 在全新空数据目录的 initdb 阶段执行，也供 GitHub Actions 全新 PostgreSQL service 在 checkout 后一次性手动执行；两种路径都只允许初始化首个应用角色。
+# 脚本非幂等：已有应用角色时重复执行必须由 CREATE ROLE 失败，避免悄然改写既有角色、数据库或 public schema 的所有权；这不改变首次空库或全新临时 service 的业务边界。
+# bootstrap 管理角色只留在 PostgreSQL 容器内部，应用从第一条迁移 SQL 起只使用下面创建的普通数据库所有者。
 set -Eeuo pipefail
 
 # 只检查存在与非空，不打印任何变量值；错误由 shell 固定变量名分类，密码绝不能进入普通初始化日志。

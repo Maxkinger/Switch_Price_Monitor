@@ -32,15 +32,18 @@ jobs:
         # PostgreSQL 固定到 17 系列的具体补丁和 Debian 变体，避免 CI 随浮动标签静默变化。
         image: postgres:17.10-bookworm
         env:
-          # 这些值仅属于一次性 CI service，不对应 NAS 或任何真实数据库凭据。
+          # 管理角色只负责官方镜像 initdb；普通测试连接永远不能获得它的集群级权限。
           POSTGRES_DB: switch_test
-          POSTGRES_USER: switch_test
-          POSTGRES_PASSWORD: switch_test
+          POSTGRES_USER: switch_test_admin
+          POSTGRES_PASSWORD: switch_test_admin
+          # 应用角色由检出后的唯一 init hook 创建；固定假值只属于一次性 runner，不对应任何真实数据库。
+          APP_DATABASE_USER: switch_test
+          APP_DATABASE_PASSWORD: switch_test
         ports:
           # runner 必须通过 54329 连接临时 service，精确匹配测试 DROP SCHEMA 前只允许的本机安全端口。
           - 54329:5432
         options: >-
-          --health-cmd "pg_isready -U switch_test -d switch_test"
+          --health-cmd "pg_isready -U switch_test_admin -d switch_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 12
@@ -54,6 +57,33 @@ jobs:
           # Gitleaks 必须取得完整历史；仍关闭持久化凭据，避免后续脚本获得 GitHub 写入能力。
           fetch-depth: 0
           persist-credentials: false
+
+      - name: 初始化并验证最小权限 PostgreSQL 应用角色
+        id: initialize_postgres_role
+        # service 早于 checkout 启动；官方 job context 提供容器 ID，使现有 init hook 可在取得源码后执行而无需复制 SQL。
+        env:
+          POSTGRES_SERVICE_ID: ${{ job.services.postgres.id }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker exec --interactive "${POSTGRES_SERVICE_ID}" bash -s < docker/postgres/init-app-role.sh
+
+          # 通过 GitHub service 网络别名 postgres 进入 SCRAM host 规则，避免 loopback trust 把错误密码或错误角色误报为安全。
+          role_is_safe="$(
+            docker exec "${POSTGRES_SERVICE_ID}" bash -c '
+              PGPASSWORD="${APP_DATABASE_PASSWORD}" psql \
+                --host postgres \
+                --username "${APP_DATABASE_USER}" \
+                --dbname "${POSTGRES_DB}" \
+                --no-psqlrc \
+                --tuples-only \
+                --no-align \
+                --command "SELECT rolcanlogin AND NOT (
+                  rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls
+                ) FROM pg_roles WHERE rolname = current_user"
+            ' | tr -d '[:space:]'
+          )"
+          test "${role_is_safe}" = "t"
 
       - name: 安装固定 Node.js
         id: setup_node
