@@ -1,29 +1,31 @@
-import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ConfirmedSubscriptionInput, OfficialProductCandidate, RegionalProductMatchSource } from "../src/shared/domain";
-import { SubscriptionConfirmationRepository } from "../src/worker/repositories/subscription-confirmation-repository";
 import {
   japaneseUpgradeConfirmationKey,
   type JapaneseUpgradeConfirmationItem,
   type JapaneseUpgradeRelationService,
-} from "../src/worker/services/japanese-upgrade-relation-service";
-import { SubscriptionConfirmationService } from "../src/worker/services/subscription-confirmation-service";
+} from "../src/services/japanese-upgrade-relation-service";
+import { SubscriptionConfirmationService } from "../src/services/subscription-confirmation-service";
+import { InMemorySubscriptionConfirmationStore } from "./support/in-memory-business-stores";
+
+// 工厂函数位于 describe 外部，故当前用例端口保存在模块作用域；beforeEach 始终替换实例，禁止状态跨用例复用。
+let confirmationStore: InMemorySubscriptionConfirmationStore;
 
 /**
- * 最终确认服务测试使用真实测试 D1 与可注入的官方解析桩件。这样可验证一批写入的原子边界，
- * 同时不向任天堂真实页面或价格接口发请求，也不会把外部响应带入数据库断言。
+ * 最终确认服务测试使用平台中立仓储端口与可注入的官方解析桩件，验证整批校验、幂等命中和提交 DTO 边界；
+ * PostgreSQL 的真实事务与唯一约束由适配器集成测试负责，本文件不向任天堂真实页面或价格接口发请求。
  */
 describe("subscription confirmation service", () => {
   const now = "2026-07-17T02:00:00.000Z";
 
-  beforeEach(async () => {
-    // 依赖顺序倒序清理，保证每个用例都从“尚未最终确认”的空业务数据开始，外键不会遮蔽原子性断言。
-    await env.DB.exec("DELETE FROM subscription_regions; DELETE FROM subscriptions; DELETE FROM regional_products; DELETE FROM games;");
+  beforeEach(() => {
+    // 每个用例使用全新内存端口，保证确认结果和既有订阅不会跨测试泄漏；真实数据库清理由 PostgreSQL 测试夹具负责。
+    confirmationStore = new InMemorySubscriptionConfirmationStore();
   });
 
   it("verifies all Japanese upgrade regions once before the atomic confirmation batch", async () => {
-    // 两款升级包必须在任何设置读取、既有订阅查询或 D1 写入前组成一个受限批次；逐游戏调用会绕过三项 Browser Run 总上限。
+    // 两款升级包必须在任何设置读取、既有订阅查询或持久化写入前组成一个受限批次；逐游戏调用会绕过三项本地 Playwright 总上限。
     const first = japaneseUpgradeCase("overcooked-2", "70050000064985");
     const second = japaneseUpgradeCase("kirby-2", "70050000064986");
     const japaneseUpgrades = {
@@ -40,7 +42,7 @@ describe("subscription confirmation service", () => {
   });
 
   it("writes zero rows when one automatic Japanese upgrade relation is rejected", async () => {
-    // 自动关系只要一项缺少本次 Browser 与价格证据，整个确认请求就必须在生成 ID 和 D1 批次之前失败，不能部分保存第一款游戏。
+    // 自动关系只要一项缺少本次 Browser 与价格证据，整个确认请求就必须在生成 ID 和仓储提交之前失败，不能部分保存第一款游戏。
     const first = japaneseUpgradeCase("overcooked-2", "70050000064985");
     const second = japaneseUpgradeCase("kirby-2", "70050000064986");
     const japaneseUpgrades = {
@@ -67,7 +69,7 @@ describe("subscription confirmation service", () => {
     expect(japaneseUpgrades.verifyForConfirmation).toHaveBeenCalledExactlyOnceWith([fixture.item]);
   });
 
-  it("rejects a manually linked Japanese upgrade before every D1 write when relation evidence is missing", async () => {
+  it("rejects a manually linked Japanese upgrade before every persistence write when relation evidence is missing", async () => {
     // 人工 URL 不能降低最终安全门槛；关系服务拒绝时必须返回与自动失效不同的可操作文案，并保持四张业务表为空。
     const fixture = japaneseUpgradeCase("overcooked-2", "70050000064985", "manual_link");
     const japaneseUpgrades = { verifyForConfirmation: vi.fn().mockResolvedValue(new Map([
@@ -108,7 +110,7 @@ describe("subscription confirmation service", () => {
       }),
     };
     const service = new SubscriptionConfirmationService(
-      new SubscriptionConfirmationRepository(env.DB),
+      confirmationStore,
       { resolve: async (regionCode, productUrl) => regionCode === "US" && productUrl === actualAnchor.productUrl ? actualAnchor : null },
       { resolve: async (candidate) => candidate.regionCode === "JP"
         ? { status: "official-available" as const, officialPriceId: "70050000064985" }
@@ -127,7 +129,7 @@ describe("subscription confirmation service", () => {
   });
 
   it("keeps ordinary Japanese games on the existing double-official resolver", async () => {
-    // 普通日区游戏没有升级关系页，不得消耗 Browser Run；确认服务仍应以空升级批次调用关系验证器，并把 JP 游戏交给既有双官方 API。
+    // 普通日区游戏没有升级关系页，不得消耗本地 Chromium；确认服务仍应以空升级批次调用关系验证器，并把 JP 游戏交给既有双官方 API。
     const japaneseUpgrades = { verifyForConfirmation: vi.fn().mockResolvedValue(new Map()) };
     const japaneseResolver = { resolve: vi.fn(async (_anchor, candidate) => candidate) };
     const service = createServiceWithJapaneseUpgradeVerifier(japaneseUpgrades, [], japaneseResolver, [overcookedUs()]);
@@ -143,7 +145,7 @@ describe("subscription confirmation service", () => {
     const service = createService(allFixtureCandidates());
 
     await expect(service.confirm([valid, invalidDuplicateUs], now)).rejects.toThrow("每个游戏在每区只能确认一个商品。");
-    // 所有输入均应在调用 D1 批次前完成验证；重复地区不能留下游戏、商品、订阅或关联半成品。
+    // 所有输入均应在调用仓储批次前完成验证；重复地区不能留下游戏、商品、订阅或关联半成品。
     await expect(counts()).resolves.toEqual({ games: 0, products: 0, subscriptions: 0, regions: 0 });
   });
 
@@ -163,9 +165,8 @@ describe("subscription confirmation service", () => {
 
     await expect(service.confirm([overcookedSubscription()], now)).resolves.toEqual([expect.objectContaining({ status: "created" })]);
 
-    const row = await env.DB.prepare("SELECT name_zh AS nameZh, name_en AS nameEn FROM games LIMIT 1").first<{ nameZh: string; nameEn: string }>();
-    // `name_zh` 是管理页和日报的中文展示名；`name_en` 继续保留官方标题，供跨区补全和采集身份复核使用。
-    expect(row).toEqual({ nameZh: "胡闹厨房 2", nameEn: "Overcooked! 2" });
+    // 中文展示名用于管理页和日报；英文名继续保留官方标题，供跨区补全和采集身份复核使用。
+    expect(confirmationStore.firstGameNames()).toEqual({ nameZh: "胡闹厨房 2", nameEn: "Overcooked! 2" });
   });
 
   it("returns an existing logical game subscription without replacing its confirmed regions", async () => {
@@ -180,7 +181,7 @@ describe("subscription confirmation service", () => {
   });
 
   it("rejects a configured region that is neither confirmed nor explicitly skipped", async () => {
-    // Worker 必须在写入前以保存的 US/JP 设置检查覆盖范围；仅默认区的旧页面提交不能静默形成美区单区订阅。
+    // 服务必须在写入前以保存的 US/JP 设置检查覆盖范围；仅默认区的旧页面提交不能静默形成美区单区订阅。
     const input = { ...overcookedSubscription(), regions: [{ ...overcookedUs(), matchSource: "manual_selection" as const }], skippedRegionCodes: [] };
     const service = createService(allFixtureCandidates(), ["US", "JP"]);
 
@@ -199,7 +200,7 @@ describe("subscription confirmation service", () => {
 
   it("rejects a manually selected localized candidate with a different product type before writing", async () => {
     // 手动选择仅放宽语言化标题与发行商，不是绕过商品分类的通行证；把游戏本体混入升级包订阅时，
-    // 所有 D1 写入必须整体取消，避免后续价格采集把不同商品当成同一订阅地区。
+    // 所有持久化写入必须整体取消，避免后续价格采集把不同商品当成同一订阅地区。
     const invalidJapaneseGame = { ...localizedOvercookedUpgradeJp(), productType: "game" as const };
     const input = {
       ...localizedManualSelectionUpgradeSubscription(),
@@ -225,7 +226,7 @@ describe("subscription confirmation service", () => {
     await expect(counts()).resolves.toEqual({ games: 1, products: 2, subscriptions: 1, regions: 2 });
   });
 
-  it("rejects an expired Hong Kong automatic bundle before any D1 write", async () => {
+  it("rejects an expired Hong Kong automatic bundle before any persistence write", async () => {
     // 重新发现不再得到同一唯一 URL 时必须整批失败；不能降级为人工选择，也不能先写默认区后留下半成品订阅。
     const automaticVerifier = { verifyAutomaticRegionalCandidate: vi.fn().mockResolvedValue(false) };
     const service = createHongKongBundleService(automaticVerifier);
@@ -252,7 +253,7 @@ describe("subscription confirmation service", () => {
 function createHongKongBundleService(automaticVerifier: { verifyAutomaticRegionalCandidate(anchor: OfficialProductCandidate, candidate: OfficialProductCandidate): Promise<boolean> }): SubscriptionConfirmationService {
   const candidates = [overcookedGourmetUs(), overcookedGourmetHk()];
   return new SubscriptionConfirmationService(
-    new SubscriptionConfirmationRepository(env.DB),
+    confirmationStore,
     { resolve: async (regionCode, productUrl) => candidates.find((candidate) => candidate.regionCode === regionCode && candidate.productUrl === productUrl) ?? null },
     { resolve: async () => ({ status: "official-id-unavailable" as const, officialPriceId: null, reason: "unsupported-region" as const }) },
     { get: async () => ({ enabledRegions: ["US" as const, "HK" as const] }) },
@@ -264,7 +265,7 @@ function createHongKongBundleService(automaticVerifier: { verifyAutomaticRegiona
 }
 
 /**
- * 构造任务 7 的真实 D1 确认服务，只替换外部官方边界。页面解析器仅允许夹具中的美区锚点，
+ * 构造任务 7 的平台中立确认服务，只替换外部官方边界。页面解析器仅允许夹具中的美区锚点，
  * 日区升级候选必须来自批量关系 Map；价格 ID 从严格 D 数字 URL 导出，避免测试以固定单一 ID 掩盖多商品串项。
  */
 function createServiceWithJapaneseUpgradeVerifier(
@@ -275,7 +276,7 @@ function createServiceWithJapaneseUpgradeVerifier(
 ): SubscriptionConfirmationService {
   const anchors = [...fixtures.map((fixture) => fixture.input.selected), ...ordinaryPageCandidates];
   return new SubscriptionConfirmationService(
-    new SubscriptionConfirmationRepository(env.DB),
+    confirmationStore,
     { resolve: async (regionCode, productUrl) => anchors.find((candidate) => candidate.regionCode === regionCode && candidate.productUrl === productUrl) ?? null },
     {
       resolve: async (candidate) => {
@@ -337,10 +338,10 @@ function japaneseUpgradeCase(
   return { input, item: { anchor, candidate, matchSource } };
 }
 
-/** 用真实仓储连接 D1；官方页面与日区价格 ID 使用固定验证结果，使测试只覆盖最终确认业务规则。 */
+/** 使用平台中立端口保存服务提交 DTO；官方页面与日区价格 ID 使用固定验证结果，使测试只覆盖最终确认业务规则。 */
 function createService(candidates: OfficialProductCandidate[], enabledRegions: Array<"US" | "JP"> = ["US", "JP"]): SubscriptionConfirmationService {
   return new SubscriptionConfirmationService(
-    new SubscriptionConfirmationRepository(env.DB),
+    confirmationStore,
     {
       resolve: async (regionCode, productUrl) => candidates.find((candidate) => candidate.regionCode === regionCode && candidate.productUrl === productUrl) ?? null,
     },
@@ -465,32 +466,39 @@ function hongKongBundleSubscription(matchSource: "automatic" | "manual_selection
 
 /** 既有记录使用与服务约定相同的稳定身份，模拟管理员之前已确认的美区订阅。 */
 async function seedExistingOvercooked(now: string): Promise<void> {
-  await env.DB.batch([
-    env.DB.prepare("INSERT INTO games (id, name_zh, name_en, normalized_name, publisher, product_type, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").bind("game-overcooked", "Overcooked! 2", "Overcooked! 2", "overcooked! 2|team17|game", "Team17", "game", now),
-    env.DB.prepare("INSERT INTO regional_products (id, game_id, region_code, currency, product_url, match_source, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)").bind("product-overcooked-us", "game-overcooked", "US", "USD", overcookedUs().productUrl, "manual_selection", now),
-    env.DB.prepare("INSERT INTO subscriptions (id, game_id, enabled, created_at, updated_at) VALUES (?, ?, 1, ?, ?)").bind("subscription-overcooked", "game-overcooked", now, now),
-    env.DB.prepare("INSERT INTO subscription_regions (subscription_id, regional_product_id) VALUES (?, ?)").bind("subscription-overcooked", "product-overcooked-us"),
-  ]);
+  // `now` 仅标记夹具与确认请求处于同一业务时刻；平台中立端口不暴露数据库创建时间列。
+  void now;
+  confirmationStore.seedExisting({
+    anchor: overcookedUs(),
+    confirmation: {
+      game: {
+        id: "game-overcooked",
+        nameZh: "Overcooked! 2",
+        nameEn: "Overcooked! 2",
+        normalizedName: "overcooked! 2|team17|game",
+        publisher: "Team17",
+        productType: "game",
+        coverUrl: overcookedUs().coverUrl,
+      },
+      subscriptionId: "subscription-overcooked",
+      regions: [{
+        id: "product-overcooked-us",
+        regionCode: "US",
+        currency: "USD",
+        officialPriceId: null,
+        productUrl: overcookedUs().productUrl,
+        matchSource: "manual_selection",
+      }],
+    },
+  });
 }
 
-/** 返回四张核心表计数，直接证明确认失败时没有半成品、成功时关系表也同时建立。 */
+/** 返回四类核心领域实体计数，直接证明确认失败时没有半成品、成功时地区关系也同时建立。 */
 async function counts(): Promise<{ games: number; products: number; subscriptions: number; regions: number }> {
-  const [games, products, subscriptions, regions] = await env.DB.batch([
-    env.DB.prepare("SELECT COUNT(*) AS count FROM games"),
-    env.DB.prepare("SELECT COUNT(*) AS count FROM regional_products"),
-    env.DB.prepare("SELECT COUNT(*) AS count FROM subscriptions"),
-    env.DB.prepare("SELECT COUNT(*) AS count FROM subscription_regions"),
-  ]);
-  return {
-    games: (games.results[0] as { count: number } | undefined)?.count ?? 0,
-    products: (products.results[0] as { count: number } | undefined)?.count ?? 0,
-    subscriptions: (subscriptions.results[0] as { count: number } | undefined)?.count ?? 0,
-    regions: (regions.results[0] as { count: number } | undefined)?.count ?? 0,
-  };
+  return confirmationStore.counts();
 }
 
 /** 只读取已有订阅的关联，验证本任务绝不隐式替换地区范围。 */
 async function existingRegionIds(): Promise<string[]> {
-  const result = await env.DB.prepare("SELECT regional_product_id AS productId FROM subscription_regions WHERE subscription_id = ? ORDER BY regional_product_id").bind("subscription-overcooked").all<{ productId: string }>();
-  return result.results.map((row) => row.productId);
+  return confirmationStore.regionIds("subscription-overcooked");
 }

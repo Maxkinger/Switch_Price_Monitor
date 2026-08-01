@@ -11,7 +11,7 @@ import { createSettingsForm, toPublicSettingsPatch } from "../src/app/settings-f
  */
 describe("public settings API client", () => {
   it("uses same-origin credentials for settings reads and writes", async () => {
-    // GET 与 PATCH 共用同一个固定站内路径，避免设置页绕过 Worker 会话守卫或跨域传递管理员偏好。
+    // GET 与 PATCH 共用同一个固定站内路径，避免设置页绕过 Node 会话守卫或跨域传递管理员偏好。
     const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json(settings()));
     const client = createSettingsApiClient(request);
     const patch = toPublicSettingsPatch(createSettingsForm(settings()));
@@ -28,7 +28,7 @@ describe("public settings API client", () => {
     }));
   });
 
-  it("turns a safe Worker validation summary into a status-aware error", async () => {
+  it("turns a safe server validation summary into a status-aware error", async () => {
     // 422 的可展示摘要供表单保留草稿后修正；错误类型只含消息和状态，不能泄露响应原文。
     const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ error: "默认搜索区必须属于已选地区。" }, { status: 422 }));
 

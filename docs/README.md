@@ -1,67 +1,61 @@
 # Switch Price Monitor 文档中心
 
-状态：开发进行中
-最后更新：2026-07-27
+状态：仓库迁移实现完成；外部发布与部署验收待执行
 
-本目录按产品、架构与决策分类维护。每个需求或设计部分经确认后，应同步更新相应文档，并在需求追踪表中记录状态。
+最后更新：2026-08-01
 
-项目级执行与注释规范见根目录 [AGENTS.md](../../AGENTS.md)。所有自动化开发代理在执行前必须阅读该文件；任何新增或改动的代码、测试、SQL 与配置均须配有与实现一致的中文详细注释。
+项目级执行与中文注释规范见根目录 [AGENTS.md](../AGENTS.md)。任何代码、测试、SQL、配置或文档改动前必须同时阅读该文件与本文档。
 
-| 文档 | 用途 | 状态 |
+## 当前结论
+
+- 仓库唯一支持 Node.js 22、PostgreSQL 17 与本地 Playwright Chromium；旧 Cloudflare Worker、D1、Cron、Static Assets Binding、Secrets 和 Browser Binding 运行路径已经移除。
+- 本地当前门禁已通过：Vitest 69 文件/420 项、DOM 16 项、Chromium 4 项、Docker/平台合同 19/19、TypeScript 与生产构建。
+- 最新成功普通 CI run `30686052256` 对应平台移除前提交，只是历史证据；当前工作树仍需自己的远程 CI。
+- 当前工作树已在 M1/arm64 完成生产镜像/Compose 运行时验收：空库启动、双容器健康、非 root、端口隔离、认证/恢复/锁定、设置与重启持久化均通过；镜像内无网络 Chromium 冒烟通过，备份恢复 14/14。发现、订阅事务、历史/导出、刷新、调度锁与 Telegram fake transport 由同一工作树的 420 项自动化分层验证，不把它们误写成容器内端到端外部演练。
+- Docker Hub Secrets 未配置，`v0.1.0` 未创建，公开镜像与 DS423+ 部署均未完成。
+- 真实 Telegram/Nintendo 样本尚未运行；线上 Cloudflare 资源未删除，退役必须另行授权。
+
+## 核心文档
+
+| 文档 | 内容 | 当前状态 |
 | --- | --- | --- |
-| [产品需求说明](requirements/PRD.md) | 范围、功能需求、业务规则和验收基准 | 持续更新 |
-| [需求追踪表](requirements/traceability.md) | 已确认需求与设计/实现的映射 | 持续更新 |
-| [系统架构说明](architecture/system-design.md) | 已确认架构、组件职责与核心数据流 | 持续更新 |
-| [数据模型](architecture/data-model.md) | 业务实体、关系、保留策略与敏感数据边界 | 已确认部分 |
-| [API 设计](architecture/api-design.md) | 前后端接口边界和访问控制原则 | 已确认部分 |
-| [质量与验收策略](quality/quality-and-acceptance.md) | 可靠性、安全、测试和发布验收规则 | 已确认部分 |
-| [NAS Docker 与 PostgreSQL 迁移设计规格](superpowers/specs/2026-07-27-nas-docker-postgresql-migration-design.md) | 完全迁出 Cloudflare、本地 M1 调试、多架构 Docker Hub 发布及 DS423+ Compose 部署 | 已确认，待实施 |
-| [NAS Docker 与 PostgreSQL 迁移实施计划](superpowers/plans/2026-07-27-nas-docker-postgresql-migration.md) | 平台中立重构、PostgreSQL、Node、调度器、本地 Playwright、容器、备份、发布和 NAS 切换的测试先行步骤 | 已编写，待审阅 |
-| [MVP 实施计划](superpowers/plans/2026-07-16-switch-price-monitor-mvp.md) | 8 个可独立验收任务的实施顺序、测试与提交点 | 已批准，执行中 |
-| [官方价格 ID 与订阅前来源预览计划](superpowers/plans/2026-07-16-official-price-id-subscription-flow.md) | 日区官方价格接口、地区价格 ID 与创建前来源预览的后端实施步骤 | 已完成，待后续前端与其他地区适配器接续 |
-| [官方订阅发现与批量确认设计](superpowers/specs/2026-07-17-official-subscription-discovery-design.md) | 官方默认区搜索、批量候选选择、跨区确认与候选卡布局 | 已确认（草图暂定） |
-| [官方订阅发现与批量确认实施计划](superpowers/plans/2026-07-17-official-subscription-discovery.md) | 默认区官方检索、官方链接确认、跨区处理、原子批量订阅与候选卡界面的实施步骤 | 已完成 |
-| [设置驱动的地区补全设计规格](superpowers/specs/2026-07-17-settings-driven-region-completion-design.md) | 设置决定跨区范围、自动安全匹配、显式跳过与既有订阅地区补全 | 已实施；生产环境已验证入口与只读解析，最终写入由管理员逐区确认 |
-| [设置驱动的地区补全实施计划](superpowers/plans/2026-07-17-settings-driven-region-completion.md) | 服务端地区范围、新建覆盖校验、已有订阅补全、页面和生产验收步骤 | 已完成，验收记录见质量与验收策略 |
-| [多地区任天堂官方搜索与自动监控设计规格](superpowers/specs/2026-07-18-multi-region-official-search-design.md) | 五区官方搜索、自动加入监控、候选选择与官方链接兜底 | 已实施；本地质量门禁与生产只读验收均已通过，最终写入仍只由管理员触发 |
-| [跨语言地区商品高置信度识别设计规格](superpowers/specs/2026-07-18-localized-regional-product-identity-design.md) | 以官方标题标记、版本、发行商、类型与唯一性安全识别本地化商品 | 已部署并完成生产只读验收 |
-| [日区订阅确认官方 API 复核设计规格](superpowers/specs/2026-07-18-japan-confirmation-api-design.md) | 日区最终确认改用官方搜索 API 与价格 API，规避动态商品页解析失败 | 已部署并完成生产只读验收 |
-| [日区订阅确认官方 API 复核实施计划](superpowers/plans/2026-07-18-japan-confirmation-api.md) | 日区双官方接口复核、最终跨语言确认与受控验收步骤 | 已完成，待提交 |
-| [日区升级包官方关系发现设计规格](superpowers/specs/2026-07-18-japanese-upgrade-pack-relation-discovery-design.md) | 普通 Worker 排队页限制、Browser Run 三次隔离可行性探针与失败回退边界 | 三次复验通过；允许进入生产集成设计，人工兜底继续保留 |
-| [日区升级包 Browser Run 可行性验证实施计划](superpowers/plans/2026-07-18-japanese-upgrade-browser-run-feasibility.md) | 隔离临时探针、纯函数安全校验、三次真实远程探测与准入结论归档 | 启动修复后已通过三次复验；未形成持久部署 |
-| [日区升级包 Browser Run 生产集成设计规格](superpowers/specs/2026-07-19-japanese-upgrade-browser-run-production-integration-design.md) | 单 Worker Browser Binding、同步发现、保存前二次关系验证、人工链接兜底及资源/日志边界 | 已部署 V 0.0.13；生产只读核验与显式重试通过 |
-| [日区升级包 Browser Run 生产集成实施计划](superpowers/plans/2026-07-19-japanese-upgrade-browser-run-production-integration.md) | 固定依赖、根商品、浏览器批处理、官方报价、发现/确认接线、前端重试和远程只读验收 | Task 1–8 与生产部署均已完成；未执行订阅写入 |
-| [地区/游戏中文名与官方价格格式设计规格](superpowers/specs/2026-07-19-localized-region-price-display-design.md) | 仪表盘/详情页地区中文名称、游戏中文主标题、五区官方价格文字、未知地区/标题回退与本地草图边界 | 已实现，草图已确认；游戏中文名已追加实现 |
-| [地区中文名与官方价格格式实施计划](superpowers/plans/2026-07-19-localized-region-price-display.md) | 共享格式化、双页面接线、Overcooked 五区草图与质量门禁 | 已完成并推送 `17e64f5` |
-| [Browser Run 启动失败受控诊断设计规格](superpowers/specs/2026-07-19-browser-run-launch-failure-diagnostic-design.md) | 本地/远程 A/B 启动诊断、脱敏错误证据、阶段判断矩阵与测试边界 | 已完成；根因已确认并通过三次任天堂复验 |
-| [Browser Run 启动失败受控诊断实施计划](superpowers/plans/2026-07-19-browser-run-launch-failure-diagnostic.md) | 临时探针脱敏诊断、生命周期测试、本地/远程对照与任天堂恢复准入步骤 | 已执行；待提交结果文档 |
-| [临时发布版本号设计规格](superpowers/specs/2026-07-18-temporary-release-version-design.md) | 页面版本标识、补丁号自动递增与未来发布系统替换边界 | 已部署 V 0.0.5，待提交推送 |
-| [临时发布版本号实施计划](superpowers/plans/2026-07-18-temporary-release-version.md) | 构建时版本注入、受控补丁递增发布与质量门禁 | 已部署 V 0.0.5，待提交推送 |
-| [香港区任天堂官方价格 API 设计规格](superpowers/specs/2026-07-18-hong-kong-official-price-api-design.md) | 日区回归、香港 `titles/aocs` 官方价格 ID、HKD 公开 API 与严格响应校验 | 已部署并完成生产验收 |
-| [香港区任天堂官方价格 API 实施计划](superpowers/plans/2026-07-18-hong-kong-official-price-api.md) | JP/HK API 适配、HK URL 验证、注册顺序与质量门禁 | 已完成，待提交 |
-| [美食家版跨区官方组合商品识别设计规格](superpowers/specs/2026-07-18-gourmet-edition-regional-bundle-design.md) | 日区/港区官方组合商品准入、等价版本标记与严格自动匹配边界 | V 0.0.12 已部署并完成五区生产只读验收；待提交推送 |
-| [美食家版跨区官方组合商品识别实施计划](superpowers/plans/2026-07-18-gourmet-edition-regional-bundle.md) | 日区 `DL_DLC`、港区 eShop `bundles`、受控版本标记和生产只读验收步骤 | 已完成早期实现；港区商城限制由后续关系方案替代 |
-| [香港官方关联商品发现实施计划](superpowers/plans/2026-07-18-hong-kong-related-product-discovery.md) | 单一普通官网搜索、一层 `includedBundleItems/dlcItems/upgradeInfo`、详情复核与最终自动候选重验 | V 0.0.12 已部署；HK 美食家版自动匹配与官方价格预览通过，待提交推送 |
-| [多地区任天堂官方搜索与自动监控实施计划](superpowers/plans/2026-07-18-multi-region-official-search.md) | 五区搜索适配器、自动/人工确认边界、前端三态与受控生产验收 | 已完成，待提交验收文档 |
-| [认证入口实施计划](superpowers/plans/2026-07-17-authentication-entry.md) | 首次设置、恢复码确认自动登录、登录、密码恢复、认证失效回退与暖色响应式表单 | 已完成 |
-| [公开偏好设置页设计规格](superpowers/specs/2026-07-17-public-settings-page-design.md) | 已登录管理员的公开偏好边界、三组表单、一次保存与秘密配置延期原则 | 已实施 |
-| [公开偏好设置页实施计划](superpowers/plans/2026-07-17-public-settings-page.md) | 同源设置客户端、`/settings` 路由、响应式页面、文档追踪与质量门禁 | 已完成 |
-| [立即手动刷新设计规格](superpowers/specs/2026-07-17-immediate-manual-refresh-design.md) | 手动采集立即执行、15 分钟冷却与六小时 Cron 独立运行边界 | 已实现，生产美区样本验收已通过 |
-| [临时取消手动刷新冷却设计规格](superpowers/specs/2026-07-18-temporary-manual-refresh-no-cooldown-design.md) | 取消手动刷新冷却、保留最近刷新时间与六小时 Cron 隔离 | 已部署并完成生产香港区验证 |
-| [临时取消手动刷新冷却实施计划](superpowers/plans/2026-07-18-temporary-manual-refresh-no-cooldown.md) | 无条件最近时间写入、连续刷新路由回归与质量门禁 | 已完成，待提交 |
-| [仪表盘与订阅详情设计规格](superpowers/specs/2026-07-17-dashboard-subscription-detail-design.md) | 概览优先仪表盘、单页订阅详情、趋势与安全编辑边界 | 已确认，待实施 |
-| [订阅硬删除与全局请求加载设计规格](superpowers/specs/2026-07-18-subscription-hard-delete-global-loading-design.md) | 仪表盘多选永久删除、详情删除返回及全局网络加载动画 | 已部署；公开可用性与两条生产删除路径均已验证 |
-| [订阅硬删除与全局请求加载实施计划](superpowers/plans/2026-07-18-subscription-hard-delete-global-loading.md) | 请求计数器、批量原子删除、仪表盘/详情入口与最终质量验收 | 已完成，已推送 `cb11066` |
-| [五区真实价格采集设计规格](superpowers/specs/2026-07-17-five-region-live-collection-design.md) | 五区独立官方适配器、第三方回退、真实采集执行与验收边界 | 已确认，已实施；第三方实际回退待来源许可 |
-| [五区真实价格采集实施计划](superpowers/plans/2026-07-17-five-region-live-collection.md) | 官方五区采集、汇率、Cron 与未获准第三方禁用边界的测试先行实施顺序 | 已完成 |
-| [解决方案设计规格](superpowers/specs/2026-07-16-switch-price-monitor-design.md) | 已确认产品设计与官方价格 ID/创建前来源预览边界 | 已确认 |
-| [ADR-001：部署架构](decisions/ADR-001-cloudflare-workers-d1.md) | 采用 Cloudflare Workers Static Assets 与 D1 的决策 | 已确认 |
-| [ADR-002：价格来源验证](decisions/ADR-002-price-provider-validation.md) | 来源准入、五区可行性与回退边界 | 已确认部分 |
-| [ADR-003：NAS Docker 与 PostgreSQL](decisions/ADR-003-nas-docker-postgresql.md) | Node 应用、专属 PostgreSQL、本地 Playwright 与多架构镜像的目标部署决策 | 已确认，待实施 |
+| [产品需求说明](requirements/PRD.md) | 功能、业务规则、非功能要求和当前交付状态 | 需求已确认；外部验收待执行 |
+| [需求追踪表](requirements/traceability.md) | 需求到实现、证据和未完成项的映射 | 已同步至 Node/PostgreSQL |
+| [系统架构](architecture/system-design.md) | 两容器拓扑、数据流、认证、调度与发布边界 | 仓库实现完成 |
+| [数据模型](architecture/data-model.md) | PostgreSQL 实体、事务、保留和秘密边界 | 仓库实现完成 |
+| [API 设计](architecture/api-design.md) | 同源接口、认证、同步刷新与安全响应 | 仓库实现完成 |
+| [质量与验收](quality/quality-and-acceptance.md) | 历史证据、当前本地门禁和外部验收条件 | 当前本地通过，外部待验收 |
 
-## 变更规则
+## 部署与运维
 
-1. 需求确认后，先更新 `PRD.md` 和 `traceability.md`。
-2. 架构、数据流或接口确认后，更新 `system-design.md`；重大技术取舍另建 ADR。
-3. 实现开始前，基于已批准设计创建实施计划和验收用例。
-4. 设计尚未整体完成前，本文档均为“已确认部分”的累积记录，而非最终交付规格。
+| 文档 | 用途 |
+| --- | --- |
+| [Synology DS423+ 局域网部署](deployment/synology-ds423-plus.md) | NAS 目录、`.env`、首次初始化、日志、升级与回滚 |
+| [Docker Hub 多架构发布](deployment/docker-hub-release.md) | Secrets、严格 semver、四标签、双架构与独立发布授权 |
+| [PostgreSQL 备份与空库恢复](deployment/postgres-backup-restore.md) | 原子备份、14 份保留、独立空库恢复与切换边界 |
+
+## 架构决策
+
+| 文档 | 状态 |
+| --- | --- |
+| [ADR-001：Cloudflare Workers 与 D1](decisions/ADR-001-cloudflare-workers-d1.md) | 历史决策；被 ADR-003 取代，线上资源仍待独立退役授权 |
+| [ADR-002：价格来源验证](decisions/ADR-002-price-provider-validation.md) | 官方优先；历史平台观察保留，当前由 Node 提供方执行 |
+| [ADR-003：NAS Docker 与 PostgreSQL](decisions/ADR-003-nas-docker-postgresql.md) | 已采纳；仓库实现完成，发布与 NAS 待验收 |
+
+## 迁移规格与计划
+
+| 文档 | 状态 |
+| --- | --- |
+| [NAS Docker 与 PostgreSQL 迁移设计规格](superpowers/specs/2026-07-27-nas-docker-postgresql-migration-design.md) | 仓库实现、M1 生产运行时 Compose 与业务自动化分层证据已完成；公开发布、NAS 和退役待执行 |
+| [NAS Docker 与 PostgreSQL 迁移实施计划](superpowers/plans/2026-07-27-nas-docker-postgresql-migration.md) | 保留原始步骤历史；顶部摘要记录本轮实际状态 |
+| [PostgreSQL 登录竞态设计](superpowers/specs/2026-07-30-postgres-login-attempt-upsert-race-design.md) | 已实现并通过真实 PostgreSQL 回归 |
+| [GitHub Actions 双角色设计](superpowers/specs/2026-08-01-github-actions-postgres-dual-role-design.md) | 已实现；历史远程 CI 通过 |
+
+`docs/superpowers/specs/` 与 `docs/superpowers/plans/` 中其余文件保存早期功能设计、实施步骤和 Cloudflare 生产证据。它们不会被改写成当前运行合同；遇到冲突时，以本页“当前结论”、ADR-003、当前架构/部署文档和实际仓库配置为准。
+
+## 文档变更规则
+
+1. 需求变化先更新 PRD 与追踪表。
+2. 架构、数据、接口或部署边界变化同步更新对应文档；重大取舍新增或修订 ADR。
+3. 历史验收证据保留日期、提交和环境标签，不能无条件改写为“当前通过”。
+4. 外部发布、NAS 写入、真实凭据测试和 Cloudflare 退役都需要与代码修改分开的明确授权。

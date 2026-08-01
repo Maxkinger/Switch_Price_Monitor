@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { OfficialPriceIdService } from "../src/worker/services/official-price-id-service";
-import type { PriceProvider, ProviderResult } from "../src/worker/providers/types";
+import { OfficialPriceIdService } from "../src/services/official-price-id-service";
+import type { PriceProvider, ProviderResult } from "../src/providers/types";
 
 /**
  * 商品确认阶段只在内存中提取和验证地区价格 ID；测试通过固定官方结果覆盖 URL 边界，
- * 确保管理员取消预览时不会产生 D1 写入、真实网络请求或跨区 ID 复用。
+ * 确保管理员取消预览时不会产生 PostgreSQL 写入、真实网络请求或跨区 ID 复用。
  */
 describe("OfficialPriceIdService", () => {
   const candidate = {

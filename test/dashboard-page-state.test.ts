@@ -29,7 +29,7 @@ describe("dashboard page state", () => {
     })).toBe("已完成本次采集：成功 3 个地区，待确认 2 个地区。");
   });
 
-  it("auto-populates only Worker-verified automatic missing regions for later final completion", () => {
+  it("auto-populates only server-verified automatic missing regions for later final completion", () => {
     // 详情页的自动结果应直接成为补全草稿，但不能调用写入接口；候选列表和链接兜底仍等待管理员操作，
     // 以确保“确认补全”是唯一的持久化入口，浏览器也不会自行推断跨区商品。
     const confirmations = applyAutomaticMissingResolutions([
@@ -46,7 +46,7 @@ describe("dashboard page state", () => {
   });
 });
 
-/** 日区候选由 Worker 已唯一匹配，详情页仅可读展示并把它带入最终“确认补全”草稿。 */
+/** 日区候选由服务端唯一匹配，详情页仅可读展示并把它带入最终“确认补全”草稿。 */
 function japaneseCandidate(): OfficialProductCandidate {
   return { regionCode: "JP", productUrl: "https://store-jp.nintendo.com/item/software/D70010000106252/", canonicalTitle: "オーバークック２", publisher: "Team17", productType: "game", currency: "JPY", coverUrl: null, currentPriceMinor: 1000, regularPriceMinor: null };
 }

@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { DailyCnyRate } from "../src/worker/services/collection-service";
-import { LiveCollectionRunner } from "../src/worker/services/live-collection-runner";
-import type { RegionalProduct } from "../src/worker/providers/types";
+import type { DailyCnyRate } from "../src/services/collection-service";
+import { LiveCollectionRunner } from "../src/services/live-collection-runner";
+import type { RegionalProduct } from "../src/providers/types";
 
 /** 两区夹具分别模拟一条可采集商品与一条官方来源全部失败商品，验证单项失败不会中止整个批次。 */
 const products: RegionalProduct[] = [

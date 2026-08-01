@@ -11,7 +11,7 @@ import {
 } from "./settings-form";
 import { applySettingsRequestFailure } from "./settings-page-state";
 
-/** 设置页仅显示首版五区的公开名称；地区启用与默认区最终仍由 Worker 的 AppSettings 校验。 */
+/** 设置页仅显示首版五区的公开名称；地区启用与默认区最终仍由 Node 服务的 AppSettings 校验。 */
 const regionChoices: ReadonlyArray<{ code: RegionCode; name: string }> = [
   { code: "US", name: "美国区" },
   { code: "JP", name: "日区" },
@@ -20,14 +20,14 @@ const regionChoices: ReadonlyArray<{ code: RegionCode; name: string }> = [
   { code: "HK", name: "香港区" },
 ];
 
-/** 主题稳定标识与中文展示分离，保存时只把受控标识交给 Worker。 */
+/** 主题稳定标识与中文展示分离，保存时只把受控标识交给同源设置 API。 */
 const themeChoices: ReadonlyArray<{ value: Theme; name: string }> = [
   { value: "warm-card", name: "温暖游戏库" },
   { value: "calm-dark", name: "沉稳深色" },
   { value: "clean-light", name: "清爽工具" },
 ];
 
-/** 历史保留策略直接对应 Worker 的枚举，避免页面自由拼写导致清理策略被静默忽略。 */
+/** 历史保留策略直接对应服务端枚举，避免页面自由拼写导致清理策略被静默忽略。 */
 const retentionChoices: ReadonlyArray<{ value: AppSettings["priceHistoryRetention"]; name: string }> = [
   { value: "forever", name: "永久保留" },
   { value: "one-year", name: "仅保留最近一年" },
@@ -42,7 +42,7 @@ interface SettingsPageApi {
 
 /**
  * 已认证管理员的公开偏好页。一个表单统一保存地区、展示与保留策略，
- * 让默认搜索区和启用地区在同一个 PATCH 中被 Worker 原子验证，避免分组自动保存制造短暂无效状态。
+ * 让默认搜索区和启用地区在同一个 PATCH 中被服务端原子验证，避免分组自动保存制造短暂无效状态。
  */
 export function SettingsPage({ api, onUnauthorized }: { api: SettingsPageApi; onUnauthorized: () => void }) {
   const [draft, setDraft] = useState<SettingsFormState | null>(null);
@@ -51,7 +51,7 @@ export function SettingsPage({ api, onUnauthorized }: { api: SettingsPageApi; on
 
   useEffect(() => {
     let active = true;
-    // 页面只在挂载时读取一次，保存成功以 Worker 返回的完整值回填；不轮询设置，以免覆盖管理员正在编辑的草稿。
+    // 页面只在挂载时读取一次，保存成功以服务端返回的完整值回填；不轮询设置，以免覆盖管理员正在编辑的草稿。
     void api.getSettings().then((settings) => {
       if (active) setDraft(createSettingsForm(settings));
     }).catch((error: unknown) => {

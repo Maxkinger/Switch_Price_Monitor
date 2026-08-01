@@ -25,7 +25,7 @@ export function settingsPath(): string {
 
 /**
  * 将内部订阅标识编码进单段路径。编码防止包含斜杠或空格的未来标识被解释为多个 URL 段，
- * 而 ID 的权限和存在性仍由 Worker 会话守卫与参数化查询负责。
+ * 而 ID 的权限和存在性仍由 Node 会话守卫与参数化查询负责。
  */
 export function subscriptionDetailPath(subscriptionId: string): string {
   return `/subscriptions/${encodeURIComponent(subscriptionId)}`;

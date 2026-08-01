@@ -12,7 +12,7 @@ export interface SettingsApiClient {
 }
 
 /**
- * 可显示的设置接口错误仅保留 Worker 已脱敏的中文摘要和 HTTP 状态。
+ * 可显示的设置接口错误仅保留同源服务端已脱敏的中文摘要和 HTTP 状态。
  * 保留状态码使页面能在 401 清空私有草稿、在 422 保留草稿，而不保存 Response 或 Cookie。
  */
 export class SettingsApiError extends Error {
@@ -24,7 +24,7 @@ export class SettingsApiError extends Error {
 
 /**
  * 创建设置页的同源客户端。浏览器自动处理 HttpOnly 会话 Cookie；此模块绝不能读取、拼接、记录或转交 Cookie，
- * 从而让管理员偏好仍由 Worker 的认证守卫保护，且不会泄露到任天堂、Telegram 或第三方来源。
+ * 从而让管理员偏好仍由 Node API 的认证守卫保护，且不会泄露到任天堂、Telegram 或第三方来源。
  */
 export function createSettingsApiClient(request: typeof fetch = fetch, tracker?: ApiRequestTracker): SettingsApiClient {
   /**
@@ -50,7 +50,7 @@ export function createSettingsApiClient(request: typeof fetch = fetch, tracker?:
   }
 
   return {
-    /** 读取初始化后由 Worker 管理的公开偏好，页面不会自行推导默认区、时区或保留策略。 */
+    /** 读取初始化后由服务端管理的公开偏好，页面不会自行推导默认区、时区或保留策略。 */
     async getSettings(): Promise<AppSettings> {
       return requestJson<AppSettings>("GET");
     },

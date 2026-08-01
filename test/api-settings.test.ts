@@ -1,12 +1,18 @@
-import { env } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import worker, { type Env } from "../src/worker";
+import type { AppDatabase } from "../src/server/database/types";
+import { createApiTestDatabase, createTestNodeDispatcher, initializeAndLogin as initializeAdmin, jsonRequest, resetApiTestData } from "./support/api-postgres";
+
+// 文件级请求 helper 复用真实 PostgreSQL 连接池；测试结束显式关闭，避免认证会话连接残留。
+let database: AppDatabase;
 
 describe("settings management HTTP routes", () => {
+  beforeAll(async () => { database = await createApiTestDatabase(); });
+  afterAll(async () => { await database.close(); });
+
   beforeEach(async () => {
-    // 设置是单管理员单例；每轮清空认证与设置记录，保证读取和局部更新都从首次初始化的真实状态开始。
-    await env.DB.exec("DELETE FROM sessions; DELETE FROM login_attempts; DELETE FROM admin_credentials; DELETE FROM settings;");
+    // 设置是单管理员单例；每轮清空一次性库，保证读取和局部更新都从首次初始化的真实状态开始。
+    await resetApiTestData(database);
   });
 
   it("returns settings and updates enabled regions, default search region, and theme for the signed-in administrator", async () => {
@@ -45,29 +51,13 @@ describe("settings management HTTP routes", () => {
 });
 
 async function initializeAndLogin(): Promise<string> {
-  // 通过初始化和登录端点取得真实 HttpOnly 会话，保证设置路由的授权逻辑不依赖测试伪造令牌。
-  const initialized = await call("/api/auth/initialize", {
-    password: "correct-horse-battery-staple",
-    enabledRegions: ["US", "JP"],
-    defaultSearchRegion: "US",
-  });
-  expect(initialized.status).toBe(201);
-
-  const login = await call("/api/auth/login", { password: "correct-horse-battery-staple" });
-  expect(login.status).toBe(200);
-  return login.headers.get("set-cookie") ?? "";
+  // 通过真实 PostgreSQL 初始化和登录端点取得 HttpOnly 会话，设置路由不会依赖伪造令牌。
+  return (await initializeAdmin(database, { enabledRegions: ["US", "JP"], defaultSearchRegion: "US" })).cookie;
 }
 
 async function call(path: string, body?: unknown, cookie?: string, method = "POST"): Promise<Response> {
-  // 所有被测路径都应由 Worker API 消费；若错误落到静态资源层，500 响应会让测试立即暴露路由遗漏。
-  const assets = { fetch: async () => new Response("unexpected asset request", { status: 500 }) } as unknown as Fetcher;
-  return worker.fetch!(
-    new Request(`https://example.test${path}`, {
-      method,
-      body: body === undefined ? undefined : JSON.stringify(body),
-      headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
-    }) as never,
-    { DB: env.DB, ASSETS: assets } as Env,
-    {} as ExecutionContext,
-  );
+  // 所有被测路径都应由真实 Node dispatcher 消费；null 会立即暴露路由注册遗漏。
+  const response = await createTestNodeDispatcher(database)(jsonRequest(path, body, cookie, method));
+  if (!response) throw new Error("设置测试请求未被 Node API 处理");
+  return response;
 }

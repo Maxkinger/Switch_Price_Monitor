@@ -1,17 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { OfficialProductCandidate } from "../src/shared/domain";
-import { JapaneseUpgradeBatchLimitError } from "../src/worker/providers/japanese-upgrade-browser";
-import type { JapaneseUpgradeRootCandidate } from "../src/worker/providers/official-japanese-upgrade-root";
+import { JapaneseUpgradeBatchLimitError } from "../src/providers/japanese-upgrade-browser";
+import type { JapaneseUpgradeRootCandidate } from "../src/providers/official-japanese-upgrade-root";
 import {
   createJapaneseUpgradeRelationService,
   japaneseUpgradeConfirmationKey,
-} from "../src/worker/services/japanese-upgrade-relation-service";
-import { officialCandidateKey } from "../src/worker/services/official-product-discovery-service";
+} from "../src/services/japanese-upgrade-relation-service";
+import { officialCandidateKey } from "../src/services/official-product-discovery-service";
 
 /**
  * 关系服务测试只替换三个窄外部边界；断言始终针对服务输出的候选或拒绝结论，
- * 不依赖真实任天堂网络、Browser Run 会话或管理员数据，因此可重复验证安全降级规则。
+ * 不依赖真实任天堂网络、本地 Playwright 会话或管理员数据，因此可重复验证安全降级规则。
  */
 describe("Japanese upgrade relation service", () => {
   it("builds an automatic candidate only from root, unique browser relation and matching JPY quote", async () => {
@@ -51,7 +51,7 @@ describe("Japanese upgrade relation service", () => {
   });
 
   it("deduplicates shared roots before one browser batch while retaining a result for every anchor", async () => {
-    // 不同锚点可经唯一根检索落到同一日区本体；Browser Run 每个入口最多一次，结果仍须按锚点分别返回。
+    // 不同锚点可经唯一根检索落到同一日区本体；本地 Playwright 批处理每个入口最多一次，结果仍须按锚点分别返回。
     const first = overcookedUpgradeUs({ productUrl: "https://www.nintendo.com/us/store/products/first-upgrade-pack/" });
     const second = overcookedUpgradeUs({ productUrl: "https://www.nintendo.com/us/store/products/second-upgrade-pack/" });
     const root = overcookedRoot();
@@ -71,7 +71,7 @@ describe("Japanese upgrade relation service", () => {
   });
 
   it("returns an empty discovery map without starting root or browser work", async () => {
-    // 空批次不应占用官网搜索或 Browser Run 配额，避免前端空状态产生无意义的外部调用。
+    // 空批次不应占用官网搜索或本地浏览器资源，避免前端空状态产生无意义的外部调用。
     const roots = { search: vi.fn() };
     const browser = { resolve: vi.fn() };
     const service = createJapaneseUpgradeRelationService(roots, browser, { resolve: vi.fn() });
@@ -109,7 +109,7 @@ describe("Japanese upgrade relation service", () => {
     expect(prices.resolve).not.toHaveBeenCalled();
   });
 
-  it("resolves a manual canonical link from root identity and an exact JPY quote without Browser Run", async () => {
+  it("resolves a manual canonical link from root identity and an exact JPY quote without local Playwright", async () => {
     // 人工输入仅能是完全 canonical 的日区软件链接；候选阶段不调用浏览器，最终关系仍由保存前复核负责。
     const root = overcookedRoot();
     const browser = { resolve: vi.fn() };
@@ -134,8 +134,8 @@ describe("Japanese upgrade relation service", () => {
     await expect(service.resolveManual({ ...overcookedUpgradeUs(), productType: "game" }, upgradeUrl)).resolves.toBeNull();
   });
 
-  it("keeps manual_link only when Browser Run fails but the exact JPY quote is valid", async () => {
-    // Browser Run 的受控失败状态不能抹掉管理员已经粘贴的严格官方链接；返回值必须保留 manual 语义而非升级为自动。
+  it("keeps manual_link only when local Playwright fails but the exact JPY quote is valid", async () => {
+    // 本地 Playwright 的受控失败状态不能抹掉管理员已经粘贴的严格官方链接；返回值必须保留 manual 语义而非升级为自动。
     const anchor = overcookedUpgradeUs();
     const candidate = overcookedUpgradeJp();
     const item = { anchor, candidate, matchSource: "manual_link" as const };
@@ -152,7 +152,7 @@ describe("Japanese upgrade relation service", () => {
     ]]));
   });
 
-  it("keeps manual_link when Browser Run successfully proves the same canonical URL", async () => {
+  it("keeps manual_link when local Playwright successfully proves the same canonical URL", async () => {
     // Browser 成功支持管理员链接时只补强关系证据，审计来源仍须保持 manual_link，不能悄悄提升为 automatic。
     const item = { anchor: overcookedUpgradeUs(), candidate: overcookedUpgradeJp(), matchSource: "manual_link" as const };
     const root = overcookedRoot();
@@ -221,7 +221,7 @@ describe("Japanese upgrade relation service", () => {
     },
   );
 
-  it("rejects a manual link when Browser Run succeeds with a different URL", async () => {
+  it("rejects a manual link when local Playwright succeeds with a different URL", async () => {
     // 人工链接只能在浏览器证明同一 URL 或无法安全取得关系时保存；成功指向另一升级包是明确反证，不能回退人工通过。
     const item = { anchor: overcookedUpgradeUs(), candidate: overcookedUpgradeJp(), matchSource: "manual_link" as const };
     const root = overcookedRoot();
@@ -281,7 +281,7 @@ describe("Japanese upgrade relation service", () => {
   });
 
   it("rejects four confirmation items before root or browser calls and skips all dependencies for empty input", async () => {
-    // 确认入口与发现入口共享三项上限和空批次节流，避免恶意大批量提交先消耗 Browser Run 再报错。
+    // 确认入口与发现入口共享三项上限和空批次节流，避免恶意大批量提交先消耗本地 Chromium 再报错。
     const roots = { search: vi.fn() };
     const browser = { resolve: vi.fn() };
     const service = createJapaneseUpgradeRelationService(roots, browser, { resolve: vi.fn() });

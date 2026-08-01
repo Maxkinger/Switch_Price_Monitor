@@ -1,15 +1,14 @@
-import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { AuthService, LoginLockedError, ValidationError } from "../src/worker/services/auth-service";
+import { AuthService, LoginLockedError, ValidationError } from "../src/services/auth-service";
+import { InMemoryAuthStore } from "./support/in-memory-business-stores";
 
 describe("AuthService", () => {
-  // 直接复用测试池绑定的 D1，确保初始化、会话和恢复码行为在 Worker 运行时验证。
-  const auth = new AuthService(env.DB);
+  let auth: AuthService;
 
-  beforeEach(async () => {
-    // 认证表彼此有关联；按依赖反向清理，保证每个用例不会继承前一个用例的管理员状态。
-    await env.DB.exec("DELETE FROM sessions; DELETE FROM login_attempts; DELETE FROM admin_credentials; DELETE FROM settings;");
+  beforeEach(() => {
+    // 每个用例新建平台中立端口替身，保证管理员、失败计数和会话摘要不会跨测试共享；真实事务与并发锁由 PostgreSQL 集成测试覆盖。
+    auth = new AuthService(new InMemoryAuthStore());
   });
 
   it("rejects an initial default search region that was not selected", async () => {
@@ -63,6 +62,21 @@ describe("AuthService", () => {
     await expect(auth.login("correct-horse-battery-staple", "2026-07-16T00:16:00.000Z")).resolves.toMatchObject({
       token: expect.any(String),
     });
+  });
+
+  it("starts a fresh failure window when the fifteen-minute lock expires", async () => {
+    // 锁定到期后的第一次错误密码属于新的失败窗口，不能沿用上一个窗口的五次计数立即再次锁定；
+    // 否则管理员在到期后一次输错便会再等待十五分钟，实际限流规则将被测试替身错误收紧。
+    await initializeAdministrator(auth);
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await expect(auth.login("incorrect-password", "2026-07-16T00:00:00.000Z"))
+        .rejects.toMatchObject({ code: "INVALID_CREDENTIALS" });
+    }
+
+    await expect(auth.login("incorrect-password", "2026-07-16T00:16:00.000Z"))
+      .rejects.toMatchObject({ code: "INVALID_CREDENTIALS" });
+    await expect(auth.login("correct-horse-battery-staple", "2026-07-16T00:17:00.000Z"))
+      .resolves.toMatchObject({ token: expect.any(String) });
   });
 
   it("resets the password with a recovery code, revokes active sessions, and makes the code single-use", async () => {

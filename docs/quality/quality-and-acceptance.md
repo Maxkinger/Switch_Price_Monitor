@@ -2,7 +2,7 @@
 
 ## 1. 状态
 
-截至 2026-07-19 已确认的可靠性、安全、测试与发布要求。
+截至 2026-08-01，仓库唯一质量目标为 Node.js 22、PostgreSQL 17、本地 Playwright Chromium 与 Docker Compose。平台移除后的本地门禁、当前工作树 M1 生产运行时 Compose 和业务自动化分层证据已通过；公开发布、DS423+ 和真实外部样本仍待验收。
 
 ## 2. 自动化测试范围
 
@@ -15,13 +15,17 @@
 | 认证 | 初始化一次性关闭、密码登录、限流、恢复码重置与单次失效；浏览器不持久化密码或恢复码，恢复码仅首次初始化时显示一次，确认后自动进入订阅；恢复成功必须返回登录，任一受保护请求 401 必须卸载并清空订阅向导；认证表单在 560px 以下保持单列且提示可被辅助技术读取。 |
 | 导出 | CSV 字段正确，且绝不包含认证或 Telegram 敏感字段 |
 | 官方 ID 与订阅前预览 | 日区官方 API 的地区、币种与价格 ID 响应错配被拒绝；其他地区官方 ID 未确认时明确显示 eShop Prices → NT Deals 回退；携带错误官方 ID 的来源链结果被拒绝；预览 API 仅允许管理员调用且不写入游戏、地区商品或订阅。 |
-| 最终批量确认 | 任一重复地区或官方身份无效时四张业务表均不写入；两个游戏可在一批创建；规范化身份命中既有订阅时返回 `existing` 且不替换既有地区；所有新建记录由单个 D1 批次提交。 |
+| 最终批量确认 | 任一重复地区或官方身份无效时业务表均不写入；两个游戏可在一批创建；规范化身份命中既有订阅时返回 `existing` 且不替换既有地区；所有新建记录由单个 PostgreSQL 事务提交。 |
 | 官方订阅向导 | 候选搜索、链接解析、跨区匹配、来源预览与批量确认仅调用同源受保护 API；候选整卡可多选，香港确认键按“所选游戏 + 地区”隔离；有效促销才显示划线原价、现价和折扣，价格未知显示“价格待确认”；1280px 三列、768px 两列、480px 一列，选中态为暖色 3px 边框且文字保持可读。 |
-| 多地区官方搜索与确认 | 固定官方响应夹具覆盖 US/MX/BR 各自索引、币种和 URL 白名单，HK 服务端 `software.items` 与数字 NSUID，JP 下载版数字 ID 映射；唯一严格匹配自动加入，同类型语言化/歧义候选必须人工选择，空集合或不可用才显示官方链接/跳过。确认服务必须按来源等级重新解析官方 URL，并在任一无效地区时保持 D1 原子性；前端自动、候选、链接三态不得互相降级。 |
-| 日区最终确认双 API 复核 | 日区确认必须以默认区锚点标题重查官方软件搜索记录，并要求下载版 URL/标题 ID 精确命中；官方价格 ID 必须确认 JP、JPY、在售及同一 ID。自动日区候选还须在同次官方结果中保持唯一严格或高置信度本地化身份；搜索、价格或唯一性失败均不得调用动态商品页回退或写入 D1。 |
-| 日区升级包 Browser Run 生产集成 | 官方搜索根必须唯一满足 `upgrade: 1`、下载类型、同发行商/系列和 Switch 2 Edition；Browser Run 只接受唯一可见的日区官方升级链接，一个请求最多一个浏览器与三个串行无痕上下文，单项 30 秒且不自动重试。自动候选保存前必须重新证明关系；人工链接仅能在浏览器失败且官方 URL/价格有效时按 `manual_link` 兜底。所有路径必须关闭页面、上下文和浏览器，并禁止记录页面、Cookie、队列令牌、Session ID、截图、Trace 或异常堆栈。 |
+| 多地区官方搜索与确认 | 固定官方响应夹具覆盖 US/MX/BR 各自索引、币种和 URL 白名单，HK 服务端 `software.items` 与数字 NSUID，JP 下载版数字 ID 映射；唯一严格匹配自动加入，同类型语言化/歧义候选必须人工选择，空集合或不可用才显示官方链接/跳过。确认服务必须按来源等级重新解析官方 URL，并在任一无效地区时保持 PostgreSQL 事务原子性；前端自动、候选、链接三态不得互相降级。 |
+| 日区最终确认双 API 复核 | 日区确认必须以默认区锚点标题重查官方软件搜索记录，并要求下载版 URL/标题 ID 精确命中；官方价格 ID 必须确认 JP、JPY、在售及同一 ID。自动日区候选还须在同次官方结果中保持唯一严格或高置信度本地化身份；搜索、价格或唯一性失败均不得调用动态商品页回退或写入 PostgreSQL。 |
+| 日区升级包本地 Chromium 集成 | 官方搜索根必须唯一满足 `upgrade: 1`、下载类型、同发行商/系列和 Switch 2 Edition；本地 Playwright 只接受唯一可见的日区官方升级链接，一批最多一个浏览器与三个串行隔离上下文，单项 30 秒且不自动重试。自动候选保存前必须重新证明关系；人工链接仅能在浏览器失败且官方 URL/价格有效时按 `manual_link` 兜底。所有路径必须关闭页面、上下文和浏览器，并禁止记录页面、Cookie、队列令牌、Session ID、截图、Trace 或异常堆栈。 |
 
 ## 3. 发布验收
+
+### 历史证据解释
+
+第 3.1 至 3.22 节按发生时间保留 Cloudflare、D1、旧 M1 控制轮次和早期 CI 的审计记录。它们只证明对应提交与环境，不能解释为当前仓库仍支持 Cloudflare，也不能替代平台移除后第 3.23 节记录的当前工作树证据；Docker Hub、NAS 与真实外部验收仍须单独完成。
 
 ### 3.1 已完成的生产基线验证（2026-07-17）
 
@@ -149,12 +153,78 @@
 - 在已登录管理员会话中搜索美区 `Overcooked! 2 - Nintendo Switch 2 Edition Upgrade Pack` 并执行只读跨区核验。MX、BR、HK 首次均自动匹配；JP 首次按设计独立降级为“暂不可用”，页面没有在同一请求内自动重试。管理员显式点击一次“重新核验”后，JP 返回 `automatic`，标题为 `Overcooked® 2 - オーバークック２ Nintendo Switch 2 Edition アップグレードパス`，同时保留其他三区的自动结果。
 - 部署后验收共启动两次日区 Browser Run 请求；每次请求均由既有请求生命周期负责关闭，不启用 keep-alive 或跨请求复用。验收没有点击“确认订阅”、价格来源写入、手动刷新、删除或 Telegram，因此没有创建或修改订阅、地区映射、价格快照、目标价或通知；也没有读取或记录 Cookie、密码、恢复码、Browser Session 标识、页面正文、截图、Trace、网络归档或异常堆栈。
 
+### 3.18 NAS Docker 静态合同与 M1 生产形态历史控制验收（2026-07-29）
+
+- Docker 静态合同先因 Dockerfile、生产 Compose、env 示例和 PostgreSQL init hook 缺失得到有效 RED；实现后 `npm run test:docker-config` 共 14 项全部通过，覆盖 Node 22 Bookworm 多阶段构建、精确 Playwright Chromium、非 root/tini/健康检查、最小复制集、双架构无硬编码、app/postgres 两服务、唯一 HTTP host port、数据库内部 5432、固定应用版本、build context 排除和运行时秘密引用。
+- 官方 `postgres:17` 的 `POSTGRES_USER` 会成为 bootstrap 超级用户，且 PostgreSQL 拒绝当前角色修改自身超级状态；因此未保留不可执行的“应用迁移自降权”方案。生产与开发 Compose 改用双角色：bootstrap 用户只存在于 postgres 环境，只读 init hook 在首次空数据目录内以单事务创建 `NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS LOGIN` 普通应用数据库所有者，app 只取得普通角色 URL。
+- init hook 使用 psql `\getenv` 接收密码，避免密码出现在进程参数；动态角色、密码和数据库名分别经 `%I`/`%L` 引用，脚本不启用 xtrace、不输出凭据，并由 `bash -n` 通过语法检查。独立审查进一步要求 bootstrap/app 两个密码都在 psql 前验证非空且互不相同。系统化调试证明官方镜像对 Unix socket、`127.0.0.1` 与 `::1` 使用 trust，错误密码仍能连接；健康检查因此改为普通应用用户携带 `PGPASSWORD`、以 Compose 服务名 `postgres` 进入容器网络 SCRAM host 规则，并依据 `current_user` 验证登录与五项权限。实测正确密码退出 0 且 `inet_client_addr` 为容器网络地址，错误密码退出 2。
+- `${POSTGRES_DATA_DIR}` 首次必须为空；官方入口对非空目录不会再次执行 hook，健康检查必须保持失败并阻止 app 启动。NAS 部署资产现包括生产 Compose、未提交 `.env`、`docker/postgres/init-app-role.sh` 与固定公开镜像；init hook 由 `.dockerignore` 排除，不进入 app 镜像层。
+- 控制任务已独占构建 `linux/arm64` 镜像，大小约 546 MB，inspect 结果为 arm64 与默认用户 `10001:10001`。临时生产 Compose 中 app/postgres 均 healthy，app 实际 UID 为 10001，PostgreSQL host bindings 为空；容器内 Chromium loopback 成功完成启动、导航与清理。
+- 同一临时栈从空库完成首次管理员初始化、登录和设置读取，restart app/postgres 后 initialized 状态仍保持；普通数据库角色的 `rolsuper`、`rolcreaterole`、`rolcreatedb`、`rolreplication`、`rolbypassrls` 全部为 false。
+- 最终门禁通过完整测试 78 个文件、435 项，DOM 4 个文件、16 项，Docker 合同 14/14，以及 TypeScript、双生产构建与 `git diff --check`。本验收没有发布 Docker Hub manifest，也没有连接或修改 NAS/Cloudflare 生产资源。
+
+### 3.19 GitHub Actions CI 与标签发布合同验收（2026-07-29）
+
+- 工作流合同测试先因 `.github/workflows/ci.yml` 与 `.github/workflows/release-image.yml` 均不存在得到单一有效 RED；实现后 9 项结构化 YAML 合同全部通过。测试使用直接、精确锁定的 `yaml` 开发依赖解析 job、service、step、permissions 与 inputs，不把脆弱正则当作工作流结构；仅中文注释一致性这种不可执行的人类约束读取注释文本。
+- 普通分支 push 与 pull request 使用 `contents: read` 最小权限，在 PostgreSQL 17.10 临时 service 上执行完整 Vitest/PostgreSQL 集成测试、DOM、真实 Chromium 生命周期烟雾测试、TypeScript、生产构建、Docker/Compose 合同、工作流合同、中文注释、空白和 Gitleaks 秘密扫描，再以 Buildx 验证 `linux/arm64,linux/amd64`。空白门禁显式检查 PR base 或 push before 到 head 的已提交差异，首次 push 安全退化为当前提交；标签路径检查标签目标提交，不依赖 checkout 后必然干净的工作区。该路径没有 Docker Hub login、push、Secrets 引用或 `latest` 标签。
+- 标签工作流只监听 `v*`，但在任何 Docker Hub 登录前还必须把 `github.ref_name` 严格验证为无前导零的 `vX.Y.Z`。本地 shell fixture 已证明 `v1.2.3` 生成 `1.2.3`、`1.2`、`sha-0123456789ab` 和 `latest`，并拒绝普通分支名、不完整版本、预发布后缀和前导零版本。
+- 发布 job 必须依赖同一提交重新完成的完整 quality job，且只读取 `DOCKERHUB_USERNAME` 与 `DOCKERHUB_TOKEN` 两个 GitHub Repository secrets。登录令牌仅进入固定 SHA 的官方 Docker login action password input，不由 shell 输出、构建参数、缓存或 OCI 标签传递。
+- 发布镜像固定同时构建 `linux/arm64,linux/amd64`，并附加 source、revision、version、created 四项 OCI 可追溯元数据。npm 缓存由 lockfile 驱动，Buildx 缓存 scope 同时包含 `package-lock.json` 与 `Dockerfile` 哈希；所有缓存都排除 PostgreSQL 运行数据、浏览器 profile、Cookie 与秘密。
+- checkout、Node、QEMU、Buildx、Docker login 和 build-push 均固定到经官方版本标签核对的 40 位提交 SHA；Dockerfile 三个外部基础阶段统一固定 `node:22.20.0-bookworm-slim`，PostgreSQL service 固定到 `postgres:17.10-bookworm`。Gitleaks 固定为 8.30.1，并在执行前验证官方 linux_x64 归档 SHA-256。任何升级都必须同时修改可信 pin 合同并重新审查。
+- 最终本地门禁通过完整测试 78 个文件、435 项，DOM 4 个文件、16 项，独立 Chromium 生命周期 4 项，Docker 合同 14/14，工作流合同 9/9，以及 TypeScript、生产构建、中文注释、`git diff --check` 和 actionlint 1.7.12。M1 Docker Desktop 还以 cache-only 方式实际完成 `linux/arm64,linux/amd64` 双架构构建，两个平台均走完固定 Node 基础、npm ci、生产构建、Playwright Chromium 和非 root 运行层；未登录或推送镜像。
+- 本轮只创建和本地验证工作流，没有配置、读取或打印真实 Docker Hub Secrets，没有登录 Docker Hub、推送 manifest、创建 Git 标签或更新 `latest`。首次公开发布仍需管理员另行确认精确语义版本。
+- 独立审查随后发现两个 quality job 错把 runner host PostgreSQL 映射与连接串设为 `5432`，这会被 `requireTestDatabaseUrl()` 的破坏性测试安全守卫确定性拒绝；两份工作流现均明确映射 `54329:5432` 并连接 `127.0.0.1:54329`，与唯一允许的临时 `switch_test` 目标一致。合同先得到端口 `5432:5432` 与期望 `54329:5432` 的 RED，修复后以结构化 YAML 精确检查 service 映射、连接串及守卫值。
+- 同次审查还以真实临时 Git merge commit fixture 证明原发布空白命令漏过只存在于 merge 父差异的尾随空格；发布 workflow 已使用 `git diff-tree -m --check --root -r` 展开每个父提交，fixture 直接执行 workflow 精确 shell 后通过。普通 CI 合同现在同时拒绝 `DOCKERHUB_USERNAME`、`DOCKERHUB_TOKEN` 与任意 `${{ secrets.* }}` 表达式。`npm run test:github-actions` 本轮实际为 9/9，工作流中文注释合同、actionlint 和最终空白检查均通过。
+- 最终权限审查明确区分 Docker Hub 身份能力：Team/Business 组织可用 OAT 对单一 `switch-price-monitor` 仓库授予 Image Pull/Push；免费/个人 PAT 原生只有 Read/Write/Delete、没有单仓库授权，因此必须使用只拥有目标公开仓库的专用 Docker ID，并创建不含 Delete 的 Read/Write PAT。`DOCKERHUB_USERNAME` 对应专用 ID 或组织 namespace，token 必须与该身份匹配；工作流的 `${DOCKERHUB_IMAGE}@push` login scope 只限制凭据注入 Buildx 的目标 push 路径，是纵深防御而非改变 PAT 本身权限。
+- 同仓库 release workflow 现使用 `release-${{ github.repository }}` 全局不可取消队列，并在完整历史 checkout 后、Docker Hub 登录前直接遍历严格 `vX.Y.Z` 标签，只允许仓库最高语义版本继续。合同以真实临时 Git 仓库证明 `v1.2.3` 在 `v1.2.4` 已存在时失败、`v1.2.4` 通过；队列与最高版本守卫共同防止旧流程回退 `X.Y`/`latest`，不依赖 GitHub 未承诺的排队顺序。最终工作流合同实际为 9/9。
+
+### 3.20 PostgreSQL 登录失败状态并发竞态回归（2026-07-30）
+
+- Task 10 提交前完整门禁曾在 435 项测试中的并发登录用例暴露“登录资格锁定未返回状态”；隔离重复运行再次复现，确认是成功登录删除 `login_attempts` 与等待事务执行 `DO NOTHING` 后再读取之间的真实竞态，而非断言噪声。
+- 新增真实 PostgreSQL 确定性事务协调测试，在旧两语句实现下稳定得到预期 RED；改用单条 `INSERT ... ON CONFLICT DO UPDATE ... RETURNING` 后，错误登录稳定返回无效凭据并进入新的第一次失败窗口，合法登录会话仍原子提交且只保存摘要。
+- 缺行竞态与“并发五次错误后正确密码锁定”组合连续 20 次通过；本轮完整 Vitest 为 78 个文件、435 项，DOM 为 4 个文件、16 项，独立 Chromium 生命周期为 4 项，Docker 合同为 14/14，工作流合同为 9/9，工作流中文注释为 1/1，且 TypeScript、生产构建、actionlint 1.7.12、`git diff --check` 与 `linux/arm64,linux/amd64` cache-only 双架构构建均通过。过程未读取或输出真实密码、哈希、盐、恢复码、Cookie、数据库凭据或 Docker Hub Secrets，也未推送镜像、创建标签或修改 NAS/Cloudflare 资源。
+- 后续 Task 10 独立复验已让两份 CI quality job 的本机临时 PostgreSQL 端口与本竞态回归所用 `requireTestDatabaseUrl()` 安全守卫精确统一为 `54329`，因此 CI 不会在执行真实 PostgreSQL 回归前因错误目标被拒绝。该修正没有修改认证源码、竞态测试、迁移或凭据边界；工作流合同仍为实际 9/9。
+- 最终发布安全修正只涉及 release 身份 scope、凭据说明、全局串行与最高严格语义版本守卫，没有修改本 PostgreSQL 竞态实现或回归用例；真实 Git tag fixture 与工作流合同仍为 9/9，首次真实标签发布继续等待管理员单独确认。
+
+### 3.21 GitHub Actions PostgreSQL 双角色初始化修复（2026-08-01，本地回归及远程数据库门禁通过）
+
+- 远程 run `30510098237` 在 435 项中通过 434 项；唯一失败显示 `switch_test` 的 `rolsuper`、`rolcreaterole`、`rolcreatedb`、`rolreplication`、`rolbypassrls` 均为 true。根因是官方 PostgreSQL 镜像把 `POSTGRES_USER` 建成 bootstrap 超级用户，而不是 PostgreSQL 测试随机失败；本地 Compose 已用独立 `switch_test_admin` 再由 init hook 建立普通应用角色。
+- 合同测试先行得到有效 RED：`npm run test:github-actions` 的 9 项中 7 项通过、2 项失败；普通 CI 精确步骤序列缺少 `initialize_postgres_role`，发布 quality job 的 `POSTGRES_USER` 实际为 `switch_test` 而非 `switch_test_admin`。YAML 解析、工作流文件加载和既有无关合同均正常，因此失败精确覆盖本次权限模型缺口。
+- 最小修复让普通 CI 与发布 quality job 都以 `switch_test_admin`/独立临时假密码引导 `switch_test`，健康检查只验证已存在的管理角色；checkout 后、测试前通过 `job.services.postgres.id` 向 service 容器执行既有 `docker/postgres/init-app-role.sh`，并经 GitHub service 网络别名 `postgres` 进入 SCRAM host 规则，以应用连接确认可登录且五项集群权限均为 false。没有内联复制角色 SQL；仅 runner 测试 URL 保持受守卫的 `switch_test@127.0.0.1:54329`，不得与容器内自检的网络入口混淆。
+- GREEN 实际结果：`npm run test:github-actions` 为 9/9，`npm run test:workflow-comments` 为 1/1，`actionlint .github/workflows/ci.yml .github/workflows/release-image.yml` 与 `git diff --check` 均以 0 退出。新增/修改的测试与 workflow 注释均复核为说明了官方 bootstrap 语义、临时假值边界、初始化时序、TCP 身份验证和最小权限安全原因，且与实现一致。
+- Docker Desktop 恢复后，`docker info --format '{{.ServerVersion}}'` 返回 29.6.2；`docker compose -f docker-compose.dev.yml up -d postgres` 后专用 PostgreSQL 为 healthy，且仅映射 `127.0.0.1:54329->5432/tcp`。完整本地门禁实际通过：Vitest 78 个文件、435 项；DOM 4 个文件、16 项；Chromium 生命周期 1 个文件、4 项；Docker 合同 14/14；Actions 合同 9/9；工作流中文注释 1/1；`npx tsc --noEmit`、`npm run build`、actionlint 与 `git diff --check` 均以 0 退出。
+- 本轮没有真实秘密、Docker Hub 登录或镜像推送、Git 标签、NAS 或 Cloudflare 写入。远程 run `30685133376` 已证明本节数据库修复及其后续测试通过，但完整 quality job 随后被既有 Gitleaks 历史命中阻止；整体 CI 状态由下一节继续记录，不能把数据库门禁通过误写成完整 CI 通过。
+
+### 3.22 Gitleaks 精确历史基线修复（2026-08-01，本地与远程完整门禁通过）
+
+- 提交 `5fa2c06` 触发的远程 run `30685133376` 已通过 PostgreSQL service 初始化、普通角色 SCRAM 权限自检、435 项 Vitest、16 项 DOM、4 项 Chromium、类型检查、生产构建、Docker/Actions/注释合同与空白检查；这证明原 434/435 权限失败已修复。随后 Gitleaks 扫描 161 个提交并报告七个命中，质量 job 因此失败，QEMU、Buildx 与双架构镜像构建均按安全边界没有启动。
+- 使用与 CI 相同的 Gitleaks `8.30.1`，并以官方 checksums 文件校验 M1 对应归档后，本地完全复现七个历史命中：两项来自源码中已注明为任天堂官网公开只读搜索配置的同一值，五项来自认证实施计划中的固定测试密码样例；报告全程使用 100% 脱敏，未把命中原文写入日志、文档或基线。
+- 合同测试先得到有效 RED：10 项中 8 项通过，扫描步骤缺少显式基线路径且 `.gitleaksignore` 不存在。最小修复新增只含七个 `提交:路径:规则:行号` 精确 fingerprint 的根目录基线，并让普通 CI 与发布 quality job 以 `${GITHUB_WORKSPACE}/.gitleaksignore` 锚定文件；没有按规则、整份文件或正则扩大例外，也不受 runner 当前目录漂移影响。
+- GREEN 实际结果：Actions 合同 10/10、中文注释合同 1/1、actionlint 与 `git diff --check` 均退出 0；同版本 Gitleaks 再次扫描 161 个提交得到 `no leaks found`。额外的临时高熵假令牌不在基线中，扫描仍报告一项命中并退出 1，证明精确历史基线不会吞掉未来新增秘密。
+- 提交 `af62ea7` 触发的 [远程 run `30685670944`](https://github.com/Maxkinger/Switch_Price_Monitor/actions/runs/30685670944) 在 10 分 25 秒内完整通过：双角色 PostgreSQL 初始化与 SCRAM 权限自检、435 项 Vitest、16 项 DOM、4 项 Chromium、类型检查、生产构建、Docker/Actions/注释/空白合同、Gitleaks 161 提交全历史扫描、QEMU、Buildx 以及 `linux/arm64`/`linux/amd64` 镜像构建均成功。该普通 CI 只验证双架构构建，没有登录 Docker Hub、创建标签或推送镜像。
+- 本次没有修改历史提交、暴露命中值、关闭 Gitleaks 规则、登录 Docker Hub、创建标签、推送镜像、访问 NAS 或写入 Cloudflare；首次真实标签发布继续等待用户单独确认。
+
+### 3.23 Task 11 平台移除后的当前证据（2026-08-01）
+
+- 生产源码、测试、依赖、构建配置、运维脚本和工作流中的旧 Cloudflare 运行入口已移除；历史文档允许保留平台背景。Docker/平台合同新增嵌套 lockfile 合成依赖检查及 `docker/`、PostgreSQL 迁移目录覆盖后，均先得到有效 RED，再修复并以 19/19 通过，避免旧平台包或运行符号从嵌套依赖与部署资产回流。
+- 当前本地完整业务门禁为 Vitest 69 个文件、420 项通过；DOM 16 项通过；真实本地 Chromium 生命周期 4 项通过；TypeScript 严格检查和客户端/Node 生产构建通过。
+- 最新已知成功的普通 CI run `30686052256` 对应平台移除前提交。它可证明当时的 PostgreSQL、秘密扫描和双架构构建门禁，但不能证明当前未提交工作树或未来发布标签。当前提交必须重新跑远程 CI。
+- 当前工作树在 M1/arm64 构建 `switch-price-monitor:task11-m1-local` 后，以唯一临时 Compose project 和全新 bind mount 启动生产定义。app/postgres 均健康；app 的运行身份为 `10001:10001`，唯一宿主映射为临时 HTTP `33080 -> 3000`，postgres `5432` 没有宿主绑定。健康 API与静态首页、首次初始化、`HttpOnly; SameSite=Strict` 且 LAN HTTP 无 `Secure` 的 Cookie、登录/退出、一次性恢复码改密、设置更新、app 重启持久化和五次失败后的 `429 LOGIN_LOCKED` 均通过。这是生产运行时/装配冒烟，不宣称发现、通知等 fake 外部边界也在该容器中运行。
+- 同一 arm64 镜像在 `--network none`、非 root、`cap_drop=ALL` 与 `no-new-privileges` 下完成 Chromium data URL 启停冒烟。发现 fixture、订阅事务、历史/导出、手动刷新 fixture、调度锁和 Telegram fake transport 由同一工作树的 420 项 Vitest 分层验证；它们与 Compose 冒烟共同构成当前 M1 本地证据，但不等同于真实任天堂或 Telegram 端到端演练。
+- 独立 PostgreSQL 17 备份恢复集成门禁新增显式绝对 `--env-file`、任意 cwd 与 16 张 public 表精确集合校验后重新运行 14/14；缺少非抽样必需表的 archive 会清回空库。通过后各自唯一临时容器、网络、数据库和归档均由受控清理移除；未读取既有项目 `.env` 或数据库，也未使用真实认证或 Telegram 凭据。
+- Docker Hub Repository Secrets 尚未配置，`v0.1.0` 尚未创建，公开双架构镜像尚未发布；标签推送必须另行确认。
+- DS423+ 没有部署，真实 Telegram/Nintendo 样本没有运行，线上 Cloudflare 资源没有停止或删除。Cloudflare 退役必须在 NAS 等价、备份恢复与回滚验收后取得独立授权。
+
 ## 4. 验收原则
 
 - 不把“请求成功”当作“价格正确”：必须通过商品身份校验。
 - 不把地区价格 ID 当作跨区通用编号：官方 API 返回价格时必须再次与已确认的本区 ID 比对；US、MX、BR、HK 只接受本区官方 JSON-LD，缺少可验证价格时记录过期状态，不猜测第三方补值。
 - 不把第三方价格当作官方确认价格：来源必须可见，且不触发即时降价提醒。
 - 任何测试、日志、导出和错误页面都不得泄露凭据。
+- 当前唯一支持路径是 Node.js 22 + PostgreSQL 17 + 本地 Playwright；历史 Worker/D1 验收不得作为当前工作树或 NAS 的替代证据。
+- 手动刷新每次认证请求同步执行，无冷却、队列或调度认领；测试必须证明连续请求都进入采集服务并只记录最近请求时间。
+- 会话 Cookie 必须保持 `HttpOnly; SameSite=Strict`；局域网 HTTP 明确 `COOKIE_SECURE=false`，可信 HTTPS 明确为 `true`，不得根据客户端可伪造的转发头自动降级。
+- NAS 备份恢复门禁必须使用唯一 Compose project、显式绝对 env 文件与 mktemp 临时目录，控制端最新隔离验收为 14/14：任意 cwd/env 与路径边界；fresh/fixture；失败原子性；retention 上限、18 位 sequence、每库锁和跨库隔离；app running/paused；普通角色 owner、view、collation、文本搜索配置、publication 和 operator 等用户对象；截断 archive 的 single-transaction；容器 tmp 清理；镜像精确 manifest/checksum；16 张 public 表精确集合、管理员状态与共享 ACL 边界。checksum、表集合或管理员 post-validation 失败必须以显式目标库 typed cleanup 把本次恢复对象清回经同一 catalog 守卫证明的空库，并能立刻用合法归档重试；脚本不得使用会撤销其他数据库、表空间或配置参数授权的角色级清理命令，测试必须保留共享表空间显式 ACL 哨兵。任何子命令 stderr 都不得回显容器秘密。
 - 本地界面验收应在已登录管理员会话下覆盖真实官方候选、跨区选择、香港官方链接核验、来源预览和最终确认；未登录状态只能验证页面渲染与 `401` 安全拦截，不能代替写入链路验收。
-- 认证入口界面验收必须覆盖首次设置、地区与默认搜索区约束、一次性恢复码确认后的自动登录、恢复密码后返回登录、重新登录以及撤销会话后由受保护请求触发的安全回退；任何临时密码、恢复码、Cookie 或本地 D1 测试数据不得进入 Git、日志、截图或文档。
+- 认证入口界面验收必须覆盖首次设置、地区与默认搜索区约束、一次性恢复码确认后的自动登录、恢复密码后返回登录、重新登录以及撤销会话后由受保护请求触发的安全回退；任何临时密码、恢复码、Cookie 或一次性 PostgreSQL/Compose 测试数据不得进入 Git、日志、截图或文档。
 - 永久删除的生产人工验收已在管理员明确授权的既有订阅上覆盖仪表盘多选与详情删除入口。未来回归仍须先取得管理员对具体订阅的明确授权，并验证确认被拒绝、`404` 与 `401` 均不得删除其他订阅或全局数据；全程不得将真实会话或价格历史复制到日志与文档。

@@ -2,33 +2,31 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 状态 | 已确认 |
+| 状态 | 历史决策；已被 ADR-003 取代 |
 | 日期 | 2026-07-16 |
-| 决策 | 使用 Cloudflare Workers Static Assets 托管 React 前端与 API，使用 D1 存储业务数据，以 Cron Trigger 执行采集与日报调度。 |
+| 被取代日期 | 2026-08-01（仓库运行路径完成迁移） |
+| 历史决策 | 使用 Cloudflare Workers Static Assets 托管 React 前端与 API，使用 D1 存储业务数据，以 Cron Trigger 执行采集与日报调度。 |
 
-## 背景
+## 背景与当时理由
 
-产品为个人使用的 Switch 价格监控站，需要定时采集、持久化价格历史、Telegram 推送、安全保存密钥和网页管理界面，同时希望降低服务器维护成本。
+产品是个人使用的 Switch 价格监控站，需要定时采集、持久化历史、Telegram 推送和网页管理界面。当时在 Cloudflare Workers + D1、VPS/NAS + Docker、Vercel + Supabase 中选择第一项，主要为了降低服务器维护成本，并通过一个 Worker 部署单元提供静态前端、API 与调度。
 
-## 考虑过的方案
+该方案在 2026-07-17 至 2026-07-19 形成了 D1、Worker、Cron 与 Browser Binding 的历史生产验收记录。这些记录仍保留在质量文档中用于审计，但不再定义当前仓库的支持架构。
 
-1. Cloudflare Workers + D1：免服务器运维，提供 Worker、D1、Cron 与 Secrets。
-2. VPS / NAS + Docker：抓取扩展性高，但需要维护服务器、证书、数据库和运行环境。
-3. Vercel + Supabase：前后端生态成熟，但平台和配置较分散。
+## 取代原因
 
-## 决策理由
+- Worker 部署会形成单一 bundle，不利于本地阅读、调试与长期维护。
+- D1、Cron、Secrets 与 Browser Binding 使运行时和数据层绑定 Cloudflare。
+- 用户已确认以 DS423+、Docker Compose、项目专属 PostgreSQL 和本地 Playwright 作为唯一目标，并要求 M1 本地调试与 GitHub Actions 多架构发布。
 
-选择方案 1，因为它与个人项目的低维护、定时运行、数据持久化和私密配置要求最匹配。采用 Workers Static Assets 而非单独 Pages，以便在一个部署单元中提供前端资产、API 和定时任务。
+当前仓库已经移除旧平台运行时代码、依赖、配置和平台测试，只支持 Node.js 22 + PostgreSQL 17 + 本地 Playwright Chromium。现行决策见 [ADR-003](ADR-003-nas-docker-postgresql.md)。
 
-## 后果与约束
+## 线上资源退役边界
 
-- 必须遵守 Worker 运行时间、网络请求和外部站点访问限制。
-- 外部站点读取需要限流、超时和第三方回退策略。
-- 需要以应用层时区逻辑处理日报时间；Cron 本身使用 UTC，且触发更新可能延迟。
-- 如未来官方商店必须使用真实浏览器渲染才能读取价格，可能需评估 Cloudflare Browser Rendering 或独立抓取服务；该项不在当前决策中预先引入。
+“仓库代码已迁移”不等于“线上资源已删除”。Cloudflare Worker、D1、Cron、Secrets 或 Browser 资源仍可能存在；当前没有执行删除。M1 生产运行时 Compose 与业务自动化分层证据已经完成，但仍必须完成公开镜像、DS423+ 功能等价、备份恢复和回滚验收，再取得针对精确线上资源的独立退役授权。任何文档或自动化都不得把 ADR 状态当作删除授权。
 
-## 参考
+## 历史后果
 
-- Cloudflare Workers Best Practices: <https://developers.cloudflare.com/workers/best-practices/workers-best-practices/>
-- Cloudflare D1 Getting Started: <https://developers.cloudflare.com/d1/get-started/>
-- Cloudflare Cron Triggers: <https://developers.cloudflare.com/workers/configuration/cron-triggers/>
+- 当时必须遵守 Worker 运行时间、网络请求和站点访问限制。
+- D1 批次、Cloudflare Cron 和 Browser Binding 的证据只适用于对应历史提交/部署。
+- 历史外部链接、版本号和生产样本不证明当前 Node/PostgreSQL 工作树已部署或已通过远程验收。

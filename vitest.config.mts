@@ -1,19 +1,77 @@
-import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
 
 /**
- * 使用 Cloudflare Workers 测试池而非 Node mock，使 D1 迁移、Web Crypto 与 Worker Request/Cookie 行为在接近生产的运行时验证。
- * 全局迁移设置文件在每个隔离测试 Worker 启动时执行，确保各测试均拥有相同表结构。
+ * 认证与管理 API 回归已经迁到 Node/PostgreSQL：这些文件共享一个受守卫的一次性 schema，
+ * 因而必须从普通核心项目排除并按文件串行，避免 reset/TRUNCATE 交叉污染会话、价格或订阅断言。
+ */
+const nodePostgresApiTests = [
+  "test/auth-routes.test.ts",
+  "test/auth-guard.test.ts",
+  "test/api-dashboard.test.ts",
+  "test/api-history.test.ts",
+  "test/api-product-discovery.test.ts",
+  "test/api-product-preview.test.ts",
+  "test/api-refresh.test.ts",
+  "test/api-settings.test.ts",
+  "test/api-subscription-detail.test.ts",
+  "test/api-subscriptions.test.ts",
+];
+
+/**
+ * Node 服务、平台中立核心、PostgreSQL 集成和本地浏览器生命周期使用四个互斥项目。
+ * 明确排除顺序防止同一文件被重复执行；数据库和监听资源项目保持串行，纯核心测试则可安全并行。
  */
 export default defineConfig({
-  plugins: [
-    cloudflareTest({
-      wrangler: { configPath: "./wrangler.jsonc" },
-    }),
-  ],
   test: {
-    // 该配置只收集 Worker/D1 `.ts` 测试；DOM `.tsx` 测试必须由独立 jsdom 配置运行，避免把浏览器依赖错误装载为 Worker 模块。
-    include: ["test/**/*.test.ts"],
-    setupFiles: ["./test/apply-migrations.ts"],
+    projects: [
+      {
+        test: {
+          name: "core",
+          environment: "node",
+          // 核心项目接住原测试池的 37 个平台中立文件和新迁移的 4 个业务文件；排除清单与下方三个项目完全互斥。
+          include: ["test/**/*.test.ts"],
+          exclude: [
+            ...nodePostgresApiTests,
+            "test/postgres-*.test.ts",
+            "test/server-*.test.ts",
+            "test/playwright-*.test.ts",
+            "test/japanese-upgrade-browser.test.ts",
+          ],
+        },
+      },
+      {
+        test: {
+          name: "node-postgres-api",
+          environment: "node",
+          // 每个文件会重建同一个一次性 PostgreSQL schema；禁止文件并行是数据库隔离而不是性能偏好。
+          include: nodePostgresApiTests,
+          fileParallelism: false,
+        },
+      },
+      {
+        test: {
+          name: "postgres",
+          environment: "node",
+          // 数据库测试共享一个一次性 schema，禁止文件并行可避免 reset/migration 操作交叉污染而产生假阳性或偶发失败。
+          include: ["test/postgres-*.test.ts"],
+          fileParallelism: false,
+        },
+      },
+      {
+        test: {
+          name: "server",
+          environment: "node",
+          // Node HTTP 与本地 Playwright 测试只使用临时目录、回环端口和注入生命周期；
+          // 浏览器 smoke 不访问任天堂或公网，必须在真实 Node 环境运行，并与纯核心和数据库项目隔离。
+          include: [
+            "test/server-*.test.ts",
+            "test/playwright-*.test.ts",
+            "test/japanese-upgrade-browser.test.ts",
+          ],
+          // 生命周期用例共享本机监听资源或 Chromium 进程；串行文件可使关停断言稳定且不掩盖资源泄漏。
+          fileParallelism: false,
+        },
+      },
+    ],
   },
 });

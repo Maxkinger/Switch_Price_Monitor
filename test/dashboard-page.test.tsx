@@ -9,7 +9,7 @@ import { DashboardPage } from "../src/app/dashboard-page";
 import { SubscriptionDetailPage } from "../src/app/subscription-detail-page";
 import type { DashboardOverview, SubscriptionDetail } from "../src/app/dashboard-api-client";
 
-/** 仪表盘删除测试使用固定概览，确保只验证管理员选择、确认和重读流程，不访问真实价格、Cookie 或 Worker 网络。 */
+/** 仪表盘删除测试使用固定概览，确保只验证管理员选择、确认和重读流程，不访问真实价格、Cookie 或服务端网络。 */
 const overviewWithSubscription: DashboardOverview = {
   stats: {
     monitoredSubscriptionCount: 1,
@@ -37,7 +37,7 @@ const overviewWithSubscription: DashboardOverview = {
   }],
 };
 
-/** 删除后由 Worker 重读的空概览，页面不得在本地手工裁剪统计、地区价格或历史最低价。 */
+/** 删除后由 Node API 重读的空概览，页面不得在本地手工裁剪统计、地区价格或历史最低价。 */
 const overviewWithoutSubscription: DashboardOverview = {
   stats: {
     monitoredSubscriptionCount: 0,
@@ -86,7 +86,7 @@ const localizedOverview: DashboardOverview = {
     nameEn: "Overcooked! 2 – Nintendo Switch 2 Edition",
     enabled: true,
     regionalProductIds: ["overcooked-us", "overcooked-mx", "overcooked-jp", "overcooked-br", "overcooked-hk"],
-    // 跨区最低价复用 Worker 的完整价格模型，来源和采集时刻不可省略，避免测试夹具绕过真实 API 数据约束。
+    // 跨区最低价复用服务端完整价格模型，来源和采集时刻不可省略，避免测试夹具绕过真实 API 数据约束。
     allRegionHistoricalLow: { regionalProductId: "overcooked-jp", regionCode: "JP", amountMinor: 1999, currency: "JPY", cnyFen: 9300, source: "official", capturedAt: "2026-07-19T01:00:00.000Z" },
     regions: [
       { regionalProductId: "overcooked-us", regionCode: "US", currency: "USD", current: { amountMinor: 3999, cnyFen: 28800, source: "official", capturedAt: "2026-07-19T01:00:00.000Z" }, historicalLow: { amountMinor: 2999, cnyFen: 21600, source: "official", capturedAt: "2026-07-19T01:00:00.000Z" }, isStale: false },
@@ -139,7 +139,7 @@ describe("仪表盘订阅硬删除", () => {
   });
 
   it("renders collection and report times in the saved administrator timezone", async () => {
-    // 浏览器时区可能与日报时区不同；页面必须使用 Worker 明确返回的 IANA 时区，让两个时间的阅读口径保持一致。
+    // 浏览器时区可能与日报时区不同；页面必须使用 Node API 明确返回的 IANA 时区，让两个时间的阅读口径保持一致。
     const api = {
       getDashboard: vi.fn(async () => overviewWithSubscription),
       refreshNow: vi.fn(),
@@ -236,7 +236,7 @@ describe("地区中文名与官网价格文字", () => {
   });
 
   it("always renders dashboard region prices in the product owner's fixed five-region order", async () => {
-    // Worker 返回顺序可能来自数据库插入、补全或未来 API 排序；仪表盘必须在展示层固定为美/墨/巴/港/日，
+    // 服务端返回顺序可能来自数据库插入、补全或未来 API 排序；仪表盘必须在展示层固定为美/墨/巴/港/日，
     // 这样管理员每次横向比较价格时不用重新寻找同一区域，且缺失地区不会改变已显示地区的相对顺序。
     const api = {
       getDashboard: vi.fn(async () => localizedOverview),

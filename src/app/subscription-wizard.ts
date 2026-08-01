@@ -21,11 +21,11 @@ export interface SubscriptionWizardState {
   searchResult: OfficialSearchResult;
   selectedCandidateKeys: string[];
   regionalConfirmations: Record<string, OfficialProductCandidate>;
-  /** 自动与人工来源必须随候选保存，最终确认才能携带审计来源；该 UI 字段不会取代 Worker 对官方链接的重验。 */
+  /** 自动与人工来源必须随候选保存，最终确认才能携带审计来源；该 UI 字段不会取代 Node 服务对官方链接的重验。 */
   regionalConfirmationSources: Record<string, RegionalProductMatchSource>;
   /**
    * 已明确跳过的“默认区候选:地区”键。跳过只在本次确认请求中表达管理员决定，
-   * 不会伪造地区商品、价格快照或监控关联；Worker 仍以保存设置执行最终覆盖校验。
+   * 不会伪造地区商品、价格快照或监控关联；服务端仍以保存设置执行最终覆盖校验。
    */
   skippedRegionalKeys: string[];
   sourcePreviews: Record<string, SubscriptionRegionPreview[]>;
@@ -63,7 +63,7 @@ export function applyAutomaticRegionResolutions(
       ...state.regionalConfirmations,
       ...Object.fromEntries(automatic.map((resolution) => [regionalConfirmationKey(resolution.candidateKey, resolution.regionCode), resolution.candidate])),
     },
-    // 只有 Worker 的唯一严格匹配可写入 automatic；浏览器不得按标题、价格或候选顺序自行推断来源。
+    // 只有服务端的唯一严格匹配可写入 automatic；浏览器不得按标题、价格或候选顺序自行推断来源。
     regionalConfirmationSources: {
       ...state.regionalConfirmationSources,
       ...Object.fromEntries(automatic.map((resolution) => [regionalConfirmationKey(resolution.candidateKey, resolution.regionCode), "automatic" as const])),

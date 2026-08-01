@@ -89,7 +89,7 @@ function SetupScreen({
   const [formNotice, setFormNotice] = useState<string | null>(null);
   const defaultSearchRegion = state.defaultSearchRegion ?? state.enabledRegions[0];
 
-  /** 仅做即时可用性校验；密码长度、地区合法性和单管理员冲突始终由 Worker 再次强制。 */
+  /** 仅做即时可用性校验；密码长度、地区合法性和单管理员冲突始终由同源认证 API 再次强制。 */
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (password !== confirmPassword) {
@@ -186,7 +186,7 @@ function LoginScreen({ notice, pendingAction, onLogin, onShowRecovery }: { notic
   );
 }
 
-/** 恢复页不自动登录：Worker 会撤销旧会话，成功后必须由管理员重新用新密码登录。 */
+/** 恢复页不自动登录：Node 认证服务会撤销旧会话，成功后必须由管理员重新用新密码登录。 */
 function PasswordRecoveryScreen({ notice, pendingAction, onRecover, onReturnToLogin }: { notice: string | null; pendingAction: AuthPendingAction; onRecover: (input: RecoverAuthInput) => void; onReturnToLogin: () => void }) {
   const [recoveryCode, setRecoveryCode] = useState("");
   const [password, setPassword] = useState("");
@@ -227,7 +227,7 @@ function PasswordRecoveryScreen({ notice, pendingAction, onRecover, onReturnToLo
   );
 }
 
-/** 所有可展示提示使用 alert，使表单校验和 Worker 的安全摘要能被辅助技术及时读取。 */
+/** 所有可展示提示使用 alert，使表单校验和服务端安全摘要能被辅助技术及时读取。 */
 function Notice({ message }: { message: string | null }) {
   return message ? <p className="auth-notice" role="alert">{message}</p> : null;
 }

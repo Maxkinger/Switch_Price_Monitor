@@ -4,7 +4,7 @@ import { createProductApiClient, ProductApiError } from "../src/app/api-client";
 import { createApiRequestTracker } from "../src/app/api-request-tracker";
 
 /**
- * 浏览器 API 客户端测试只验证本系统同源请求契约。它刻意注入请求函数而不启动 Worker，
+ * 浏览器 API 客户端测试只验证本系统同源请求契约。它刻意注入请求函数而不启动 Node HTTP 服务，
  * 以防 UI 组件在重构时绕过受保护 `/api/products/*` 端点直接请求任天堂或第三方价格网站。
  */
 describe("product API client", () => {
@@ -21,7 +21,7 @@ describe("product API client", () => {
     }));
   });
 
-  it("preserves only the 401 status and safe Worker summary so the authentication shell can discard stale wizard state", async () => {
+  it("preserves only the 401 status and safe server summary so the authentication shell can discard stale wizard state", async () => {
     const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ error: "请先登录。" }, { status: 401 }));
 
     await expect(createProductApiClient(request).searchProducts("Overcooked"))
@@ -35,7 +35,7 @@ describe("product API client", () => {
 
     await client.resolveRegions([candidate()]);
 
-    // 启用地区是 Worker 设置的安全边界；客户端只能发送已经选定的默认区官方候选，不能携带 enabledRegions 覆盖范围。
+    // 启用地区是服务端设置的安全边界；客户端只能发送已经选定的默认区官方候选，不能携带 enabledRegions 覆盖范围。
     expect(request).toHaveBeenCalledWith("/api/products/resolve-regions", expect.objectContaining({
       body: JSON.stringify({ candidates: [candidate()] }),
       credentials: "same-origin",
@@ -43,7 +43,7 @@ describe("product API client", () => {
   });
 
   it("sends the selected anchor when verifying a Japanese manual upgrade link", async () => {
-    // 选中的默认区官方候选是日区升级包关系核验的唯一可信锚点；客户端必须原样转交给同源 Worker，不能只提交人工链接。
+    // 选中的默认区官方候选是日区升级包关系核验的唯一可信锚点；客户端必须原样转交给同源 Node API，不能只提交人工链接。
     const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ candidate: candidate() }));
     const client = createProductApiClient(request);
     const anchor = { ...candidate(), canonicalTitle: "Overcooked! 2 – Nintendo Switch 2 Edition Upgrade Pack", productType: "upgrade-pack" as const };

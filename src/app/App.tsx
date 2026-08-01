@@ -86,7 +86,7 @@ export function App() {
     }
   }
 
-  /** 普通登录成功后同样清空密码状态，浏览器只继续保存 Worker 管理的 HttpOnly Cookie。 */
+  /** 普通登录成功后同样清空密码状态，浏览器只继续保存 Node 服务管理的 HttpOnly Cookie。 */
   async function handleLogin(password: string) {
     setPendingAction("login");
     setAuth((state) => ({ ...state, notice: null }));

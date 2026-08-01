@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createThirdPartyProviderRegistry } from "../src/worker/providers/third-party-provider-registry";
+import { createThirdPartyProviderRegistry } from "../src/providers/third-party-provider-registry";
 
 describe("第三方价格提供方注册表", () => {
   it("对未获准的站点不创建提供方且明确返回不可用来源", () => {

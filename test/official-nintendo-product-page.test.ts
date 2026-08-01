@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createOfficialNintendoProductPageResolver } from "../src/worker/providers/official-nintendo-product-page";
+import { createOfficialNintendoProductPageResolver } from "../src/providers/official-nintendo-product-page";
 
 /**
  * 官方链接解析器只读取最小 JSON-LD 夹具，确保测试验证的是本系统对公开身份与价格字段的边界，

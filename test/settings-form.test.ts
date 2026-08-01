@@ -10,7 +10,7 @@ import {
 
 /**
  * 设置草稿测试固定前端联动边界：浏览器可以预防默认区失效，却不能携带初始化时间或秘密字段；
- * Worker 仍会在 PATCH 时重做校验，因此这些案例不模拟或读取会话 Cookie。
+ * Node 服务仍会在 PATCH 时重做校验，因此这些案例不模拟或读取会话 Cookie。
  */
 describe("public settings form state", () => {
   it("keeps the final enabled region and moves the default region when it is disabled", () => {

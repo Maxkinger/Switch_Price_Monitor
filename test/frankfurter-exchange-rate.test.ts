@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createFrankfurterExchangeRateProvider } from "../src/worker/providers/frankfurter-exchange-rate";
-import { ProviderNetworkError } from "../src/worker/providers/types";
+import { createFrankfurterExchangeRateProvider } from "../src/providers/frankfurter-exchange-rate";
+import { ProviderNetworkError } from "../src/providers/types";
 
 describe("Frankfurter exchange-rate provider", () => {
   it("inverts CNY-base responses into one foreign currency's CNY rate", async () => {

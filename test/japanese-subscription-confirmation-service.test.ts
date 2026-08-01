@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { OfficialProductCandidate, OfficialProductSearch } from "../src/shared/domain";
-import type { OfficialPriceIdResolution } from "../src/worker/services/official-price-id-service";
-import { JapaneseSubscriptionConfirmationService } from "../src/worker/services/japanese-subscription-confirmation-service";
+import type { OfficialPriceIdResolution } from "../src/services/official-price-id-service";
+import { JapaneseSubscriptionConfirmationService } from "../src/services/japanese-subscription-confirmation-service";
 
 /**
  * 普通日区商品最终确认测试只替换两个任天堂官方接口，不访问真实 My Nintendo Store 页面。

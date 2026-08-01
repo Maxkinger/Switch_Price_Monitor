@@ -3,32 +3,76 @@
   "private": true,
   "version": "0.0.17",
   "type": "module",
+  "codexMetadata": {
+    "databaseDependencyRationaleZh": {
+      "pg": "pg 是 Node 服务连接 PostgreSQL 的生产运行时依赖，不能放入仅测试/构建使用的 devDependencies。",
+      "parameterization": "所有动态 SQL 值必须通过 pg 参数绑定传入，禁止拼接认证、价格来源、筛选条件或其他外部输入。",
+      "credentials": "数据库连接凭据只从经过验证的运行时配置注入，不得写入源码、测试产物、镜像层或普通日志。"
+    },
+    "nodeRuntimeDependencyRationaleZh": {
+      "hono": "Hono 只承担标准 Fetch 应用组合，现有平台中立路由继续接收同源 Request，不在框架层复制业务判断。",
+      "@hono/node-server": "Node adapter 只把 Fetch 应用接到 Node.js 22 HTTP，监听、优雅关停和数据库生命周期仍由项目入口控制。",
+      "tooling": "tsx、concurrently 与 tsup 仅用于本地增量调试和构建；生产运行只执行 dist/server/index.js。"
+    },
+    "localBrowserDependencyRationaleZh": {
+      "playwright": "playwright 是 Node 日区升级关系的生产运行时依赖；版本必须精确锁定，使本地、Docker 与 NAS 使用同一 Chromium 客户端和浏览器修订。",
+      "isolation": "每批只启动一个本地无头 Chromium；最多三个根各用全新 context/page 串行核验，最终关闭所有资源且不复用 Cookie 或会话。",
+      "secrets": "浏览器异常、本机路径、页面正文、Cookie、端点和进程信息不得进入 API、数据库或普通日志。"
+    },
+    "dockerRuntimeConfigurationRationaleZh": {
+      "reproducibility": "Docker 三阶段统一固定 Node 22.20.0 Bookworm Slim；完整依赖与生产依赖都使用 package-lock.json 和 npm ci，最终镜像只复制生产依赖、双构建产物与不可变 PostgreSQL 迁移。",
+      "architecture": "Dockerfile 不拼接 CPU 架构下载地址；BuildKit 在 M1 linux/arm64 和 DS423+ linux/amd64 当前平台安装与精确 Playwright 版本匹配的 Chromium。",
+      "secrets": "Docker build 不接收数据库、Telegram、Cookie 或会话秘密；生产 Compose 只从未提交的运行时 env 引用凭据，bootstrap 管理密码仅进入 postgres，app 只取得普通角色 DATABASE_URL，合同测试也只使用公开假值。",
+      "permissions": "运行镜像与 Compose 固定 UID/GID 10001 并使用 init；仅应用 HTTP 映射 NAS 端口，PostgreSQL 与 Chromium 都保持容器内部可达。"
+    },
+    "githubActionsContractRationaleZh": {
+      "yaml": "yaml 仅用于测试阶段把 GitHub Actions 工作流解析为结构化数据，避免用脆弱文本匹配误判发布权限、触发器、平台或标签合同；它不会进入生产依赖或运行镜像。",
+      "secrets": "合同测试只验证 GitHub Secrets 的引用名称和登录边界，绝不读取、构造、打印或快照化 Docker Hub 用户名与访问令牌。"
+    },
+    "platformRemovalGateRationaleZh": {
+      "scope": "最终平台门禁只扫描生产源码、自动化测试、package 清单与 lockfile、构建配置、运维脚本和 GitHub Actions；历史 ADR、迁移计划与质量证据允许保留平台背景，不参与运行时判定。",
+      "dependencies": "禁止项使用精确包名与运行时符号，不能用宽泛的 cloudflare 字符串扫描；pg 的 pg-cloudflare 传递包不是项目主动选择的 Worker 依赖，不得误报。",
+      "ci": "平台门禁并入既有 test:docker-config，使普通 CI 与标签发布质量任务在镜像构建和外部登录前共同阻止旧平台入口回流。"
+    }
+  },
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "concurrently --kill-others-on-fail \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "tsx watch src/server/index.ts",
+    "dev:client": "vite",
+    "build": "npm run build:client && npm run build:server",
+    "build:client": "vite build",
+    "build:server": "tsup",
+    "start": "node dist/server/index.js",
     "preview": "vite preview",
-    "deploy": "node ./scripts/deploy-production.mjs",
     "test": "vitest",
-    "test:dom": "vitest --config vitest.dom.config.mts"
+    "test:dom": "vitest --config vitest.dom.config.mts",
+    "test:docker-config": "node --test test/docker-config.test.mjs test/platform-removal.test.mjs",
+    "test:github-actions": "node --test test/github-actions-release.test.mjs",
+    "test:workflow-comments": "node --test --test-name-pattern=\"工作流中文注释与安全边界保持一致\" test/github-actions-release.test.mjs"
   },
   "dependencies": {
+    "@hono/node-server": "2.0.12",
+    "hono": "4.12.32",
+    "pg": "^8.22.0",
+    "playwright": "1.62.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
-    "@cloudflare/playwright": "1.3.0",
-    "@cloudflare/vite-plugin": "^1.17.1",
-    "@cloudflare/vitest-pool-workers": "^0.18.5",
-    "@cloudflare/workers-types": "5.20260714.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@types/node": "22.20.0",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^5.0.2",
+    "concurrently": "10.0.4",
     "jsdom": "^29.1.1",
+    "tsup": "8.5.1",
+    "tsx": "4.23.1",
     "typescript": "^5.8.3",
     "vite": "^7.0.6",
     "vitest": "^4.1.0",
-    "wrangler": "4.112.0"
+    "yaml": "2.9.0"
   }
 }

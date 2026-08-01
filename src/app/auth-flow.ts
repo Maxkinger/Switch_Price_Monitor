@@ -49,7 +49,7 @@ export function toggleEnabledRegion(state: AuthFlowState, regionCode: RegionCode
 }
 
 /**
- * 只接受当前已启用地区作为默认搜索区，拒绝不在集合内的选择以避免前端展示与 Worker 规则不一致；
+ * 只接受当前已启用地区作为默认搜索区，拒绝不在集合内的选择以避免前端展示与服务端规则不一致；
  * 不合法值保持原状态，界面可继续显示受控下拉框中的有效选项。
  */
 export function setDefaultSearchRegion(state: AuthFlowState, regionCode: RegionCode): AuthFlowState {

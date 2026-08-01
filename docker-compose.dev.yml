@@ -1,0 +1,43 @@
+# 本 Compose 项目承载 M1 宿主机开发与 PostgreSQL 集成测试；先启动 postgres，再在宿主机执行 `npm run dev` 获得前后端热更新。
+# Node 和 Playwright 使用当前仓库锁定依赖，数据库保持 tmpfs 与回环端口，绝不连接 NAS、生产目录或真实 Telegram 配置。
+name: switch-price-monitor-task2
+
+services:
+  postgres:
+    # PostgreSQL 17 与目标生产主版本保持一致；镜像同时支持本地 M1 的 linux/arm64 与 NAS 的 linux/amd64。
+    image: postgres:17
+    environment:
+      # switch_test_admin 仅供空 tmpfs 的官方入口引导；本地应用和测试 URL 永远不使用这个管理角色。
+      POSTGRES_USER: switch_test_admin
+      POSTGRES_PASSWORD: switch_test_admin
+      POSTGRES_DB: switch_test
+      # init hook 创建的 switch_test 是数据库所有者但没有超级、建角、建库、复制或绕过 RLS 权限；密码只用于可销毁回环测试库。
+      APP_DATABASE_USER: switch_test
+      APP_DATABASE_PASSWORD: switch_test
+    ports:
+      # 54329 只绑定回环地址，唯一用途是让宿主机 Vitest 连接一次性测试库；生产 Compose 禁止复制此端口映射或向局域网暴露 PostgreSQL。
+      - "127.0.0.1:54329:5432"
+    tmpfs:
+      # 数据目录使用内存文件系统，容器销毁后测试数据不可恢复；这能避免测试污染本机、NAS 或其他项目的持久数据库。
+      - /var/lib/postgresql/data
+    volumes:
+      # 与生产使用同一只读 init hook，确保真实迁移测试连接的 switch_test 权限模型不会因开发配置漂移。
+      - type: bind
+        source: ./docker/postgres/init-app-role.sh
+        target: /docker-entrypoint-initdb.d/010-init-app-role.sh
+        read_only: true
+    healthcheck:
+      # 普通 switch_test 必须经 Compose 服务名 postgres 进入容器网络 SCRAM 规则并以 current_user 自证权限；不允许本机 trust 或 bootstrap 代查。
+      # PGPASSWORD 只进入 psql 子进程环境，健康结果只有退出状态与单个布尔值，不会打印测试密码。
+      test:
+        - CMD-SHELL
+        - >-
+          test "$$(PGPASSWORD="$${APP_DATABASE_PASSWORD}"
+          psql --host postgres --username "$${APP_DATABASE_USER}" --dbname "$${POSTGRES_DB}"
+          --tuples-only --no-align --command
+          "SELECT rolcanlogin AND NOT (rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls)
+          FROM pg_roles WHERE rolname = current_user")" = "t"
+      interval: 2s
+      timeout: 3s
+      retries: 20
+      start_period: 5s

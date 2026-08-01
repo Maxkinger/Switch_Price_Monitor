@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AuthApiError, createAuthApiClient } from "../src/app/auth-api-client";
 
 /**
- * 认证客户端测试固定浏览器与本站 Worker 的边界：管理员密码和恢复码只作为调用参数传递，
+ * 认证客户端测试固定浏览器与本站 Node API 的边界：管理员密码和恢复码只作为调用参数传递，
  * 绝不由客户端读取 Cookie 或改为调用第三方域名。测试使用的是不可用于真实账户的夹具字符串。
  */
 describe("authentication API client", () => {
@@ -29,7 +29,7 @@ describe("authentication API client", () => {
     expect(request).toHaveBeenCalledWith("/api/auth/status", expect.objectContaining({ credentials: "same-origin" }));
   });
 
-  it("turns a safe Worker error summary into a status-aware error without preserving response data", async () => {
+  it("turns a safe server error summary into a status-aware error without preserving response data", async () => {
     const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ error: "登录尝试过多，请稍后再试。", code: "LOGIN_LOCKED" }, { status: 429 }));
 
     await expect(createAuthApiClient(request).login("fixture-password-1234"))

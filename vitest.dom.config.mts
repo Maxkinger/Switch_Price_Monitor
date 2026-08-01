@@ -2,8 +2,8 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
 /**
- * React DOM 测试独立于 Cloudflare Workers 测试池运行。
- * jsdom 的依赖不能被 Miniflare 当作 Worker 模块加载；分离配置仍让 DOM 交互测试进入本地质量门禁，而不削弱 D1/Worker 测试的生产相似性。
+ * React DOM 测试与普通 Node、PostgreSQL 和本地浏览器项目分开运行。
+ * jsdom 只为组件交互提供浏览器全局，不能渗入后端数据库或监听生命周期；独立配置仍让 DOM 用例进入本地质量门禁。
  */
 export default defineConfig({
   plugins: [react()],

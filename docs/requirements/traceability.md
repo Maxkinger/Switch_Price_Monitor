@@ -1,21 +1,32 @@
 # 需求追踪表
 
-状态含义：`已确认` 表示产品或设计方向已获确认；`待设计` 表示尚需细化；`待实现` 表示尚未编码。
+最后更新：2026-08-01
 
-| ID | 需求主题 | 状态 | 对应设计/决策 |
+状态区分“仓库实现”“M1 本地生产验收”和“外部验收”。历史 Cloudflare 生产证据不等于当前 Node/PostgreSQL 工作树的 M1、Docker Hub 或 NAS 证据。
+
+| ID | 需求主题 | 当前状态 | 主要证据 |
 | --- | --- | --- | --- |
-| FR-001 | 多商品订阅、默认区、跨区匹配与手动修正 | 已确认 / 已实施部分（日区升级包 Browser Run 生产集成已部署 V0.0.13，并通过生产只读核验；首次日区暂时失败按设计独立降级，管理员显式点击“重新核验”后成功返回 `automatic`，证明页面没有请求内自动重试且重试入口有效。新增与补全流程均由服务端保存的 `enabledRegions` 决定范围，US、MX、BR、HK、JP 使用各自任天堂官方入口。唯一严格或已准入的本地化身份才以 `automatic` 加入，歧义候选须由管理员选择。日区 `DL_DLC` 与港区官方 `bundles` 已纳入美食家版受控匹配。日区升级包普通搜索无独立结果时，Worker 将要求唯一 `upgrade: 1`、同发行商/系列且明确为 Switch 2 Edition 的下载根，再用一个 Browser Run 实例和最多三个串行无痕上下文读取唯一 `アップグレードパス` URL，并由官方价格 API 证明 JP/JPY/在售/同 ID；自动候选保存前再次执行全链路。浏览器不自动重试，候选失败独立降级；人工链接只在浏览器失败且官方 URL/价格完整时以 `manual_link` 兜底。港区继续限制 1–5 个 `titles` 根、每根 50 个一层关系并复核关联详情。所有 automatic 写入前均重新证明，任一地区无效时单个 D1 批次零写入） | PRD §3；系统设计 §3.1；API 设计 §4；官方价格 ID 设计规格；官方订阅发现与批量确认设计；设置驱动的地区补全设计；多地区任天堂官方搜索与自动监控设计；跨语言地区商品高置信度识别设计；日区订阅确认官方 API 复核设计；日区升级包官方关系发现设计；日区升级包 Browser Run 生产集成设计；美食家版跨区官方组合商品识别设计；香港官方关联商品发现实施计划 |
-| FR-002 | 官方优先、第三方回退、货币与税费显示 | 已确认 / 部分实现（五区独立官方提供方注册表、日区官方价格 API 及价格 ID 二次比对、每日人民币汇率与过期回退、官方来源标记均已实现；JP 与 HK 均优先使用经地区、币种、在售状态和本区价格 ID 严格校验的官方价格 API，其中 JP 已准入美食家版 `DL_DLC` 组合商品，HK 已准入官方 `titles/aocs/bundles` URL、在促销时采集折后当前价，并把官方整港元 `raw_value` 标准化为快照所需的分。US/MX/BR 保持严格的本区官方 JSON-LD 尝试。生产 V0.0.5 的管理员受控刷新已成功采集五区，HK 显示官方 HK$140.00（约 ¥120.83）；美食家版组合商品待本次生产只读验收。第三方注册表明确禁用 eShop Prices、NT Deals、Deku Deals、Green Pipe：未获 API 或书面许可时不发请求，实际回退待来源许可与准入验证） | PRD §3；系统设计 §3.2；ADR-002；香港区任天堂官方价格 API 设计规格；官方价格 ID 设计规格；五区真实价格采集设计规格 |
-| FR-003 | 6 小时采集、历史留存、临时无冷却手动刷新 | 已确认 / 部分实现（采集核心、启用商品安全读取、D1 保留清理和真实采集执行器均已实现；六小时 Cron 会执行清理和一次五区采集。手动刷新现以 D1 单行记录最近执行时间，并在每次受认证请求内运行同一采集器、返回统计；15 分钟冷却已临时移除，后续恢复限流必须另行确认。浏览器完成后重新读取当前页面，旧 queued/running 队列语义已移除。无冷却仓储与路由回归、完整 Worker/页面/类型/构建门禁均已通过；生产 V0.0.5 已验证不等待冷却即可完成五区采集） | PRD §3；系统设计 §3.2；API 设计 §4；临时取消手动刷新冷却设计规格；公开偏好设置页设计；立即手动刷新设计；质量与验收策略 §3.1 |
-| FR-004 | 官方降价提醒与目标价 | 已确认 / 部分实现（纯规则） | PRD §3；系统设计 §3.3 |
-| FR-005 | Telegram 日报、推送时间、消息拆分与密钥配置 | 已确认 / 部分实现（中文日报、来源标记、分页、安全投递、Worker Secret、时区调度、成功投递审计，以及即时事件按条投递和失败重试；公开偏好设置页已可保存时区和日报时间，但 Telegram Token、Chat ID、测试消息和第三方来源配置明确延期到生产流程受控验收完成后，部署配置待完善） | PRD §3；系统设计 §3.3；公开偏好设置页设计 |
-| FR-006 | 单管理员初始化、登录与恢复码 | 已确认 / 已实现（首次设置可选地区和默认搜索区；恢复码仅一次显示并在确认后用内存密码自动登录；登录、恢复密码返回登录、刷新时按服务端验证的 HttpOnly 会话安全恢复页面、401 清空订阅向导及暖色移动端表单均已实现） | PRD §3；系统设计 §3.4；API 设计 §4；认证入口实施计划 |
-| FR-007 | 左侧导航仪表盘 | 已确认 / 部分实现（应用左侧导航现已提供仪表盘、添加订阅和公开设置入口；`/settings` 已完成读取、受控编辑和一次保存。仪表盘的最近采集与下次日报 UTC 时间使用服务端返回的已验证 IANA 时区格式化，避免泄露 ISO `Z` 字符串或随设备时区改变阅读口径。仪表盘卡片、跨区历史最低价和订阅详情的地区价格现统一显示美国区、墨西哥区、日本区、巴西区、香港区，并按管理员确认的本币文字格式输出；仪表盘地区价格卡固定按美国区、墨西哥区、巴西区、香港区、日本区排序，未知地区排在五区之后且不改变已确认五区相对顺序。未知地区仍显示原代码和安全价格回退。仪表盘游戏列表与订阅详情首行使用受控中文游戏名；历史英文 `nameZh` 会在展示层修正，新订阅写入时也会保存已确认中文名，未知商品继续显示官方标题且不调用翻译服务。Overcooked 五区静态草图已由管理员确认。概览优先仪表盘、五区趋势与安全编辑订阅仍按已确认设计继续实施） | PRD §3；系统设计 §3.5；API 设计 §4；仪表盘与订阅详情设计规格；地区中文名与官方价格格式设计规格；公开偏好设置页设计 |
-| FR-008 | 管理员 CSV 导出 | 已确认 / 待实现 | PRD §3；系统设计 §3.6 |
-| FR-009 | 连续采集失败与恢复通知 | 已确认 / 部分实现（状态机、D1 健康状态写回、失败/恢复待发送事件及 Telegram 成功投递回写，已由真实采集执行器逐地区接线；生产环境的真实来源失败与恢复演练仍待执行） | PRD §3；系统设计 §3.7 |
-| FR-010 | 订阅永久删除与全局请求加载 | 已确认 / 已实施（已认证同源 API 由共享计数器驱动全局加载遮罩；`DELETE /api/subscriptions` 校验非空/去重输入与完整目标存在性，并在一个 D1 批次中清理订阅专属数据。仪表盘提供不触发详情导航的多选和二次确认，成功后只以 Worker 重新读取的概览渲染；详情页复用同一确认框，成功后清空局部价格/地区草稿并返回仪表盘。Worker 回归覆盖匿名拒绝、零部分删除、未选订阅与全局汇率保留，页面回归覆盖确认前零写入、成功删除和详情返回；生产已在管理员明确授权下完成仪表盘两项批量删除与详情单项删除，最终概览为空） | PRD §FR-001；系统设计 §3.1；API 设计 §4；订阅硬删除与全局请求加载设计规格 |
-| FR-011 | 页面临时发布版本号 | 已确认 / 已实施并部署（左侧导航底部显示构建时版本；以 `package.json` 为唯一来源，生产部署脚本先递增补丁号，普通开发/构建/测试不改变版本；2026-07-19 已按管理员授权部署 `V 0.0.13` 并以健康接口和公开静态资源验证，未来可替换为正式版本控制） | PRD §FR-007；临时发布版本号设计规格；临时发布版本号实施计划 |
-| NFR-001 | NAS Docker、PostgreSQL、本地调试与多架构镜像发布 | 已确认 / 待实施（完全停止 Cloudflare；DS423+ 使用单 Node 应用容器与专属 PostgreSQL 容器，保留全部功能和本地 Playwright；M1 完成开发与生产验收，GitHub Actions 向公开 Docker Hub 发布 arm64/amd64 镜像，NAS 只拉取固定版本；使用全新数据库，不迁移 D1 数据） | PRD §4；系统设计 §2.1；[NAS Docker 与 PostgreSQL 迁移设计规格](../superpowers/specs/2026-07-27-nas-docker-postgresql-migration-design.md)；[ADR-003](../decisions/ADR-003-nas-docker-postgresql.md) |
-| ARCH-002 | 数据模型与 API 边界 | 已确认 / 待实现 | 数据模型；API 设计 |
-| ADR-001 | Cloudflare Workers Static Assets + D1 | 当前生产已确认；NAS 切换后由 ADR-003 取代 | ADR-001；系统设计 §2 |
-| ADR-003 | NAS Docker + PostgreSQL + 本地 Playwright | 已确认 / 待实施 | [ADR-003](../decisions/ADR-003-nas-docker-postgresql.md)；系统设计 §2.1；NAS Docker 与 PostgreSQL 迁移设计规格 |
+| FR-001 | 多商品订阅、默认区、五区发现、人工修正与补全 | 仓库已实现；Node 本地 Playwright 取代 Browser Binding，真实 NAS 样本待验收 | [PRD](PRD.md)、[API](../architecture/api-design.md)、[ADR-002](../decisions/ADR-002-price-provider-validation.md) |
+| FR-002 | 官方优先、第三方准入、货币与税费 | 官方五区链路已实现；第三方无许可时不创建提供方、不发请求；真实 Node/NAS 样本待验收 | [PRD](PRD.md)、[ADR-002](../decisions/ADR-002-price-provider-validation.md) |
+| FR-003 | 六小时采集、历史保留、手动刷新 | 已实现：UTC 六小时任务 + PG advisory lock；每个认证刷新请求同步执行，无冷却/队列，仅记最近时间 | [系统设计](../architecture/system-design.md)、[数据模型](../architecture/data-model.md)、[API](../architecture/api-design.md) |
+| FR-004 | 官方降价与目标价提醒 | 规则、PostgreSQL 状态与事件预留已实现；真实 Telegram 演练待执行 | [PRD](PRD.md)、[系统设计](../architecture/system-design.md) |
+| FR-005 | 日报与 Telegram | 中文模板、分页、pending/delivered 和 UTC 分钟调度已实现；只接受成对环境变量，设置页不存秘密；真实投递待验收 | [PRD](PRD.md)、[系统设计](../architecture/system-design.md) |
+| FR-006 | 单管理员初始化、登录、锁定与恢复码 | 已实现；Cookie 为 `HttpOnly; SameSite=Strict`，`Secure` 由部署配置决定；NAS 初始化待验收 | [API](../architecture/api-design.md)、[数据模型](../architecture/data-model.md) |
+| FR-007 | 导航、仪表盘、地区/价格格式与版本 | 已实现当前页面；版本改为正式 Git 标签构建，不再自动修改 package 版本；NAS 页面待验收 | [PRD](PRD.md)、[Docker Hub 发布](../deployment/docker-hub-release.md) |
+| FR-008 | 管理员 CSV 导出 | 已实现订阅、价格历史和采集日志三类白名单导出 | [API](../architecture/api-design.md)、[数据模型](../architecture/data-model.md) |
+| FR-009 | 连续失败与恢复通知 | PostgreSQL 健康状态、唯一事件和分钟投递已实现；真实来源失败/恢复与 Telegram 待验收 | [数据模型](../architecture/data-model.md)、[系统设计](../architecture/system-design.md) |
+| FR-010 | 永久删除与全局加载 | PostgreSQL 显式事务实现并由回滚测试覆盖；历史 Worker/D1 生产删除只作为历史证据 | [API](../architecture/api-design.md)、[质量](../quality/quality-and-acceptance.md) |
+| FR-011 | 页面发布版本 | 页面读取已提交的 `package.json`；自动补丁部署已移除。标签发布严格 `vX.Y.Z`，但发布前仍须人工审查 package/lockfile 与标签一致 | [PRD](PRD.md)、[Docker Hub 发布](../deployment/docker-hub-release.md) |
+| NFR-001 | Node、PostgreSQL、Compose、本地调试与多架构 | 仓库实现完成；本地 69/420、DOM 16、Chromium 4、Docker/平台 19/19、tsc/build 通过；M1/arm64 生产镜像/Compose 运行时、认证持久性、端口隔离和镜像内 Chromium 已验收，业务 fake/fixture 由自动化分层证明 | [ADR-003](../decisions/ADR-003-nas-docker-postgresql.md)、[迁移规格](../superpowers/specs/2026-07-27-nas-docker-postgresql-migration-design.md) |
+| NFR-002 | GitHub Actions 与公开 Docker Hub | 普通/标签工作流已实现；run `30686052256` 仅证明平台移除前提交；Secrets、`v0.1.0` 与公开镜像待完成 | [Docker Hub 发布](../deployment/docker-hub-release.md)、[质量](../quality/quality-and-acceptance.md) |
+| NFR-003 | NAS 备份、恢复与回滚 | 脚本与本地隔离合同已实现；DS423+ 独立空库恢复和版本回滚演练待执行 | [备份恢复](../deployment/postgres-backup-restore.md)、[群晖部署](../deployment/synology-ds423-plus.md) |
+| ADR-001 | Cloudflare Workers + D1 | 历史决策，已被 ADR-003 取代；线上资源未删除，待独立退役授权 | [ADR-001](../decisions/ADR-001-cloudflare-workers-d1.md) |
+| ADR-003 | NAS Docker + PostgreSQL + 本地 Playwright | 已采纳；仓库实现、M1 生产运行时 Compose 与业务自动化分层证据已完成，公开发布、DS423+ 和 Cloudflare 退役仍待验收/授权 | [ADR-003](../decisions/ADR-003-nas-docker-postgresql.md) |
+
+## 当前阻断上线的外部事项
+
+1. 配置最小权限 Docker Hub Secrets，另行确认并创建严格版本标签。
+2. 验证公开 manifest 同时包含 `linux/arm64` 与 `linux/amd64`。
+3. 在 DS423+ 以空项目目录初始化，验证登录、持久性、备份恢复、升级和回滚。
+4. 受控验证真实任天堂样本与 Telegram；不得记录凭据或响应正文。
+5. 取得对精确 Cloudflare 资源的独立授权后再停止和删除；仓库迁移本身不构成授权。

@@ -11,7 +11,7 @@ export type SettingsRequestState =
 
 /**
  * 映射设置 API 错误为可预测的页面动作。422、409 和网络安全摘要保留草稿供管理员修正或重试；
- * 只有 Worker 明确的 401 才移除草稿并通知外层认证壳，从而避免过度清空正常输入。
+ * 只有同源设置 API 明确返回 401 才移除草稿并通知外层认证壳，从而避免过度清空正常输入。
  */
 export function applySettingsRequestFailure(draft: SettingsFormState, error: SettingsApiError): SettingsRequestState {
   if (error.status === 401) return { kind: "unauthorized" };

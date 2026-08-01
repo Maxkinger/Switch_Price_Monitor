@@ -1,0 +1,342 @@
+name: Release Docker image
+
+# 发布入口只监听 v* 标签；后续脚本还会严格拒绝非 vX.Y.Z，避免宽触发器绕过语义版本规则。
+# 普通分支与 PR 不进入本工作流，因此无法写入 full、minor、sha 或 latest 标签。
+on:
+  push:
+    tags:
+      - "v*"
+
+# 发布只需读取源码并向外部 Docker Hub 推送，不需要 GitHub packages、contents 或 id-token 写权限。
+permissions:
+  contents: read
+
+# 同一仓库的全部标签发布进入不可取消的单队列；队列不承诺版本顺序，publish 仍须用最高版本守卫防止回退。
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    name: 发布前完整质量门禁
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      # 扫描器版本与摘要均固定，防止发布路径下载到未审计或被替换的二进制。
+      GITLEAKS_VERSION: "8.30.1"
+      GITLEAKS_LINUX_X64_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+
+    services:
+      postgres:
+        # 发布门禁使用具体 PostgreSQL 17 补丁版本，与浮动 major 标签隔离。
+        image: postgres:17.10-bookworm
+        env:
+          # 管理角色只负责官方镜像 initdb；普通测试连接永远不能获得它的集群级权限。
+          POSTGRES_DB: switch_test
+          POSTGRES_USER: switch_test_admin
+          POSTGRES_PASSWORD: switch_test_admin
+          # 应用角色由检出后的唯一 init hook 创建；固定假值只属于一次性 runner，不对应任何真实数据库。
+          APP_DATABASE_USER: switch_test
+          APP_DATABASE_PASSWORD: switch_test
+        ports:
+          # runner 必须通过 54329 连接临时 service，精确匹配测试 DROP SCHEMA 前只允许的本机安全端口。
+          - 54329:5432
+        options: >-
+          --health-cmd "pg_isready -U switch_test_admin -d switch_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    steps:
+      # 与普通 CI 相同的门禁在任何 Docker Hub 登录之前重新执行，不能复用旧提交的成功结果。
+      - name: 检出标签对应的精确提交
+        id: checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # 发布前秘密扫描覆盖完整历史；checkout token 不写入 Git 配置，后续步骤无法借此推送。
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 初始化并验证最小权限 PostgreSQL 应用角色
+        id: initialize_postgres_role
+        # service 早于 checkout 启动；官方 job context 提供容器 ID，使现有 init hook 可在取得源码后执行而无需复制 SQL。
+        env:
+          POSTGRES_SERVICE_ID: ${{ job.services.postgres.id }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker exec --interactive "${POSTGRES_SERVICE_ID}" bash -s < docker/postgres/init-app-role.sh
+
+          # 通过 GitHub service 网络别名 postgres 进入 SCRAM host 规则，避免 loopback trust 把错误密码或错误角色误报为安全。
+          role_is_safe="$(
+            docker exec "${POSTGRES_SERVICE_ID}" bash -c '
+              PGPASSWORD="${APP_DATABASE_PASSWORD}" psql \
+                --host postgres \
+                --username "${APP_DATABASE_USER}" \
+                --dbname "${POSTGRES_DB}" \
+                --no-psqlrc \
+                --tuples-only \
+                --no-align \
+                --command "SELECT rolcanlogin AND NOT (
+                  rolsuper OR rolcreaterole OR rolcreatedb OR rolreplication OR rolbypassrls
+                ) FROM pg_roles WHERE rolname = current_user"
+            ' | tr -d '[:space:]'
+          )"
+          test "${role_is_safe}" = "t"
+
+      - name: 安装固定 Node.js
+        id: setup_node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22.20.0"
+          cache: npm
+          # npm 缓存只由 lockfile 决定，不包含依赖目录、数据库数据或凭据。
+          cache-dependency-path: package-lock.json
+
+      - name: 按 lockfile 安装依赖
+        id: install_dependencies
+        run: npm ci
+
+      - name: 安装与 Playwright 锁定版本匹配的 Chromium
+        id: install_chromium
+        # runner 结束即丢弃浏览器，不保留 profile、Cookie、页面或会话。
+        run: npx --no-install playwright install --with-deps chromium
+
+      - name: 运行单元与 PostgreSQL 集成测试
+        id: unit_and_integration
+        run: npx vitest run
+        env:
+          # 此连接串只访问当前 job 的临时 service 的受守卫 54329 host 端口，不是 NAS 或其他项目 PostgreSQL。
+          TEST_DATABASE_URL: postgres://switch_test:switch_test@127.0.0.1:54329/switch_test
+
+      - name: 运行 DOM 交互测试
+        id: dom
+        run: npm run test:dom -- --run
+
+      - name: 运行 Chromium 生命周期烟雾测试
+        id: chromium_smoke
+        # 真实启动、导航和清理必须在发布前通过，避免只靠浏览器 mock。
+        run: npx vitest run test/playwright-browser-launcher.test.ts
+
+      - name: TypeScript 严格检查
+        id: typecheck
+        run: npx tsc --noEmit
+
+      - name: 构建生产客户端与 Node 服务
+        id: production_build
+        run: npm run build
+
+      - name: 验证 Docker 与 Compose 静态合同
+        id: docker_contract
+        run: npm run test:docker-config
+
+      - name: 验证 GitHub Actions 发布合同
+        id: workflow_contract
+        run: npm run test:github-actions
+
+      - name: 验证工作流中文注释与安全边界一致
+        id: comment_consistency
+        # 单独检查认证、语义版本、缓存、数据库与浏览器说明没有和实现脱节。
+        run: npm run test:workflow-comments
+
+      - name: 检查空白与补丁格式
+        id: whitespace
+        # 标签发布检查标签目标及每个 merge 父差异；该命令读取已提交 diff，不依赖 checkout 后必然干净的工作区。
+        shell: bash
+        run: git diff-tree -m --check --root -r "${GITHUB_SHA}"
+
+      - name: 扫描 Git 历史中的秘密
+        id: secret_scan
+        # 下载前后都不接触 Docker Hub Secrets；校验固定摘要后才运行脱敏扫描。
+        # 根目录基线只含七个经人工核验的精确历史指纹；用 GITHUB_WORKSPACE 锚定文件，防止 runner 工作目录变化扩大或跳过例外边界。
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl --fail --location --silent --show-error \
+            --output "${archive}" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          printf '%s  %s\n' "${GITLEAKS_LINUX_X64_SHA256}" "${archive}" | sha256sum --check
+          mkdir gitleaks-bin
+          tar -xzf "${archive}" -C gitleaks-bin gitleaks
+          ./gitleaks-bin/gitleaks git --gitleaks-ignore-path "${GITHUB_WORKSPACE}/.gitleaksignore" --redact --no-banner
+
+      - name: 启用双架构模拟
+        id: setup_qemu
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+
+      - name: 创建隔离 Buildx 构建器
+        id: setup_buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: 发布前验证 arm64 与 amd64 镜像构建
+        id: docker_build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: linux/arm64,linux/amd64
+          push: false
+          # 发布门禁缓存按 lockfile/Dockerfile 哈希隔离，永不缓存运行数据或 Secrets。
+          cache-from: type=gha,scope=release-quality-${{ hashFiles('package-lock.json', 'Dockerfile') }}
+          cache-to: type=gha,mode=max,scope=release-quality-${{ hashFiles('package-lock.json', 'Dockerfile') }}
+
+  publish:
+    name: 推送公开多架构镜像
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # 只有同一标签提交的完整 quality job 成功后，才会开始解析标签和登录。
+    needs: quality
+    env:
+      # 仓库名固定，用户名只来自 GitHub Secret；值不会由 shell 输出或写入构建参数。
+      DOCKERHUB_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/switch-price-monitor
+
+    steps:
+      - name: 检出标签对应的精确提交
+        id: checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # 最高版本守卫必须读取仓库全部标签；浅克隆可能把较新标签隐藏并错误放行旧版本。
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 拒绝非最高严格语义版本
+        id: release_version_guard
+        # 队列只阻止并行写入，不保证哪个标签先运行；登录前重新检查仓库最高严格 semver 才能防止 X.Y/latest 回退。
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          semver_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+          if [[ ! "${GITHUB_REF_NAME}" =~ ${semver_pattern} ]]; then
+            printf '拒绝发布：标签必须严格匹配 vX.Y.Z。\n' >&2
+            exit 1
+          fi
+
+          # 严格 semver 分量没有前导零；先比较长度再按字典序比较，可避免 Bash 整数溢出并保持任意位数语义。
+          component_is_greater() {
+            local left="$1"
+            local right="$2"
+            if (( ${#left} != ${#right} )); then
+              (( ${#left} > ${#right} ))
+              return
+            fi
+            [[ "${left}" > "${right}" ]]
+          }
+
+          semver_is_greater() {
+            local left_major="$1"
+            local left_minor="$2"
+            local left_patch="$3"
+            local right_major="$4"
+            local right_minor="$5"
+            local right_patch="$6"
+            if [[ "${left_major}" != "${right_major}" ]]; then
+              component_is_greater "${left_major}" "${right_major}"
+              return
+            fi
+            if [[ "${left_minor}" != "${right_minor}" ]]; then
+              component_is_greater "${left_minor}" "${right_minor}"
+              return
+            fi
+            if [[ "${left_patch}" != "${right_patch}" ]]; then
+              component_is_greater "${left_patch}" "${right_patch}"
+              return
+            fi
+            return 1
+          }
+
+          highest_tag=''
+          highest_major=''
+          highest_minor=''
+          highest_patch=''
+          while IFS= read -r candidate_tag; do
+            if [[ ! "${candidate_tag}" =~ ${semver_pattern} ]]; then
+              continue
+            fi
+            candidate_major="${BASH_REMATCH[1]}"
+            candidate_minor="${BASH_REMATCH[2]}"
+            candidate_patch="${BASH_REMATCH[3]}"
+            if [[ -z "${highest_tag}" ]] || semver_is_greater \
+              "${candidate_major}" "${candidate_minor}" "${candidate_patch}" \
+              "${highest_major}" "${highest_minor}" "${highest_patch}"; then
+              highest_tag="${candidate_tag}"
+              highest_major="${candidate_major}"
+              highest_minor="${candidate_minor}"
+              highest_patch="${candidate_patch}"
+            fi
+          done < <(git tag --list 'v*')
+
+          if [[ -z "${highest_tag}" ]]; then
+            printf '拒绝发布：完整历史中没有严格语义版本标签。\n' >&2
+            exit 1
+          fi
+          if [[ "${GITHUB_REF_NAME}" != "${highest_tag}" ]]; then
+            printf '拒绝发布：当前标签不是仓库最高严格语义版本。\n' >&2
+            exit 1
+          fi
+
+      - name: 启用双架构模拟
+        id: setup_qemu
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+
+      - name: 创建隔离 Buildx 构建器
+        id: setup_buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: 严格校验语义版本并生成发布标签
+        id: release_metadata
+        # github.ref_name 必须先匹配 vX.Y.Z；非法标签会在任何登录或推送前以非零状态退出。
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            printf '拒绝发布：标签必须严格匹配 vX.Y.Z。\n' >&2
+            exit 1
+          fi
+
+          full_version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+          minor_version="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+          git_sha_short="${GITHUB_SHA:0:12}"
+          created="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+
+          {
+            printf 'version=%s\n' "${full_version}"
+            printf 'git_sha_short=%s\n' "${git_sha_short}"
+            printf 'created=%s\n' "${created}"
+            printf 'tags<<__SWITCH_TAGS__\n'
+            printf '%s:%s\n' "${DOCKERHUB_IMAGE}" "${full_version}"
+            printf '%s:%s\n' "${DOCKERHUB_IMAGE}" "${minor_version}"
+            printf '%s:sha-%s\n' "${DOCKERHUB_IMAGE}" "${git_sha_short}"
+            printf '%s:latest\n' "${DOCKERHUB_IMAGE}"
+            printf '__SWITCH_TAGS__\n'
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: 登录 Docker Hub
+        id: dockerhub_login
+        # 唯一登录点位于质量门禁和双重版本校验之后；token 只通过 action password 输入传递，禁止 echo。
+        # scope 只把凭据注入目标镜像的 Buildx push 路径作为纵深限制，不会把个人 PAT 本身变成单仓库 token。
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          scope: "${{ env.DOCKERHUB_IMAGE }}@push"
+
+      - name: 推送带 OCI 元数据的双架构 manifest
+        id: publish_image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: linux/arm64,linux/amd64
+          push: true
+          tags: ${{ steps.release_metadata.outputs.tags }}
+          # OCI 标签允许从 Docker Hub 镜像追溯源码、提交、版本与 UTC 构建时间。
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.release_metadata.outputs.version }}
+            org.opencontainers.image.created=${{ steps.release_metadata.outputs.created }}
+          provenance: mode=max
+          sbom: true
+          # 发布缓存同样只含构建层，并按 lockfile/Dockerfile 哈希隔离；绝不缓存 secret 或数据卷。
+          cache-from: type=gha,scope=release-image-${{ hashFiles('package-lock.json', 'Dockerfile') }}
+          cache-to: type=gha,mode=max,scope=release-image-${{ hashFiles('package-lock.json', 'Dockerfile') }}

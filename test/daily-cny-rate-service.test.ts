@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { RateResult } from "../src/worker/providers/types";
-import { DailyCnyRateService, type ExchangeRateStore } from "../src/worker/services/daily-cny-rate-service";
+import type { RateResult } from "../src/providers/types";
+import { DailyCnyRateService, type ExchangeRateStore } from "../src/services/daily-cny-rate-service";
 
 describe("DailyCnyRateService", () => {
   it("stores current CNY rates returned for every requested currency", async () => {
@@ -30,7 +30,7 @@ describe("DailyCnyRateService", () => {
   });
 });
 
-/** 内存仓储仅保存服务契约中的最新汇率，避免该业务测试依赖 D1 迁移而失去失败场景的可读性。 */
+/** 内存仓储仅保存服务契约中的最新汇率，避免该业务测试依赖 PostgreSQL 迁移而失去失败场景的可读性。 */
 class MemoryExchangeRateStore implements ExchangeRateStore {
   public readonly appended: RateResult[] = [];
 

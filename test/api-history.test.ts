@@ -1,11 +1,17 @@
-import { env } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
-import worker, { type Env } from "../src/worker";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import type { AppDatabase } from "../src/server/database/types";
+import { createApiTestDatabase, createTestNodeDispatcher, initializeAndLogin, jsonRequest, resetApiTestData } from "./support/api-postgres";
+
+// 文件级查询夹具与路由 helper 共享同一受守卫连接池；文件结束后显式关闭，避免 pg 句柄阻止 Vitest 退出。
+let database: AppDatabase;
 
 describe("history HTTP route", () => {
+  beforeAll(async () => { database = await createApiTestDatabase(); });
+  afterAll(async () => { await database.close(); });
+
   beforeEach(async () => {
-    // 历史查询涉及订阅、地区商品和快照外键；清理顺序保证各用例独立且不会残留价格数据。
-    await env.DB.exec("DELETE FROM price_snapshots; DELETE FROM subscription_regions; DELETE FROM subscriptions; DELETE FROM regional_products; DELETE FROM games; DELETE FROM sessions; DELETE FROM login_attempts; DELETE FROM admin_credentials; DELETE FROM settings;");
+    // 历史查询涉及订阅、地区商品和快照外键；统一清空一次性库保证各用例独立且不会残留价格数据。
+    await resetApiTestData(database);
   });
 
   it("returns a subscription's immutable snapshots in capture order and filters by region", async () => {
@@ -39,7 +45,7 @@ describe("history HTTP route", () => {
     // 三种导出用途不同；订阅配置和诊断日志也必须独立固定列，不能复用包含认证字段的任何管理查询。
     const cookie = await login();
     await seedHistory();
-    await env.DB.prepare("INSERT INTO fetch_logs (regional_product_id,source,status,message,captured_at) VALUES (?,?,?,?,?)").bind("jp-1", "official", "success", "价格已读取", "2026-07-16T00:00:00.000Z").run();
+    await database.query("INSERT INTO fetch_logs (regional_product_id, source, status, message, captured_at) VALUES ($1, $2, $3, $4, $5)", ["jp-1", "official", "success", "价格已读取", "2026-07-16T00:00:00.000Z"]);
     const subscriptions = await call("/api/export?kind=subscriptions", cookie);
     const logs = await call("/api/export?kind=fetch-logs", cookie);
 
@@ -49,26 +55,25 @@ describe("history HTTP route", () => {
 });
 
 async function seedHistory(): Promise<void> {
-  // 构造两区一次采集成功的最小历史，来源字段不同以确认接口不会丢失官方/第三方标记。
-  await env.DB.batch([
-    env.DB.prepare("INSERT INTO games (id,name_zh,name_en,product_type) VALUES (?,?,?,?)").bind("g-1", "测试游戏", "Test Game", "game"),
-    env.DB.prepare("INSERT INTO regional_products (id,game_id,region_code,currency,product_url,match_source) VALUES (?,?,?,?,?,?)").bind("jp-1", "g-1", "JP", "JPY", "https://example.test/jp", "manual_selection"),
-    env.DB.prepare("INSERT INTO regional_products (id,game_id,region_code,currency,product_url,match_source) VALUES (?,?,?,?,?,?)").bind("us-1", "g-1", "US", "USD", "https://example.test/us", "manual_selection"),
-    env.DB.prepare("INSERT INTO subscriptions (id,game_id,enabled,created_at,updated_at) VALUES (?,?,?,?,?)").bind("sub-1", "g-1", 1, "2026-07-15T00:00:00.000Z", "2026-07-15T00:00:00.000Z"),
-    env.DB.prepare("INSERT INTO subscription_regions (subscription_id,regional_product_id) VALUES (?,?)").bind("sub-1", "jp-1"),
-    env.DB.prepare("INSERT INTO subscription_regions (subscription_id,regional_product_id) VALUES (?,?)").bind("sub-1", "us-1"),
-    env.DB.prepare("INSERT INTO price_snapshots (regional_product_id,amount_minor,currency,cny_fen,source,captured_at) VALUES (?,?,?,?,?,?)").bind("jp-1", 1000, "JPY", 4200, "official", "2026-07-15T00:00:00.000Z"),
-    env.DB.prepare("INSERT INTO price_snapshots (regional_product_id,amount_minor,currency,cny_fen,source,captured_at) VALUES (?,?,?,?,?,?)").bind("us-1", 999, "USD", 6800, "eshop-prices", "2026-07-16T00:00:00.000Z"),
-  ]);
+  // 构造两区一次采集成功的最小历史；事务保证任一夹具写入失败时不会留下半条时间序列。
+  await database.transaction(async (transaction) => {
+    await transaction.query("INSERT INTO games (id, name_zh, name_en, product_type) VALUES ($1, $2, $3, $4)", ["g-1", "测试游戏", "Test Game", "game"]);
+    await transaction.query("INSERT INTO regional_products (id, game_id, region_code, currency, product_url, match_source) VALUES ($1, $2, $3, $4, $5, $6)", ["jp-1", "g-1", "JP", "JPY", "https://example.test/jp", "manual_selection"]);
+    await transaction.query("INSERT INTO regional_products (id, game_id, region_code, currency, product_url, match_source) VALUES ($1, $2, $3, $4, $5, $6)", ["us-1", "g-1", "US", "USD", "https://example.test/us", "manual_selection"]);
+    await transaction.query("INSERT INTO subscriptions (id, game_id, enabled, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)", ["sub-1", "g-1", true, "2026-07-15T00:00:00.000Z", "2026-07-15T00:00:00.000Z"]);
+    await transaction.query("INSERT INTO subscription_regions (subscription_id, regional_product_id) VALUES ($1, $2)", ["sub-1", "jp-1"]);
+    await transaction.query("INSERT INTO subscription_regions (subscription_id, regional_product_id) VALUES ($1, $2)", ["sub-1", "us-1"]);
+    await transaction.query("INSERT INTO price_snapshots (regional_product_id, amount_minor, currency, cny_fen, source, captured_at) VALUES ($1, $2, $3, $4, $5, $6)", ["jp-1", 1000, "JPY", 4200, "official", "2026-07-15T00:00:00.000Z"]);
+    await transaction.query("INSERT INTO price_snapshots (regional_product_id, amount_minor, currency, cny_fen, source, captured_at) VALUES ($1, $2, $3, $4, $5, $6)", ["us-1", 999, "USD", 6800, "eshop-prices", "2026-07-16T00:00:00.000Z"]);
+  });
 }
 
 async function login(): Promise<string> {
-  const init = await request("/api/auth/initialize", { password: "correct-horse-battery-staple", enabledRegions: ["US", "JP"], defaultSearchRegion: "US" }); expect(init.status).toBe(201);
-  const result = await request("/api/auth/login", { password: "correct-horse-battery-staple" }); return result.headers.get("set-cookie") ?? "";
+  return (await initializeAndLogin(database, { enabledRegions: ["US", "JP"], defaultSearchRegion: "US" })).cookie;
 }
-async function call(path: string, cookie: string): Promise<Response> { return invoke(new Request(`https://example.test${path}`, { headers: { cookie } })); }
-async function request(path: string, body: unknown): Promise<Response> { return invoke(new Request(`https://example.test${path}`, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } })); }
-async function invoke(request: Request): Promise<Response> {
-  // 静态资源命中说明 API 尚未注册；统一构造 Worker 上下文避免辅助函数遗漏真实 D1 绑定。
-  return worker.fetch!(request as never, { DB: env.DB, ASSETS: { fetch: async () => new Response("unexpected", { status: 500 }) } as unknown as Fetcher } as Env, {} as ExecutionContext) as Promise<Response>;
+async function call(path: string, cookie: string): Promise<Response> {
+  // null 表示 Node dispatcher 遗漏 API，不能静默落入静态前端。
+  const response = await createTestNodeDispatcher(database)(jsonRequest(path, undefined, cookie, "GET"));
+  if (!response) throw new Error("历史或导出测试请求未被 Node API 处理");
+  return response;
 }
