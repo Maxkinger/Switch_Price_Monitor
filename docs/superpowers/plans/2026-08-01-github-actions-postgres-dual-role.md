@@ -250,3 +250,5 @@ git push origin codex/nas-docker-postgresql
 - 合同测试必须精确锁定七个 fingerprint 和扫描命令；先得到缺文件/缺参数的 RED，再实现 GREEN。
 - 使用与 CI 相同的 Gitleaks `8.30.1` 重新扫描完整 161 个提交并得到零命中；另用不在基线中的一次性假令牌夹具确认新命中仍以非零退出。
 - 再次提交前必须更新质量记录并取得用户确认；推送后等待新的完整远程 run，不能只重跑失败的旧 run。
+
+最终证据：提交 `af62ea7` 触发的远程 run `30685670944` 在 10 分 25 秒内完成且 conclusion 为 `success`，quality job 的 PostgreSQL 双角色初始化、完整测试、Gitleaks、QEMU、Buildx 与 arm64/amd64 镜像构建全部通过。本任务至此关闭；发布标签、Docker Hub 登录和镜像推送仍属于后续独立授权范围。

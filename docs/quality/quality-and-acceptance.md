@@ -191,13 +191,14 @@
 - Docker Desktop 恢复后，`docker info --format '{{.ServerVersion}}'` 返回 29.6.2；`docker compose -f docker-compose.dev.yml up -d postgres` 后专用 PostgreSQL 为 healthy，且仅映射 `127.0.0.1:54329->5432/tcp`。完整本地门禁实际通过：Vitest 78 个文件、435 项；DOM 4 个文件、16 项；Chromium 生命周期 1 个文件、4 项；Docker 合同 14/14；Actions 合同 9/9；工作流中文注释 1/1；`npx tsc --noEmit`、`npm run build`、actionlint 与 `git diff --check` 均以 0 退出。
 - 本轮没有真实秘密、Docker Hub 登录或镜像推送、Git 标签、NAS 或 Cloudflare 写入。远程 run `30685133376` 已证明本节数据库修复及其后续测试通过，但完整 quality job 随后被既有 Gitleaks 历史命中阻止；整体 CI 状态由下一节继续记录，不能把数据库门禁通过误写成完整 CI 通过。
 
-### 3.22 Gitleaks 精确历史基线修复（2026-08-01，本地通过，远程待核验）
+### 3.22 Gitleaks 精确历史基线修复（2026-08-01，本地与远程完整门禁通过）
 
 - 提交 `5fa2c06` 触发的远程 run `30685133376` 已通过 PostgreSQL service 初始化、普通角色 SCRAM 权限自检、435 项 Vitest、16 项 DOM、4 项 Chromium、类型检查、生产构建、Docker/Actions/注释合同与空白检查；这证明原 434/435 权限失败已修复。随后 Gitleaks 扫描 161 个提交并报告七个命中，质量 job 因此失败，QEMU、Buildx 与双架构镜像构建均按安全边界没有启动。
 - 使用与 CI 相同的 Gitleaks `8.30.1`，并以官方 checksums 文件校验 M1 对应归档后，本地完全复现七个历史命中：两项来自源码中已注明为任天堂官网公开只读搜索配置的同一值，五项来自认证实施计划中的固定测试密码样例；报告全程使用 100% 脱敏，未把命中原文写入日志、文档或基线。
 - 合同测试先得到有效 RED：10 项中 8 项通过，扫描步骤缺少显式基线路径且 `.gitleaksignore` 不存在。最小修复新增只含七个 `提交:路径:规则:行号` 精确 fingerprint 的根目录基线，并让普通 CI 与发布 quality job 以 `${GITHUB_WORKSPACE}/.gitleaksignore` 锚定文件；没有按规则、整份文件或正则扩大例外，也不受 runner 当前目录漂移影响。
 - GREEN 实际结果：Actions 合同 10/10、中文注释合同 1/1、actionlint 与 `git diff --check` 均退出 0；同版本 Gitleaks 再次扫描 161 个提交得到 `no leaks found`。额外的临时高熵假令牌不在基线中，扫描仍报告一项命中并退出 1，证明精确历史基线不会吞掉未来新增秘密。
-- 本次没有修改历史提交、暴露命中值、关闭 Gitleaks 规则、登录 Docker Hub、创建标签或推送镜像。新的远程 run 尚待本修复提交并推送后核验；在完整质量门禁成功前不得把 CI 状态标为完成。
+- 提交 `af62ea7` 触发的 [远程 run `30685670944`](https://github.com/Maxkinger/Switch_Price_Monitor/actions/runs/30685670944) 在 10 分 25 秒内完整通过：双角色 PostgreSQL 初始化与 SCRAM 权限自检、435 项 Vitest、16 项 DOM、4 项 Chromium、类型检查、生产构建、Docker/Actions/注释/空白合同、Gitleaks 161 提交全历史扫描、QEMU、Buildx 以及 `linux/arm64`/`linux/amd64` 镜像构建均成功。该普通 CI 只验证双架构构建，没有登录 Docker Hub、创建标签或推送镜像。
+- 本次没有修改历史提交、暴露命中值、关闭 Gitleaks 规则、登录 Docker Hub、创建标签、推送镜像、访问 NAS 或写入 Cloudflare；首次真实标签发布继续等待用户单独确认。
 
 ## 4. 验收原则
 
