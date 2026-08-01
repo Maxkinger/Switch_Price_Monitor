@@ -6,7 +6,7 @@ export { ProviderNetworkError } from "./types";
 
 /**
  * 官方优先的来源编排器。调用方按设置传入已经排序且启用的提供方；本类只负责超时、一次网络重试、
- * 身份验证和顺序回退，不读取设置、不写 D1，因此可在单元测试和 Cron 采集中复用。
+ * 身份验证和顺序回退，不读取设置、不写 PostgreSQL，因此可在单元测试和定时采集中复用。
  */
 export class ProviderChain {
   public constructor(private readonly timeoutMs = 15_000) {}

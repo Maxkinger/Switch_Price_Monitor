@@ -3,7 +3,7 @@ import type { ConfirmedRegionalProduct } from "../shared/domain";
 import type { RegionResolutionResponse } from "./api-client";
 
 /**
- * 详情页在内存中保留的目标价草稿。金额继续使用 Worker 的最小货币单位，
+ * 详情页在内存中保留的目标价草稿。金额继续使用同源 API 的最小货币单位，
  * 以免浏览器输入格式化和服务端阈值比较之间出现浮点精度差异。
  */
 export interface DetailTargetDraft {
@@ -19,7 +19,7 @@ export type DetailRequestState =
   | { kind: "ready"; targetDraft: DetailTargetDraft; error: string | null }
   | { kind: "unauthorized" };
 
-/** 初始草稿没有阈值；详情加载完成时由 Worker DTO 覆盖，避免页面自行填入默认金额。 */
+/** 初始草稿没有阈值；详情加载完成时由服务端 DTO 覆盖，避免页面自行填入默认金额。 */
 export const initialDetailState: DetailRequestState = {
   kind: "ready",
   targetDraft: { globalTargetCnyFen: null, regionTargets: [] },
@@ -38,13 +38,13 @@ export function applyDetailRequestFailure(state: DetailRequestState, error: Dash
 
 /**
  * 手动刷新只在服务端统一采集结束后返回 completed。浏览器仅展示聚合计数，
- * 实际价格、来源、历史最低价和过期判断必须由页面随后重新读取 Worker 仪表盘获取。
+ * 实际价格、来源、历史最低价和过期判断必须由页面随后重新读取 Node 仪表盘 API 获取。
  */
 export function immediateRefreshNotice(result: CompletedRefreshResult): string {
   return `已完成本次采集：成功 ${result.collected} 个地区，待确认 ${result.stale} 个地区。`;
 }
 
-/** 详情页只呈现三种由 Worker 返回的地区状态，不能由浏览器根据数组长度、标题或价格自行猜测。 */
+/** 详情页只呈现三种由服务端返回的地区状态，不能由浏览器根据数组长度、标题或价格自行猜测。 */
 export type MissingRegionPresentation = "automatic-readonly" | "candidate-list" | "link-input";
 
 /** 只有 `needs-manual-link` 可显示链接输入，避免已有官方候选时诱导管理员绕过候选选择。 */

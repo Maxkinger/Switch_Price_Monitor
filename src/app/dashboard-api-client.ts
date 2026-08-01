@@ -1,5 +1,5 @@
 /**
- * 仪表盘浏览器 DTO 只复述 Worker 已公开的 JSON 契约，不导入 Worker 实现或 D1 类型。
+ * 仪表盘浏览器 DTO 只复述同源 Node API 的 JSON 契约，不导入服务端实现或 PostgreSQL 类型。
  * 这样前端构建不会携带服务端适配器、价格来源网络逻辑或潜在的运行时秘密。
  */
 export interface DashboardPrice {
@@ -9,7 +9,7 @@ export interface DashboardPrice {
   capturedAt: string;
 }
 
-/** 单区概览保留真实价格状态；无价格和过期由 Worker 判断，浏览器不得自行推断。 */
+/** 单区概览保留真实价格状态；无价格和过期由服务端判断，浏览器不得自行推断。 */
 export interface DashboardRegion {
   regionalProductId: string;
   regionCode: string;
@@ -37,7 +37,7 @@ export interface DashboardOverview {
     monitoredSubscriptionCount: number;
     availableRegionPriceCount: number;
     lastCapturedAt: string | null;
-    /** Worker 从公开设置返回的 IANA 时区；时间显示必须与日报调度保持同一阅读口径。 */
+    /** Node API 从公开设置返回 IANA 时区；时间显示必须与日报调度保持同一阅读口径。 */
     timezone: string | null;
     nextDailyReportAt: string | null;
   };
@@ -76,7 +76,7 @@ import type { ConfirmedRegionalProduct, RegionCode } from "../shared/domain";
 import type { RegionResolutionResponse } from "./api-client";
 import type { ApiRequestTracker } from "./api-request-tracker";
 
-/** PATCH 的三个互斥更新形状严格对应 Worker 现有校验，避免前端拼接未支持的自由字段。 */
+/** PATCH 的三个互斥更新形状严格对应服务端现有校验，避免前端拼接未支持的自由字段。 */
 export type SubscriptionUpdate =
   | { enabled: boolean }
   | { regionalProductIds: string[] }
@@ -84,7 +84,7 @@ export type SubscriptionUpdate =
 
 /**
  * 已有订阅补全只提交本次新确认的官方候选与明确跳过地区；游戏 ID、已有商品 ID 和启用地区范围不在浏览器载荷中，
- * Worker 会从受认证订阅与保存设置重新读取这些安全边界并在写入前重新验证每个官方链接。
+ * Node 服务会从受认证订阅与保存设置重新读取这些安全边界并在写入前重新验证每个官方链接。
  */
 export interface MissingRegionCompletionInput {
   regions: ConfirmedRegionalProduct[];
@@ -98,7 +98,7 @@ export interface MissingRegionCompletionResult {
 }
 
 /**
- * 可展示的站内 API 错误。只保留 Worker 已脱敏的中文摘要、状态和刷新冷却时刻，
+ * 可展示的站内 API 错误。只保留服务端已脱敏的中文摘要、状态和刷新冷却时刻，
  * 不保存 Response、Cookie、请求体或 HTML，避免管理员浏览器内存持有无关敏感内容。
  */
 export class DashboardApiError extends Error {
@@ -114,7 +114,7 @@ export class DashboardApiError extends Error {
  */
 export function createDashboardApiClient(request: typeof fetch = fetch, tracker?: ApiRequestTracker) {
   /**
-   * 统一 JSON 传输层只解析 Worker 明确返回的 JSON。非 2xx 都变成受控错误，
+   * 统一 JSON 传输层只解析同源 API 明确返回的 JSON。非 2xx 都变成受控错误，
    * 401 留给应用壳层清除内存状态，422 留给表单保留草稿，429 留给刷新冷却提示。
    */
   async function requestJson<TResponse>(path: string, method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown): Promise<TResponse> {
@@ -156,19 +156,19 @@ export function createDashboardApiClient(request: typeof fetch = fetch, tracker?
     },
 
     /**
-     * 手动刷新在 Worker 完成统一采集后才返回；调用页仍要重新读取详情或仪表盘，
+     * 手动刷新在 Node 服务完成统一采集后才返回；调用页仍要重新读取详情或仪表盘，
      * 以避免浏览器依据聚合计数自行拼接价格、汇率、历史最低价或过期状态。
      */
     async refreshNow(): Promise<CompletedRefreshResult> {
       return requestJson<CompletedRefreshResult>("/api/refresh", "POST");
     },
 
-    /** 保存一类订阅配置后由页面重新读取详情，避免本地合并覆盖 Worker 的校验结果或并发变更。 */
+    /** 保存一类订阅配置后由页面重新读取详情，避免本地合并覆盖服务端校验结果或并发变更。 */
     async updateSubscription(subscriptionId: string, update: SubscriptionUpdate): Promise<unknown> {
       return requestJson<unknown>(`/api/subscriptions/${encodeURIComponent(subscriptionId)}`, "PATCH", update);
     },
 
-    /** 让 Worker 从当前订阅官方锚点和保存设置解析缺失地区；请求体为空，不能由浏览器附带地区范围。 */
+    /** 让 Node 服务从当前订阅官方锚点和保存设置解析缺失地区；请求体为空，不能由浏览器附带地区范围。 */
     async resolveMissingRegions(subscriptionId: string): Promise<RegionResolutionResponse[]> {
       return requestJson<RegionResolutionResponse[]>(`/api/subscriptions/${encodeURIComponent(subscriptionId)}/resolve-regions`, "POST", {});
     },
@@ -179,7 +179,7 @@ export function createDashboardApiClient(request: typeof fetch = fetch, tracker?
     },
 
     /**
-     * 仅发送管理员在确认弹窗中选择的订阅 ID；Worker 会验证全部存在并原子硬删除，
+     * 仅发送管理员在确认弹窗中选择的订阅 ID；Node 服务会验证全部存在并在 PostgreSQL 事务中原子硬删除，
      * 浏览器不得根据成功响应自行删除价格、历史或统计，调用页面必须重新读取仪表盘模型。
      */
     async deleteSubscriptions(subscriptionIds: string[]): Promise<{ deletedSubscriptionIds: string[] }> {

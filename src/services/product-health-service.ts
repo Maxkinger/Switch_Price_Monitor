@@ -7,7 +7,7 @@ import { evaluateHealthTransition, type HealthTransition } from "./price-rules";
  */
 export class ProductHealthService {
   public constructor(
-    // 健康状态和通知预留都以窄端口注入，使 Node/PostgreSQL 与 Worker 兼容入口复用同一规则服务。
+    // 健康状态和通知预留都以窄端口注入，使 Node/PostgreSQL 与内存测试替身复用同一规则服务。
     private readonly health: ProductHealthStore,
     // 通知仓储只取得去重事件 DTO，服务和采集器均不会接触 Telegram 凭据或数据库驱动。
     private readonly notifications: NotificationEventStore,
@@ -15,7 +15,7 @@ export class ProductHealthService {
 
   /**
    * 记录一轮地区商品采集结果并返回状态变迁。成功才写入 last_success_at，
-   * 这样页面可准确显示最后成功时间而不会把一次失败误标为已刷新；now 必须使用 Worker 时钟而非浏览器时间。
+   * 这样页面可准确显示最后成功时间而不会把一次失败误标为已刷新；now 必须使用 Node 服务端时钟而非浏览器时间。
    */
   public async record(regionalProductId: string, didSucceed: boolean, now: string): Promise<HealthTransition> {
     const transition = evaluateHealthTransition(await this.health.get(regionalProductId), didSucceed);

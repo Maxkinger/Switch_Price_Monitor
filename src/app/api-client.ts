@@ -11,8 +11,8 @@ import type { ApiRequestTracker } from "./api-request-tracker";
 /**
  * 商品接口返回的跨区匹配状态。
  *
- * 此类型刻意只描述本站 Worker 返回的 DTO，不暴露任天堂或第三方站点的请求细节。
- * 浏览器始终只和同源的 `/api/products/*` 通信，由 Worker 负责官方页面访问与校验。
+ * 此类型刻意只描述本站 Node API 返回的 DTO，不暴露任天堂或第三方站点的请求细节。
+ * 浏览器始终只和同源的 `/api/products/*` 通信，由服务端负责官方页面访问与校验。
  */
 export type RegionResolutionResponse =
   | {
@@ -27,7 +27,7 @@ export type RegionResolutionResponse =
       status: "needs-manual-selection";
       message: string;
       candidates: OfficialProductCandidate[];
-      /** Worker 依据官方身份信号计算的首屏候选数；前端只能用它折叠展示，不能自行生成或扩大推荐范围。 */
+      /** 服务端依据官方身份信号计算首屏候选数；前端只能用它折叠展示，不能自行生成或扩大推荐范围。 */
       featuredCandidateCount: number;
     }
   | {
@@ -53,7 +53,7 @@ export class ProductApiError extends Error {
 /**
  * 创建“添加订阅”向导的同源 API 客户端。
  *
- * 价格来源（任天堂官方站、后续配置的第三方回退站）全部在 Worker 内部处理，
+ * 价格来源（任天堂官方站、后续配置的第三方回退站）全部在 Node 服务内部处理，
  * 此模块禁止拼接或请求外部商品地址，以免泄漏密钥、绕开来源标记或触发跨域限制。
  */
 export function createProductApiClient(request: typeof fetch = fetch, tracker?: ApiRequestTracker) {
@@ -92,7 +92,7 @@ export function createProductApiClient(request: typeof fetch = fetch, tracker?: 
 
     /**
      * 通过用户粘贴的官方商店链接核验一个地区商品。日区升级包可附带已选默认区锚点，
-     * 使 Worker 能证明升级关系；缺省时仍兼容非升级包的既有官方页面解析流程。
+     * 使服务端能证明升级关系；缺省时仍兼容非升级包的既有官方页面解析流程。
      */
     async resolveOfficialLink(regionCode: RegionCode, productUrl: string, anchor?: OfficialProductCandidate): Promise<OfficialProductCandidate> {
       const payload = await postJson<{ candidate: OfficialProductCandidate }>("/api/products/resolve-link", {

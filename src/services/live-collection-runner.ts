@@ -2,7 +2,7 @@ import type { PriceProvider, RegionalProduct } from "../providers/types";
 import type { CollectionInput, CollectionOutcome, DailyCnyRate } from "./collection-service";
 import { evaluateOfficialDrop } from "./price-rules";
 
-/** 启用地区商品读取端口保证运行器不直接拼接 D1 查询，也便于用多区夹具验证一项失败不会中断整批。 */
+/** 启用地区商品读取端口保证运行器不直接拼接 PostgreSQL 查询，也便于用多区夹具验证一项失败不会中断整批。 */
 export interface EnabledRegionalProductReader {
   enabledRegionalProducts(): Promise<RegionalProduct[]>;
 }
@@ -37,7 +37,7 @@ export interface ImmediateNotificationEventWriter {
   reserve(event: { regionalProductId: string; eventType: "official-price-drop"; dedupeKey: string; createdAt: string }): Promise<boolean>;
 }
 
-/** 依赖按职责拆分，使 Worker 接线可以使用 D1 实现，而单元测试无需网络或真实数据库即可验证批次语义。 */
+/** 依赖按职责拆分，使 Node 接线可以使用 PostgreSQL 实现，而单元测试无需网络或真实数据库即可验证批次语义。 */
 export interface LiveCollectionDependencies {
   products: EnabledRegionalProductReader;
   rates: DailyCnyRateReader;

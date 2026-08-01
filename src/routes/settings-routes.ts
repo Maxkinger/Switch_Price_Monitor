@@ -11,7 +11,8 @@ export async function handleSettingsRoute(request: Request, sessions: SessionRea
 
   try {
     if (request.method === "GET") return Response.json(await service.get());
-    const result = await service.update(readPatch(await request.json<unknown>()), new Date().toISOString());
+    // 标准 Fetch 将 JSON 返回为动态值；readPatch 负责对象形状、字段白名单和基础类型收窄，不能依赖平台专属泛型伪造可信输入。
+    const result = await service.update(readPatch((await request.json()) as unknown), new Date().toISOString());
     return Response.json(result);
   } catch (error) {
     const status = error instanceof SettingsNotInitializedError ? 409 : error instanceof SettingsValidationError ? 422 : 500;

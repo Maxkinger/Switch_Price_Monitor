@@ -10,7 +10,7 @@ import {
  * 所有秘密只在调用边界短暂存在；仓储中只存派生哈希或令牌摘要，避免数据库副本直接成为登录凭据。
  */
 const encoder = new TextEncoder();
-// PBKDF2 在 Worker Web Crypto 中可用；10 万次迭代提高离线破解成本，同时保持个人站点首次登录的可接受延迟。
+// Node Web Crypto 原生提供 PBKDF2；10 万次迭代提高离线破解成本，同时保持个人站点首次登录的可接受延迟。
 const passwordIterations = 100_000;
 // 五次连续失败后锁定十五分钟，兼顾防暴力猜测与管理员偶发输错密码的恢复时间。
 const maximumFailedLogins = 5;

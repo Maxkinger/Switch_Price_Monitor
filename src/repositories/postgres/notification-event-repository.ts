@@ -1,9 +1,9 @@
 import type { SqlExecutor } from "../../server/database/types";
 import type {
   NotificationEventReservation,
+  NotificationEventStore,
   PendingNotificationEvent,
-} from "../notification-event-repository";
-import type { NotificationEventStore } from "../ports";
+} from "../ports";
 
 interface PendingEventRow extends Omit<PendingNotificationEvent, "createdAt"> {
   createdAt: Date;

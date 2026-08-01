@@ -13,7 +13,7 @@ import {
 } from "../src/app/subscription-wizard";
 
 /**
- * 添加订阅向导的纯状态测试不依赖 React、网络或 D1。它固定多选、价格与跨区映射的业务语义，
+ * 添加订阅向导的纯状态测试不依赖 React、网络或 PostgreSQL。它固定多选、价格与跨区映射的业务语义，
  * 防止视觉层重构时把两款游戏的香港候选串在一起，或把未验证价格误显示为促销。
  */
 describe("subscription wizard state", () => {
@@ -63,7 +63,7 @@ describe("subscription wizard state", () => {
     ];
     const automatic = applyAutomaticRegionResolutions(initial, resolutions);
 
-    // 自动匹配仅在 Worker 已返回唯一安全候选时写入；香港仍必须由管理员核验链接或明确跳过，不能静默遗漏。
+    // 自动匹配仅在服务端已返回唯一安全候选时写入；香港仍必须由管理员核验链接或明确跳过，不能静默遗漏。
     expect(automatic.regionalConfirmations[`${selectedKey}:JP`]).toEqual(overcookedJp());
     expect(automatic).toMatchObject({ regionalConfirmationSources: { [`${selectedKey}:JP`]: "automatic" } });
     expect(canConfirmConfiguredRegions(automatic, selected, resolutions)).toBe(false);
@@ -103,7 +103,7 @@ function hongKongKirby(): OfficialProductCandidate {
   return { regionCode: "HK", productUrl: "https://www.nintendo.com/hk/soft/kirby-and-the-forgotten-land/", canonicalTitle: "Kirby and the Forgotten Land", publisher: "Nintendo", productType: "game", currency: "HKD", coverUrl: null, currentPriceMinor: 46800, regularPriceMinor: null };
 }
 
-/** 日区候选与美区标题/类型/发行商一致，代表 Worker 可以安全自动采用的跨区官方映射。 */
+/** 日区候选与美区标题/类型/发行商一致，代表 Node 服务可以安全自动采用的跨区官方映射。 */
 function overcookedJp(): OfficialProductCandidate {
   return { regionCode: "JP", productUrl: "https://store-jp.nintendo.com/item/software/D70050000064985/", canonicalTitle: "Overcooked! 2", publisher: "Team17", productType: "game", currency: "JPY", coverUrl: null, currentPriceMinor: 1000, regularPriceMinor: null };
 }

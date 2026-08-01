@@ -29,7 +29,7 @@ export async function handleAuthRoute(
 ): Promise<Response | null> {
   const path = new URL(request.url).pathname;
   const isStatus = request.method === "GET" && path === "/api/auth/status";
-  // 仅列出的 POST 路由由认证模块消费；其余请求交回 Worker 主路由，避免遮蔽未来的静态资源或 API。
+  // 仅列出的 POST 路由由认证模块消费；其余请求交回 Node 主分派器，避免遮蔽未来的静态资源或 API。
   const isAuthAction = request.method === "POST" &&
     ["/api/auth/initialize", "/api/auth/login", "/api/auth/recover", "/api/auth/logout"].includes(path);
   if (!isStatus && !isAuthAction) return null;
@@ -58,7 +58,12 @@ export async function handleAuthRoute(
       });
     }
 
-    const body = await request.json<Record<string, unknown>>();
+    // 标准 Fetch Request.json 不提供类型参数；先恢复 unknown 信任边界，再拒绝非对象载荷，不能让 DOM 的 any 绕过认证字段收窄。
+    const untrustedBody = (await request.json()) as unknown;
+    if (typeof untrustedBody !== "object" || untrustedBody === null || Array.isArray(untrustedBody)) {
+      throw new ValidationError("请求内容必须是对象。");
+    }
+    const body = untrustedBody as Record<string, unknown>;
     if (path === "/api/auth/initialize") {
       const result = await auth.initialize({
         password: String(body.password ?? ""),

@@ -12,7 +12,7 @@ export interface InitializeAuthInput {
 
 /**
  * 恢复密码接口的浏览器内存请求体。恢复码是一次性应急凭据，
- * 因此客户端只提交给同源 Worker，不能转发到日志、URL 或第三方服务。
+ * 因此客户端只提交给同源 Node API，不能转发到日志、URL 或第三方服务。
  */
 export interface RecoverAuthInput {
   recoveryCode: string;
@@ -20,8 +20,8 @@ export interface RecoverAuthInput {
 }
 
 /**
- * 认证接口公开给页面的最小契约。登录 Cookie 由浏览器和 Worker 协商，
- * 此接口故意不暴露 Cookie、令牌、管理员资料或 Worker 的原始响应。
+ * 认证接口公开给页面的最小契约。登录 Cookie 由浏览器和 Node 服务协商，
+ * 此接口故意不暴露 Cookie、令牌、管理员资料或服务端原始响应。
  */
 export interface AuthApiClient {
   getStatus(): Promise<{ initialized: boolean; authenticated: boolean }>;
@@ -48,7 +48,7 @@ export class AuthApiError extends Error {
  */
 export function createAuthApiClient(request: typeof fetch = fetch): AuthApiClient {
   /**
-   * 认证端点的统一传输层。它只接受站内固定路径，并只提取 Worker 明确承诺的 JSON 字段，
+   * 认证端点的统一传输层。它只接受站内固定路径，并只提取同源 API 明确承诺的 JSON 字段，
    * 防止页面把密码、恢复码或未知错误响应意外保留在状态或日志中。
    */
   async function requestJson<TResponse>(path: "/api/auth/status" | "/api/auth/initialize" | "/api/auth/login" | "/api/auth/recover" | "/api/auth/logout", method: "GET" | "POST", body?: unknown): Promise<TResponse> {
@@ -77,17 +77,17 @@ export function createAuthApiClient(request: typeof fetch = fetch): AuthApiClien
       return requestJson<{ recoveryCode: string }>("/api/auth/initialize", "POST", input);
     },
 
-    /** 登录只确认 Worker 已设置会话；响应中的 expiresAt 与 Cookie 都不暴露给页面状态。 */
+    /** 登录只确认 Node 服务已设置会话；响应中的 expiresAt 与 Cookie 都不暴露给页面状态。 */
     async login(password: string): Promise<void> {
       await requestJson<unknown>("/api/auth/login", "POST", { password });
     },
 
-    /** 密码恢复完成后 Worker 会撤销会话，页面必须回到登录入口而不是自动获得新会话。 */
+    /** 密码恢复完成后 Node 服务会撤销会话，页面必须回到登录入口而不是自动获得新会话。 */
     async recover(input: RecoverAuthInput): Promise<void> {
       await requestJson<unknown>("/api/auth/recover", "POST", input);
     },
 
-    /** 退出保持幂等；即使浏览器没有有效会话也交由 Worker 覆盖过期 Cookie。 */
+    /** 退出保持幂等；即使浏览器没有有效会话也交由 Node 服务覆盖过期 Cookie。 */
     async logout(): Promise<void> {
       await requestJson<unknown>("/api/auth/logout", "POST");
     },

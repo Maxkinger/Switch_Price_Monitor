@@ -37,7 +37,7 @@ const unavailableRelatedProductResolver: OfficialNintendoRelatedProductResolver 
 const japaneseUpgradeManualMessage = "日区自动核验暂不可用，请重新核验或粘贴官方链接。" as const;
 
 /**
- * 当前尚未由生产装配注入 Browser Run 关系服务时只返回人工链接状态。该默认值不会访问根搜索、浏览器或价格 API，
+ * 当前尚未由生产装配注入本地 Playwright 关系服务时只返回人工链接状态。该默认值不会访问根搜索、浏览器或价格 API，
  * 使普通商品和既有单元测试维持最小权限；后续生产装配任务显式注入后，真正升级包发现才会开启。
  */
 const unavailableJapaneseUpgradeService: Pick<JapaneseUpgradeRelationService, "discover" | "resolveManual"> = {
@@ -47,7 +47,7 @@ const unavailableJapaneseUpgradeService: Pick<JapaneseUpgradeRelationService, "d
   resolveManual: async () => null,
 };
 
-/** 普通地区搜索完成后的内部记录；资格标志永不暴露给浏览器，防止客户端借返回数据推断或触发 Browser Run。 */
+/** 普通地区搜索完成后的内部记录；资格标志永不暴露给浏览器，防止客户端借返回数据推断或触发本地关系核验。 */
 interface OrdinaryRegionMatch {
   anchor: OfficialProductCandidate;
   resolution: RegionResolution;
@@ -56,7 +56,7 @@ interface OrdinaryRegionMatch {
 
 /**
  * 把默认区官网名称搜索、官方链接解析和跨区匹配集中在服务端。浏览器只提交查询或官方 URL，
- * 服务始终从保存的设置取得默认区，并且不写入 D1，管理员取消向导不会留下半成品游戏或地区商品。
+ * 服务始终从保存的设置取得默认区，并且不写入 PostgreSQL，管理员取消向导不会留下半成品游戏或地区商品。
  */
 export class OfficialProductDiscoveryService {
   public constructor(
@@ -116,7 +116,7 @@ export class OfficialProductDiscoveryService {
 
     let japanese: Map<string, JapaneseUpgradeDiscoveryResult>;
     try {
-      // 所有普通检索先并行结束后才一次批量调用，避免逐卡启动 Browser Run；按候选键去重让同一锚点不会消耗两次配额。
+      // 所有普通检索先并行结束后才一次批量调用，避免逐卡启动本地 Chromium；按候选键去重让同一锚点不会消耗两次资源配额。
       japanese = await this.japaneseUpgrades.discover(eligibleAnchors);
     } catch (error) {
       if (error instanceof JapaneseUpgradeBatchLimitError) throw error;
@@ -171,7 +171,7 @@ export class OfficialProductDiscoveryService {
     if (localizedMatches.length === 1) return { anchor: candidate, resolution: { candidateKey, regionCode, status: "automatic", candidate: localizedMatches[0] }, japaneseUpgradeEligible: false };
     const rankedCandidates = rankRegionalCandidates(candidate, sameTypeCandidates);
     if (rankedCandidates.length === 0) {
-      // 只有官方搜索明确 available，且首次普通搜索与受限日文别名回退都没有同类型候选时，才能请求一次 Browser Run 关系发现。
+      // 只有官方搜索明确 available，且首次普通搜索与受限日文别名回退都没有同类型候选时，才能请求一次本地 Playwright 关系发现。
       const japaneseUpgradeEligible = regionCode === "JP"
         && candidate.productType === "upgrade-pack"
         && initialSameTypeCandidates.length === 0
@@ -179,7 +179,7 @@ export class OfficialProductDiscoveryService {
       return { anchor: candidate, resolution: { candidateKey, regionCode, status: "needs-manual-link" }, japaneseUpgradeEligible };
     }
 
-    // 推荐数量由 Worker 根据已验证的官方字段计算，浏览器只能据此折叠显示，不能依靠标题或价格重新推断匹配关系。
+    // 推荐数量由 Node 服务根据已验证的官方字段计算，浏览器只能据此折叠显示，不能依靠标题或价格重新推断匹配关系。
     const relatedCandidateCount = rankedCandidates.filter((option) => localizedIdentityRelevance(candidate, option) > 0).length;
     return {
       anchor: candidate,

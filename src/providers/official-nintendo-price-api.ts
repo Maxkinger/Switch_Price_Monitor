@@ -2,7 +2,7 @@ import type { RegionCode } from "../shared/domain";
 import { ProviderNetworkError, type PriceProvider, type RegionalProduct } from "./types";
 
 /**
- * 任天堂公开价格 API 的已审核地区档案。国家、语言和货币只能由 Worker 内的固定档案决定，
+ * 任天堂公开价格 API 的已审核地区档案。国家、语言和货币只能由 Node 服务端固定档案决定，
  * 不能从浏览器、地区商品 URL 或 API 响应推导，避免把跨服价格写入不可变历史。
  */
 interface NintendoPriceApiProfile {
@@ -40,7 +40,7 @@ export interface NintendoOfficialPriceQuoteResolver {
 }
 
 /**
- * 创建任天堂公开价格报价解析器。只允许 Worker 固定的 JP/HK 档案构造 URL，并将传输层故障转换为可重试错误；
+ * 创建任天堂公开价格报价解析器。只允许服务端固定的 JP/HK 档案构造 URL，并将传输层故障转换为可重试错误；
  * 非 2xx、非 JSON 或结构不可信的响应均返回 null，使上层安全回退而不会因格式异常重复请求官方接口。
  */
 export function createNintendoOfficialPriceQuoteResolver(fetchPrice: typeof fetch = fetch): NintendoOfficialPriceQuoteResolver {

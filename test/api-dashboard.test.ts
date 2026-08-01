@@ -1,12 +1,29 @@
-import { env } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import worker, { type Env } from "../src/worker";
+import type { AppDatabase, SqlExecutor } from "../src/server/database/types";
+import {
+  createApiTestDatabase,
+  createTestNodeDispatcher,
+  initializeAndLogin as initializeAdmin,
+  jsonRequest,
+  resetApiTestData,
+} from "./support/api-postgres";
+
+// 文件级夹具函数共享同一受守卫连接池；afterAll 会显式关闭，禁止测试进程遗留数据库连接。
+let database: AppDatabase;
 
 describe("dashboard HTTP route", () => {
+  beforeAll(async () => {
+    database = await createApiTestDatabase();
+  });
+
+  afterAll(async () => {
+    await database.close();
+  });
+
   beforeEach(async () => {
-    // 仪表盘从订阅与价格历史派生；清理全部相关表确保空状态的返回不受其他 API 测试留下的快照影响。
-    await env.DB.exec("DELETE FROM price_snapshots; DELETE FROM regional_product_health; DELETE FROM subscription_regions; DELETE FROM subscriptions; DELETE FROM regional_products; DELETE FROM games; DELETE FROM sessions; DELETE FROM login_attempts; DELETE FROM admin_credentials; DELETE FROM settings;");
+    // 仪表盘从订阅与价格历史派生；清空受守卫的一次性库确保空状态不受其他用例留下的快照影响。
+    await resetApiTestData(database);
   });
 
   it("returns an authenticated empty subscription overview before any game is added", async () => {
@@ -73,14 +90,14 @@ describe("dashboard HTTP route", () => {
     // 跨区比较不能拿美元分与日元分直接比大小；该断言固定使用已保存的人民币分，验证最便宜区遵循同一购买成本口径。
     const cookie = await initializeAndLogin();
     await seedSubscription();
-    await env.DB.batch([
-      env.DB.prepare("INSERT INTO regional_products (id, game_id, region_code, currency, product_url, match_source) VALUES (?, ?, ?, ?, ?, ?)").bind("product-overcooked-2-jp", "game-overcooked-2", "JP", "JPY", "https://example.test/jp", "manual_selection"),
-      env.DB.prepare("INSERT INTO subscription_regions (subscription_id, regional_product_id) VALUES (?, ?)").bind("subscription-overcooked-2", "product-overcooked-2-jp"),
-      env.DB.prepare("INSERT INTO price_snapshots (regional_product_id, amount_minor, currency, cny_fen, source, captured_at) VALUES (?, ?, ?, ?, ?, ?)").bind("product-overcooked-2-us", 999, "USD", 6800, "official", "2026-07-15T00:00:00.000Z"),
-      env.DB.prepare("INSERT INTO price_snapshots (regional_product_id, amount_minor, currency, cny_fen, source, captured_at) VALUES (?, ?, ?, ?, ?, ?)").bind("product-overcooked-2-jp", 1000, "JPY", 4200, "official", "2026-07-14T00:00:00.000Z"),
-    ]);
+    await database.transaction(async (transaction) => {
+      await transaction.query("INSERT INTO regional_products (id, game_id, region_code, currency, product_url, match_source) VALUES ($1, $2, $3, $4, $5, $6)", ["product-overcooked-2-jp", "game-overcooked-2", "JP", "JPY", "https://example.test/jp", "manual_selection"]);
+      await transaction.query("INSERT INTO subscription_regions (subscription_id, regional_product_id) VALUES ($1, $2)", ["subscription-overcooked-2", "product-overcooked-2-jp"]);
+      await insertPrice(transaction, "product-overcooked-2-us", 999, "USD", 6800, "official", "2026-07-15T00:00:00.000Z");
+      await insertPrice(transaction, "product-overcooked-2-jp", 1000, "JPY", 4200, "official", "2026-07-14T00:00:00.000Z");
+    });
     const response = await call("/api/dashboard", cookie);
-    const body = await response.json<{ subscriptions: Array<{ allRegionHistoricalLow: unknown }> }>();
+    const body = await response.json() as { subscriptions: Array<{ allRegionHistoricalLow: unknown }> };
 
     expect(response.status).toBe(200);
     expect(body.subscriptions[0].allRegionHistoricalLow).toEqual({
@@ -98,12 +115,12 @@ describe("dashboard HTTP route", () => {
     // 当前价按最新采集时间选择，历史最低价按本币最小金额选择；来源字段必须原样返回，让前端清楚标记第三方数据。
     const cookie = await initializeAndLogin();
     await seedSubscription();
-    await env.DB.batch([
-      env.DB.prepare("INSERT INTO price_snapshots (regional_product_id, amount_minor, currency, cny_fen, source, captured_at) VALUES (?, ?, ?, ?, ?, ?)").bind("product-overcooked-2-us", 999, "USD", 6800, "official", "2026-07-15T00:00:00.000Z"),
-      env.DB.prepare("INSERT INTO price_snapshots (regional_product_id, amount_minor, currency, cny_fen, source, captured_at) VALUES (?, ?, ?, ?, ?, ?)").bind("product-overcooked-2-us", 1099, "USD", 7450, "eshop-prices", "2026-07-16T00:00:00.000Z"),
-    ]);
+    await database.transaction(async (transaction) => {
+      await insertPrice(transaction, "product-overcooked-2-us", 999, "USD", 6800, "official", "2026-07-15T00:00:00.000Z");
+      await insertPrice(transaction, "product-overcooked-2-us", 1099, "USD", 7450, "eshop-prices", "2026-07-16T00:00:00.000Z");
+    });
     const response = await call("/api/dashboard", cookie);
-    const body = await response.json<{ subscriptions: Array<{ regions: Array<{ current: unknown; historicalLow: unknown }> }> }>();
+    const body = await response.json() as { subscriptions: Array<{ regions: Array<{ current: unknown; historicalLow: unknown }> }> };
 
     expect(response.status).toBe(200);
     expect(body.subscriptions[0].regions[0]).toEqual({
@@ -120,17 +137,17 @@ describe("dashboard HTTP route", () => {
     // 一次成功快照后出现连续失败时，仍可展示最近可信价格，但必须让管理员知道它不是本轮实时结果。
     const cookie = await initializeAndLogin();
     await seedSubscription();
-    await env.DB.batch([
-      env.DB.prepare("INSERT INTO price_snapshots (regional_product_id, amount_minor, currency, cny_fen, source, captured_at) VALUES (?, ?, ?, ?, ?, ?)").bind("product-overcooked-2-us", 999, "USD", 6800, "official", "2026-07-16T00:00:00.000Z"),
-      env.DB.prepare("INSERT INTO price_snapshots (regional_product_id, amount_minor, currency, cny_fen, source, captured_at) VALUES (?, ?, ?, ?, ?, ?)").bind("product-overcooked-2-us", 1099, "USD", 7450, "official", "2026-07-17T00:00:00.000Z"),
-      env.DB.prepare("INSERT INTO regional_product_health (regional_product_id, consecutive_failures, last_success_at, failure_notified, updated_at) VALUES (?, ?, ?, ?, ?)").bind("product-overcooked-2-us", 1, "2026-07-17T00:00:00.000Z", 0, "2026-07-17T06:00:00.000Z"),
-    ]);
+    await database.transaction(async (transaction) => {
+      await insertPrice(transaction, "product-overcooked-2-us", 999, "USD", 6800, "official", "2026-07-16T00:00:00.000Z");
+      await insertPrice(transaction, "product-overcooked-2-us", 1099, "USD", 7450, "official", "2026-07-17T00:00:00.000Z");
+      await transaction.query("INSERT INTO regional_product_health (regional_product_id, consecutive_failures, last_success_at, failure_notified, updated_at) VALUES ($1, $2, $3, $4, $5)", ["product-overcooked-2-us", 1, "2026-07-17T00:00:00.000Z", false, "2026-07-17T06:00:00.000Z"]);
+    });
 
     const response = await call("/api/dashboard", cookie);
-    const body = await response.json<{
+    const body = await response.json() as {
       stats: { monitoredSubscriptionCount: number; availableRegionPriceCount: number; lastCapturedAt: string | null; timezone: string; nextDailyReportAt: string | null };
       subscriptions: Array<{ regions: Array<{ isStale: boolean }> }>;
-    }>();
+    };
 
     expect(response.status).toBe(200);
     expect(body.stats).toEqual({
@@ -145,31 +162,28 @@ describe("dashboard HTTP route", () => {
 });
 
 async function seedSubscription(): Promise<void> {
-  // 直接构造已完成匹配和订阅确认的数据状态，隔离仪表盘读取语义，不让本测试依赖商品发现接口的未来实现。
-  await env.DB.batch([
-    env.DB.prepare("INSERT INTO games (id, name_zh, name_en, product_type) VALUES (?, ?, ?, ?)").bind("game-overcooked-2", "胡闹厨房 2", "Overcooked! 2", "game"),
-    env.DB.prepare("INSERT INTO regional_products (id, game_id, region_code, currency, product_url, match_source) VALUES (?, ?, ?, ?, ?, ?)").bind("product-overcooked-2-us", "game-overcooked-2", "US", "USD", "https://example.test/us", "manual_selection"),
-    env.DB.prepare("INSERT INTO subscriptions (id, game_id, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").bind("subscription-overcooked-2", "game-overcooked-2", 1, "2026-07-16T00:00:00.000Z", "2026-07-16T00:00:00.000Z"),
-    env.DB.prepare("INSERT INTO subscription_regions (subscription_id, regional_product_id) VALUES (?, ?)").bind("subscription-overcooked-2", "product-overcooked-2-us"),
-  ]);
+  // 直接构造已完成匹配和订阅确认的数据状态；事务防止夹具失败留下会影响读取断言的半成品。
+  await database.transaction(async (transaction) => {
+    await transaction.query("INSERT INTO games (id, name_zh, name_en, product_type) VALUES ($1, $2, $3, $4)", ["game-overcooked-2", "胡闹厨房 2", "Overcooked! 2", "game"]);
+    await transaction.query("INSERT INTO regional_products (id, game_id, region_code, currency, product_url, match_source) VALUES ($1, $2, $3, $4, $5, $6)", ["product-overcooked-2-us", "game-overcooked-2", "US", "USD", "https://example.test/us", "manual_selection"]);
+    await transaction.query("INSERT INTO subscriptions (id, game_id, enabled, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)", ["subscription-overcooked-2", "game-overcooked-2", true, "2026-07-16T00:00:00.000Z", "2026-07-16T00:00:00.000Z"]);
+    await transaction.query("INSERT INTO subscription_regions (subscription_id, regional_product_id) VALUES ($1, $2)", ["subscription-overcooked-2", "product-overcooked-2-us"]);
+  });
 }
 
 async function initializeAndLogin(): Promise<string> {
-  // 使用真实认证路由取得会话，确保仪表盘与所有管理页面共享同一 Cookie 安全边界。
-  const initialized = await request("/api/auth/initialize", { password: "correct-horse-battery-staple", enabledRegions: ["US"], defaultSearchRegion: "US" });
-  expect(initialized.status).toBe(201);
-  const login = await request("/api/auth/login", { password: "correct-horse-battery-staple" });
-  expect(login.status).toBe(200);
-  return login.headers.get("set-cookie") ?? "";
+  // 使用真实 PostgreSQL 认证路由取得会话，确保仪表盘与所有管理页面共享同一摘要校验边界。
+  return (await initializeAdmin(database, { enabledRegions: ["US"], defaultSearchRegion: "US" })).cookie;
 }
 
 async function call(path: string, cookie: string): Promise<Response> {
-  // 资源绑定被命中表示 Worker 漏注册了仪表盘 API；测试以 500 让该问题不可被静默忽略。
-  const assets = { fetch: async () => new Response("unexpected asset request", { status: 500 }) } as unknown as Fetcher;
-  return worker.fetch!(new Request(`https://example.test${path}`, { headers: { cookie } }) as never, { DB: env.DB, ASSETS: assets } as Env, {} as ExecutionContext);
+  // 真实 Node dispatcher 必须注册仪表盘路由；null 表示路由遗漏而不是可接受的静态回退。
+  const response = await createTestNodeDispatcher(database)(jsonRequest(path, undefined, cookie, "GET"));
+  if (!response) throw new Error("仪表盘测试请求未被 Node API 处理");
+  return response;
 }
 
-async function request(path: string, body: unknown): Promise<Response> {
-  const assets = { fetch: async () => new Response("unexpected asset request", { status: 500 }) } as unknown as Fetcher;
-  return worker.fetch!(new Request(`https://example.test${path}`, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } }) as never, { DB: env.DB, ASSETS: assets } as Env, {} as ExecutionContext);
+/** 价格夹具统一使用 PostgreSQL 参数绑定；金额保持整数最小单位，测试来源不会进入生产数据。 */
+async function insertPrice(transaction: SqlExecutor, productId: string, amountMinor: number, currency: string, cnyFen: number, source: string, capturedAt: string): Promise<void> {
+  await transaction.query("INSERT INTO price_snapshots (regional_product_id, amount_minor, currency, cny_fen, source, captured_at) VALUES ($1, $2, $3, $4, $5, $6)", [productId, amountMinor, currency, cnyFen, source, capturedAt]);
 }

@@ -1,13 +1,13 @@
 import type { ProductType } from "../../providers/types";
 import type { RegionCode } from "../../shared/domain";
 import type { AppDatabase, SqlExecutor } from "../../server/database/types";
-import type { SubscriptionConfirmationStore } from "../ports";
 import type {
   ExistingSubscriptionConfirmation,
   ExistingSubscriptionRegionCompletion,
+  SubscriptionConfirmationStore,
   ValidatedConfirmedRegion,
   ValidatedSubscriptionConfirmation,
-} from "../subscription-confirmation-repository";
+} from "../ports";
 
 interface ExistingRow {
   normalizedName: string;

@@ -343,17 +343,24 @@ contractTest(".env.example 提供固定版本和全部安全占位而不携带�
   assert.match(example.DATABASE_URL, /replace|替换/i);
 });
 
-contractTest("package 脚本提供独立 Docker 静态门禁并记录中文运行边界", () => {
+contractTest("package 脚本让 Docker 与平台移除静态门禁共享 CI 入口", () => {
   const packageJson = JSON.parse(readAsset("package.json"));
 
+  // CI 已固定调用 test:docker-config；把平台移除合同并入同一 Node test 命令，才能保证普通 push
+  // 与标签发布都在镜像构建前阻止旧运行时回流，而不必复制两份工作流步骤或执行顺序断言。
   assert.equal(
     packageJson.scripts["test:docker-config"],
-    "node --test test/docker-config.test.mjs",
+    "node --test test/docker-config.test.mjs test/platform-removal.test.mjs",
   );
   assert.ok(
     Object.keys(packageJson.codexMetadata.dockerRuntimeConfigurationRationaleZh)
       .length >= 3,
     "必须记录镜像可复现性、秘密与双架构边界，避免 JSON 无注释导致约束丢失",
+  );
+  assert.deepEqual(
+    Object.keys(packageJson.codexMetadata.platformRemovalGateRationaleZh).sort(),
+    ["ci", "dependencies", "scope"],
+    "必须记录平台门禁的扫描范围、传递依赖例外与 CI 接线理由，防止后续扩大扫描或绕过发布门禁",
   );
 });
 

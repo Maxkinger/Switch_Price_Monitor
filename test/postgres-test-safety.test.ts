@@ -7,7 +7,7 @@ import { requireTestDatabaseUrl } from "./support/postgres";
  */
 describe("PostgreSQL 测试数据库 URL 安全验证", () => {
   afterEach(() => {
-    // 每例恢复进程环境，避免错误 URL 泄漏到同一 Vitest worker 的后续真实数据库测试。
+    // 每例恢复进程环境，避免错误 URL 泄漏到同一 Vitest 执行进程的后续真实数据库测试。
     vi.unstubAllEnvs();
   });
 

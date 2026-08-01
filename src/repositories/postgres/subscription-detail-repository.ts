@@ -1,9 +1,9 @@
 import type { SqlExecutor } from "../../server/database/types";
 import type {
   SubscriptionDetail,
+  SubscriptionDetailReader,
   SubscriptionDetailPriceSnapshot,
-} from "../subscription-detail-repository";
-import type { SubscriptionDetailReader } from "../ports";
+} from "../ports";
 
 interface SubscriptionRow {
   subscriptionId: string;

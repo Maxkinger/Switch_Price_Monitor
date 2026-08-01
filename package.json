@@ -12,8 +12,7 @@
     "nodeRuntimeDependencyRationaleZh": {
       "hono": "Hono 只承担标准 Fetch 应用组合，现有平台中立路由继续接收同源 Request，不在框架层复制业务判断。",
       "@hono/node-server": "Node adapter 只把 Fetch 应用接到 Node.js 22 HTTP，监听、优雅关停和数据库生命周期仍由项目入口控制。",
-      "tooling": "tsx、concurrently 与 tsup 仅用于本地增量调试和构建；生产运行只执行 dist/server/index.js。",
-      "workerTransition": "迁移期仍保留 Worker 测试所需 Cloudflare 开发依赖，生产依赖和 Node 服务端源码不导入这些包，最终清理由 Task 11 完成。"
+      "tooling": "tsx、concurrently 与 tsup 仅用于本地增量调试和构建；生产运行只执行 dist/server/index.js。"
     },
     "localBrowserDependencyRationaleZh": {
       "playwright": "playwright 是 Node 日区升级关系的生产运行时依赖；版本必须精确锁定，使本地、Docker 与 NAS 使用同一 Chromium 客户端和浏览器修订。",
@@ -29,6 +28,11 @@
     "githubActionsContractRationaleZh": {
       "yaml": "yaml 仅用于测试阶段把 GitHub Actions 工作流解析为结构化数据，避免用脆弱文本匹配误判发布权限、触发器、平台或标签合同；它不会进入生产依赖或运行镜像。",
       "secrets": "合同测试只验证 GitHub Secrets 的引用名称和登录边界，绝不读取、构造、打印或快照化 Docker Hub 用户名与访问令牌。"
+    },
+    "platformRemovalGateRationaleZh": {
+      "scope": "最终平台门禁只扫描生产源码、自动化测试、package 清单与 lockfile、构建配置、运维脚本和 GitHub Actions；历史 ADR、迁移计划与质量证据允许保留平台背景，不参与运行时判定。",
+      "dependencies": "禁止项使用精确包名与运行时符号，不能用宽泛的 cloudflare 字符串扫描；pg 的 pg-cloudflare 传递包不是项目主动选择的 Worker 依赖，不得误报。",
+      "ci": "平台门禁并入既有 test:docker-config，使普通 CI 与标签发布质量任务在镜像构建和外部登录前共同阻止旧平台入口回流。"
     }
   },
   "scripts": {
@@ -40,10 +44,9 @@
     "build:server": "tsup",
     "start": "node dist/server/index.js",
     "preview": "vite preview",
-    "deploy": "node ./scripts/deploy-production.mjs",
     "test": "vitest",
     "test:dom": "vitest --config vitest.dom.config.mts",
-    "test:docker-config": "node --test test/docker-config.test.mjs",
+    "test:docker-config": "node --test test/docker-config.test.mjs test/platform-removal.test.mjs",
     "test:github-actions": "node --test test/github-actions-release.test.mjs",
     "test:workflow-comments": "node --test --test-name-pattern=\"工作流中文注释与安全边界保持一致\" test/github-actions-release.test.mjs"
   },
@@ -56,9 +59,6 @@
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "^1.17.1",
-    "@cloudflare/vitest-pool-workers": "^0.18.5",
-    "@cloudflare/workers-types": "5.20260714.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/node": "22.20.0",
@@ -73,7 +73,6 @@
     "typescript": "^5.8.3",
     "vite": "^7.0.6",
     "vitest": "^4.1.0",
-    "wrangler": "4.112.0",
     "yaml": "2.9.0"
   }
 }

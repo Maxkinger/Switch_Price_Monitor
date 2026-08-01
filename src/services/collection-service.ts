@@ -49,7 +49,7 @@ export interface StaleOutcome {
 export type CollectionOutcome = CollectedOutcome | StaleOutcome;
 
 /**
- * 连接来源链、汇率和不可变快照的应用服务。它不处理 Cron、通知或 D1 健康计数，
+ * 连接来源链、汇率和不可变快照的应用服务。它不处理调度、通知或 PostgreSQL 健康计数，
  * 因此每个环节都可独立验证：来源链负责可信价格，后续健康服务负责失败次数，报告服务负责消息。
  */
 export class CollectionService {

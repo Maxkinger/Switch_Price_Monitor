@@ -1,21 +1,26 @@
-import { env } from "cloudflare:test";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import worker, { type Env } from "../src/worker";
 import { JapaneseUpgradeBatchLimitError } from "../src/providers/japanese-upgrade-browser";
 import { handleProductRoute } from "../src/routes/product-routes";
-import { D1AuthRepository } from "../src/repositories/auth-repository";
+import type { AppDatabase } from "../src/server/database/types";
 import { AuthService } from "../src/services/auth-service";
 import { SubscriptionPreviewService } from "../src/services/subscription-preview-service";
+import { createApiTestDatabase, createTestAuth, initializeAndLogin as initializeAdmin, resetApiTestData } from "./support/api-postgres";
+
+// 商品发现只复用 PostgreSQL 认证与设置状态；任天堂搜索、页面解析和本地浏览器全部由每个用例的受控 fake 截断。
+let database: AppDatabase;
 
 /**
  * 商品发现 API 必须先验证管理员会话，再调用注入的发现服务。测试使用本地服务桩件，
- * 确保搜索接口既不会写入 D1，也不会在测试期间访问任天堂公开搜索或商品页。
+ * 确保搜索接口既不会写入 PostgreSQL，也不会在测试期间访问任天堂公开搜索或商品页。
  */
 describe("product discovery HTTP routes", () => {
+  beforeAll(async () => { database = await createApiTestDatabase(); });
+  afterAll(async () => { await database.close(); });
+
   beforeEach(async () => {
-    // 发现操作是只读的；清理认证和业务表能证明接口不因搜索或解析留下半成品订阅数据。
-    await env.DB.exec("DELETE FROM subscription_regions; DELETE FROM subscriptions; DELETE FROM regional_products; DELETE FROM games; DELETE FROM sessions; DELETE FROM login_attempts; DELETE FROM admin_credentials; DELETE FROM settings;");
+    // 发现操作是只读的；清空一次性库能证明接口不因搜索或解析留下半成品订阅数据。
+    await resetApiTestData(database);
   });
 
   it("rejects anonymous default-region search and returns only the configured official candidates to an administrator", async () => {
@@ -57,7 +62,7 @@ describe("product discovery HTTP routes", () => {
   });
 
   it("forwards a complete Japanese upgrade anchor only after narrowing it as an official candidate", async () => {
-    // 浏览器可伪造标题字符串；路由必须完整收窄锚点后才交给日区关系服务，令升级包链接的关系证明始终由 Worker 完成。
+    // 浏览器可伪造标题字符串；路由必须完整收窄锚点后才交给 Node 日区关系服务，令升级包链接的关系证明始终由服务端完成。
     const resolveOfficialLink = vi.fn(async () => japaneseUpgradeCandidate());
     const discovery = {
       searchDefaultRegion: async () => ({ status: "available" as const, candidates: [candidate()] }),
@@ -103,7 +108,7 @@ describe("product discovery HTTP routes", () => {
   });
 
   it("maps a Japanese upgrade batch limit error to a safe validation response", async () => {
-    // 超过 Browser Run 批量上限是管理员可修正的输入问题，路由必须保留受控中文说明而不能归类为 500 或泄漏内部堆栈。
+    // 超过本地 Playwright 批量上限是管理员可修正的输入问题，路由必须保留受控中文说明而不能归类为 500 或泄漏内部堆栈。
     const discovery = {
       searchDefaultRegion: async () => ({ status: "available" as const, candidates: [] }),
       resolveOfficialLink: async () => candidate(),
@@ -172,7 +177,7 @@ describe("product discovery HTTP routes", () => {
   });
 
   it("confirms a validated batch only for an administrator and returns each created subscription", async () => {
-    // 最终确认桩件不写 D1；该用例专门锁定路由的认证、受控请求装配和响应边界，真实原子写入由服务层测试覆盖。
+    // 最终确认桩件不写 PostgreSQL；该用例专门锁定路由认证、受控请求装配和响应边界，真实原子写入由服务层测试覆盖。
     const confirm = vi.fn(async () => [{ gameId: "game-overcooked", subscriptionId: "subscription-overcooked", status: "created" as const }]);
     const discovery = {
       searchDefaultRegion: async () => ({ status: "available" as const, candidates: [candidate()] }),
@@ -252,22 +257,10 @@ function request(path: string, body: unknown, cookie?: string): Request {
 
 /** 首次设置默认区后登录，测试 API 必须使用与生产相同的 HttpOnly 会话守卫。 */
 async function initializeAndLogin(): Promise<string> {
-  const initialized = await worker.fetch!(request("/api/auth/initialize", { password: "correct-horse-battery-staple", enabledRegions: ["US"], defaultSearchRegion: "US" }) as never, workerEnv(), {} as ExecutionContext);
-  expect(initialized.status).toBe(201);
-  const login = await worker.fetch!(request("/api/auth/login", { password: "correct-horse-battery-staple" }) as never, workerEnv(), {} as ExecutionContext);
-  expect(login.status).toBe(200);
-  return login.headers.get("set-cookie") ?? "";
+  return (await initializeAdmin(database, { enabledRegions: ["US"], defaultSearchRegion: "US" })).cookie;
 }
 
-/** 静态资源桩件若被调用会失败；Worker 迁移回归不装配 Node Chromium，避免认证辅助请求误入前端回退。 */
-function workerEnv(): Env {
-  return {
-    DB: env.DB,
-    ASSETS: { fetch: async () => new Response("unexpected asset request", { status: 500 }) } as unknown as Fetcher,
-  };
-}
-
-/** 每次直接路由调用显式装配当前 D1 测试绑定，避免路由根据 unknown 对象猜测认证平台。 */
+/** 每次直接路由调用显式装配真实 PostgreSQL 认证服务，避免把 fake Cookie 当成管理员身份。 */
 function sessions(): AuthService {
-  return new AuthService(new D1AuthRepository(env.DB));
+  return createTestAuth(database);
 }

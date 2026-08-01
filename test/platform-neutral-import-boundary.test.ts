@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-// 以原始源码文本而非执行模块进行扫描，确保测试本身不会加载 Cloudflare 专属依赖；五个目录中的业务逻辑必须能被后续 Node 运行时安全复用。
+// 以原始源码文本而非执行模块进行扫描，确保测试本身不会加载已退休的平台专属依赖；五个目录中的业务逻辑必须保持可由当前 Node 运行时安全复用。
 const platformNeutralSources = import.meta.glob("../src/{routes,services,repositories,providers,shared}/**/*.ts", {
   eager: true,
   query: "?raw",
@@ -8,8 +8,8 @@ const platformNeutralSources = import.meta.glob("../src/{routes,services,reposit
 }) as Record<string, string>;
 
 describe("platform-neutral source boundary", () => {
-  it("does not statically import Worker implementation modules", () => {
-    // 静态导入会在模块求值前装载 Worker 专属实现；即使仅使用类型或错误类，也必须经由平台中立契约目录传递。
+  it("does not statically import retired platform implementation modules", () => {
+    // 静态导入会在模块求值前装载已退休的平台实现；即使仅使用类型或错误类，也必须经由平台中立契约目录传递。
     const workerImports = Object.entries(platformNeutralSources)
       .flatMap(([path, source]) => findForbiddenStaticSpecifiers(source).map((specifier) => `${path}: ${specifier}`))
       .sort();
@@ -49,7 +49,7 @@ function findForbiddenStaticSpecifiers(source: string): string[] {
   return findStaticSpecifiers(source).filter((specifier) => /(?:^|\/)worker(?:\/|$)/u.test(specifier));
 }
 
-/** 抽取静态模块说明符供 Worker 路径边界与唯一 Playwright launcher 边界复用，避免两套正则规则漂移。 */
+/** 抽取静态模块说明符供已退休平台路径边界与唯一 Playwright launcher 边界复用，避免两套正则规则漂移。 */
 function findStaticSpecifiers(source: string): string[] {
   const staticSpecifiers = Array.from(
     source.matchAll(/\b(?:import|export)\s+(?:(?:type\s+)?[\w$*{},\s]+\s+from\s+)?["']([^"']+)["']/gu),

@@ -2,8 +2,8 @@ import type { ConfirmedRegionalProduct, OfficialProductCandidate, RegionCode } f
 import type { OfficialNintendoProductPageResolver } from "../providers/official-nintendo-product-page";
 import {
   type ValidatedConfirmedRegion,
-} from "../repositories/subscription-confirmation-repository";
-import type { SubscriptionConfirmationStore } from "../repositories/ports";
+  type SubscriptionConfirmationStore,
+} from "../repositories/ports";
 import type { OfficialPriceIdResolution, OfficialPriceIdService } from "./official-price-id-service";
 import type { RegionResolution, OfficialProductDiscoveryService } from "./official-product-discovery-service";
 import type { EnabledRegionSettingsReader } from "./subscription-confirmation-service";
@@ -143,7 +143,7 @@ function hasSameLogicalIdentity(left: OfficialProductCandidate, right: OfficialP
 
 /**
  * 已有订阅补全沿用与新建确认相同的信任分级：自动解析只能在唯一严格身份下成立；
- * 管理员点击候选卡或粘贴链接后，可接受本地化标题/发行商，但前提仍是 Worker 已重验该区任天堂 URL 且类型相同。
+ * 管理员点击候选卡或粘贴链接后，可接受本地化标题/发行商，但前提仍是 Node 服务已重验该区任天堂 URL 且类型相同。
  * 此函数不放宽地区、主机或路径校验，那些约束由 `resolveOfficialCandidate` 在网络请求前后负责。
  */
 function hasConfirmedRegionIdentity(

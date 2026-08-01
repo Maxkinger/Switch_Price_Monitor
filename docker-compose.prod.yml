@@ -1,5 +1,5 @@
 # 生产 Compose 只运行应用与项目专属 PostgreSQL；NAS 需本文件、未提交 `.env`、`docker/postgres/init-app-role.sh` 和固定公开镜像，无需应用源码或构建工具。
-# 备份/恢复由宿主的 Task 9 脚本按显式 Compose 文件、project、服务、数据库和 BACKUP_DIR 运行；不得为备份新增常驻服务、挂载秘密或发布数据库端口。
+# 备份/恢复由宿主的 Task 9 脚本按显式绝对 env/Compose 文件、project、服务、数据库和 BACKUP_DIR 运行；不得依赖 cwd、为备份新增常驻服务、挂载秘密或发布数据库端口。
 # 恢复期间管理员不得在外部执行 compose up；脚本只运行一次性 app 镜像 shell 读取精确迁移 manifest，不创建额外常驻服务。
 name: switch-price-monitor
 

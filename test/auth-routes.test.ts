@@ -1,14 +1,30 @@
-import { env } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import worker, { type Env } from "../src/worker";
 import { handleAuthRoute } from "../src/routes/auth-routes";
+import type { AppDatabase } from "../src/server/database/types";
 import type { AuthService } from "../src/services/auth-service";
+import {
+  createApiTestDatabase,
+  createTestAuthDispatcher,
+  jsonRequest,
+  resetApiTestData,
+} from "./support/api-postgres";
+
+// 文件级 helper 与 describe 生命周期共享同一受守卫连接池；Node project 串行执行确保不会跨文件复用该句柄。
+let database: AppDatabase;
 
 describe("authentication HTTP routes", () => {
+  beforeAll(async () => {
+    database = await createApiTestDatabase();
+  });
+
+  afterAll(async () => {
+    await database.close();
+  });
+
   beforeEach(async () => {
-    // API 测试使用同一 D1 绑定，因此每轮清理认证与设置状态，保证“首次访问”语义可重复验证。
-    await env.DB.exec("DELETE FROM sessions; DELETE FROM login_attempts; DELETE FROM admin_credentials; DELETE FROM settings;");
+    // 文件内复用一个受守卫连接池；每轮清空业务表，保证首次初始化、锁定和恢复状态不会跨用例泄漏。
+    await resetApiTestData(database);
   });
 
   it("initializes the administrator and returns an HttpOnly session cookie after login", async () => {
@@ -89,7 +105,7 @@ describe("authentication HTTP routes", () => {
     );
 
     expect(response?.status).toBe(500);
-    const body = await response?.json<{ code: string; error: string }>();
+    const body = await response?.json() as { code: string; error: string } | undefined;
     expect(body).toEqual({
       code: "INTERNAL_ERROR",
       error: "认证暂时无法处理，请稍后重试。",
@@ -106,19 +122,14 @@ async function initializeThroughHttp(): Promise<{ recoveryCode: string }> {
     defaultSearchRegion: "JP",
   });
   expect(response.status).toBe(201);
-  return response.json<{ recoveryCode: string }>();
+  return response.json() as Promise<{ recoveryCode: string }>;
 }
 
 async function call(path: string, body?: unknown, cookie?: string | null, method = "POST"): Promise<Response> {
-  // 静态资源不会参与认证 API；此绑定若被误用会使测试立刻失败，防止路由遗漏。
-  const assets = { fetch: async () => new Response("unexpected asset request", { status: 500 }) } as unknown as Fetcher;
-  return worker.fetch!(
-    new Request(`https://example.test${path}`, {
-      method,
-      body: body === undefined ? undefined : JSON.stringify(body),
-      headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
-    }) as never,
-    { DB: env.DB, ASSETS: assets } as Env,
-    {} as ExecutionContext,
+  // 认证测试显式启用 Secure，继续锁定 HTTPS Cookie 合同；LAN false/HTTPS true 双分支另由 server-http 回归覆盖。
+  const response = await createTestAuthDispatcher(database, true)(
+    jsonRequest(path, body, cookie, method),
   );
+  if (!response) throw new Error("认证测试请求未被认证路由处理");
+  return response;
 }

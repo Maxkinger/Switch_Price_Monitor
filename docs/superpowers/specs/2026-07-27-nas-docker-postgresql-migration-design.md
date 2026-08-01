@@ -1,6 +1,8 @@
 # NAS Docker 与 PostgreSQL 迁移设计规格
 
-状态：已确认，待实施
+状态：仓库实现、M1 生产运行时 Compose 与业务自动化分层证据已完成；公开镜像、DS423+ 与 Cloudflare 退役待验收/授权
+
+> 2026-08-01 状态说明：当前仓库唯一支持 Node.js 22、PostgreSQL 17 与本地 Playwright Chromium，旧 Cloudflare 运行路径已移除。本地门禁为 Vitest 69 文件/420 项、DOM 16 项、Chromium 4 项、Docker/平台合同 19/19、TypeScript 与生产构建通过。当前工作树还在 M1/arm64 通过生产镜像与 Compose 运行时的空库、双容器健康、非 root、端口隔离、认证恢复/锁定、设置和重启持久化验收，镜像内 Chromium 冒烟与备份恢复 14/14 亦通过；发现、订阅事务、历史/导出、刷新、调度锁与 Telegram fake transport 由同一工作树自动化分层验证，不宣称已在生产容器内完成外部端到端演练。远程 run `30686052256` 属于平台移除前提交，不能证明当前工作树。Docker Hub Secrets、`v0.1.0`、公开镜像、DS423+ 部署、真实 Telegram/Nintendo 样本和线上 Cloudflare 资源退役均未完成。本说明更新执行状态，不改写下文在 2026-07-27 形成的设计背景。
 
 确认日期：2026-07-27
 

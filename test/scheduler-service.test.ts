@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import * as schedulerService from "../src/services/scheduler-service";
 import { runPendingNotificationDelivery, type PendingNotificationDeliveryDependencies, type PendingNotificationDeliveryResult } from "../src/services/scheduler-service";
-import type { PendingNotificationEvent } from "../src/repositories/notification-event-repository";
+import type { PendingNotificationEvent } from "../src/repositories/ports";
 import type { DailyReportSubscription, TelegramMessage } from "../src/services/report-service";
 
 /**

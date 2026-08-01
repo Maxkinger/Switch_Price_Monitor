@@ -17,7 +17,7 @@ import type { SessionReader } from "./auth-guard";
 
 /**
  * 管理订阅读取、编辑与已有地区补全入口。所有写入均在会话守卫之后执行，防止第三方仅凭公开商品 ID 改变采集和通知范围。
- * 已有地区补全只把受控 JSON 交给服务；游戏归属、跨区范围和任天堂官方复核均保持在 Worker 内，不由浏览器决定。
+ * 已有地区补全只把受控 JSON 交给服务；游戏归属、跨区范围和任天堂官方复核均保持在 Node 服务端，不由浏览器决定。
  */
 export async function handleSubscriptionRoute(
   request: Request,
@@ -51,12 +51,12 @@ export async function handleSubscriptionRoute(
 
     if (action.kind === "complete-regions") {
       if (!completion) throw new SubscriptionRequestError("订阅地区补全暂不可用。");
-      const input = readCompletionRegionsInput(await request.json<unknown>());
+      const input = readCompletionRegionsInput((await request.json()) as unknown);
       return Response.json(await completion.completeExisting(action.subscriptionId, input, new Date().toISOString()));
     }
 
     if (action.kind === "create") {
-      const input = readCreateSubscriptionInput(await request.json<unknown>());
+      const input = readCreateSubscriptionInput((await request.json()) as unknown);
       const result = await service.createOrOpen(input, new Date().toISOString());
       // 只有真正插入时返回 201；重复提交返回 200 让前端按幂等成功处理，而不是误提示“创建失败”。
       return Response.json(result, { status: result.created ? 201 : 200 });
@@ -70,11 +70,11 @@ export async function handleSubscriptionRoute(
 
     if (action.kind === "bulk-delete") {
       // 只接受已收窄且去重的订阅 ID；仓储事务会在首条写入前确认所有目标存在，避免浏览器过期选择导致部分删除。
-      const subscriptionIds = readBulkDeleteSubscriptionIds(await request.json<unknown>());
+      const subscriptionIds = readBulkDeleteSubscriptionIds((await request.json()) as unknown);
       return Response.json({ deletedSubscriptionIds: await service.deleteMany(subscriptionIds) });
     }
 
-    const update = readSubscriptionUpdate(await request.json<unknown>());
+    const update = readSubscriptionUpdate((await request.json()) as unknown);
     if (update.kind === "enabled") { await service.setEnabled(action.subscriptionId, update.enabled, new Date().toISOString()); return Response.json({ subscriptionId: action.subscriptionId, enabled: update.enabled }); }
     if (update.kind === "regions") { await service.replaceRegionalProducts(action.subscriptionId, update.regionalProductIds, new Date().toISOString()); return Response.json({ subscriptionId: action.subscriptionId, regionalProductIds: update.regionalProductIds }); }
     await service.setTargets(action.subscriptionId, update.globalTargetCnyFen, update.regionTargets, new Date().toISOString());
@@ -220,7 +220,7 @@ function readNullableMinorPrice(value: unknown, message: string): number | null 
   return value;
 }
 
-/** 仅允许 HTTPS URL 进入下一层官方白名单验证，拒绝脚本、本地和明文链接作为 Worker 外部请求目标。 */
+/** 仅允许 HTTPS URL 进入下一层官方白名单验证，拒绝脚本、本地和明文链接作为 Node 服务端外部请求目标。 */
 function readHttpsUrl(value: unknown): string {
   if (typeof value !== "string" || value.trim().length === 0) throw new SubscriptionRequestError("商品链接无效。");
   try {

@@ -1,5 +1,5 @@
 import type { AppSettings } from "../shared/domain";
-import type { PendingNotificationEvent } from "../repositories/notification-event-repository";
+import type { PendingNotificationEvent } from "../repositories/ports";
 import { buildDailyReport, type DailyReportSubscription, type TelegramMessage } from "./report-service";
 import type { RetentionCleanupResult } from "./retention-service";
 import type { TelegramDeliveryResult } from "./telegram-service";

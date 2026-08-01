@@ -1,21 +1,23 @@
-import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import type { OfficialProductCandidate } from "../src/shared/domain";
-import { SubscriptionConfirmationRepository } from "../src/repositories/subscription-confirmation-repository";
 import { SubscriptionRegionCompletionService } from "../src/services/subscription-region-completion-service";
+import { InMemorySubscriptionConfirmationStore } from "./support/in-memory-business-stores";
+
+// 外部服务工厂共享当前用例端口；beforeEach 必须替换实例，确保既有地区、历史哨兵和目标价不会跨测试泄漏。
+let confirmationStore: InMemorySubscriptionConfirmationStore;
 
 /**
- * 已有订阅地区补全使用真实 D1 夹具验证写入边界：补全只能追加经官方复核的缺失地区，
- * 绝不能为了补全而替换既有美区商品、价格快照、目标价或订阅本身。
+ * 已有订阅地区补全使用平台中立端口夹具验证服务边界：补全只能追加经官方复核的缺失地区，
+ * 绝不能替换既有美区商品、历史哨兵、目标价或订阅本身；真实跨表事务由 PostgreSQL 集成测试负责。
  */
 describe("subscription region completion service", () => {
   const now = "2026-07-17T03:00:00.000Z";
 
-  beforeEach(async () => {
-    // 夹具按外键依赖倒序清理，避免此前用例的快照或目标价掩盖本次原子追加行为。
-    await env.DB.exec("DELETE FROM price_snapshots; DELETE FROM subscription_region_targets; DELETE FROM subscription_regions; DELETE FROM subscriptions; DELETE FROM regional_products; DELETE FROM games;");
-    await seedUsOnlySubscription();
+  beforeEach(() => {
+    // 每个用例从同一份只含美区的领域状态开始，避免前一用例新增的日区影响覆盖校验。
+    confirmationStore = new InMemorySubscriptionConfirmationStore();
+    seedUsOnlySubscription();
   });
 
   it("adds a validated missing region without changing existing history or targets", async () => {
@@ -43,7 +45,7 @@ describe("subscription region completion service", () => {
       skippedRegionCodes: [],
     }, now)).rejects.toThrow("商品链接不是该区任天堂官方链接，或公开商品信息无法验证。");
 
-    // 官方复核失败必须发生在 D1 批次之前，不能留下地区商品或关系表的部分写入。
+    // 官方复核失败必须发生在仓储提交之前，不能留下地区商品或订阅关系的部分写入。
     await expect(readRegionCodes()).resolves.toEqual(["US"]);
     await expect(readUsSnapshotCount()).resolves.toBe(1);
     await expect(readGlobalTarget()).resolves.toBe(5000);
@@ -51,7 +53,7 @@ describe("subscription region completion service", () => {
 
   it("adds a manually selected localized Japanese official candidate without replacing history", async () => {
     // 补全页与新建向导应使用相同的人工审计语义：本地化名称由管理员确认，
-    // 但 Worker 仍需重新解析本区官方 URL 并验证升级包类型，且只允许原子追加缺失地区。
+    // 但服务仍需重新解析本区官方 URL 并验证升级包类型，且只允许原子追加缺失地区。
     const service = createService([overcookedUs(), localizedOvercookedJp()]);
 
     await expect(service.completeExisting("subscription-overcooked", {
@@ -63,7 +65,7 @@ describe("subscription region completion service", () => {
   });
 
   it("rejects a localized manual candidate with a different product type without adding a region", async () => {
-    // 人工候选不允许把同名本体、DLC 或组合包混进既有订阅；类型不一致时必须在 D1 批次前失败，
+    // 人工候选不允许把同名本体、DLC 或组合包混进既有订阅；类型不一致时必须在仓储提交前失败，
     // 保证美区历史、目标价和现有地区关联均不发生部分更新。
     const invalidJapaneseUpgrade = { ...localizedOvercookedJp(), productType: "upgrade-pack" as const };
     const service = createService([overcookedUs(), invalidJapaneseUpgrade]);
@@ -92,11 +94,11 @@ describe("subscription region completion service", () => {
 
 /**
  * 服务使用可注入官方页面、价格 ID、设置与跨区发现替身。替身只替代外部网络边界，
- * 仓储和原子写入仍走真实 D1，从而验证持久化不变量而非模拟调用次数。
+ * 平台中立仓储记录经验证的追加 DTO；PostgreSQL 专项测试继续验证真实事务、唯一约束和故障回滚。
  */
 function createService(candidates: OfficialProductCandidate[]): SubscriptionRegionCompletionService {
   return new SubscriptionRegionCompletionService(
-    new SubscriptionConfirmationRepository(env.DB),
+    confirmationStore,
     { resolve: async (regionCode, productUrl) => candidates.find((candidate) => candidate.regionCode === regionCode && candidate.productUrl === productUrl) ?? null },
     { resolve: async (candidate) => candidate.regionCode === "JP"
       ? { status: "official-available" as const, officialPriceId: "70050000064985" }
@@ -111,39 +113,47 @@ function createService(candidates: OfficialProductCandidate[]): SubscriptionRegi
 }
 
 /** 夹具模拟已有订阅只包含美区，并保留一条价格快照和人民币目标价作为不得被补全改变的历史。 */
-async function seedUsOnlySubscription(): Promise<void> {
-  await env.DB.batch([
-    env.DB.prepare("INSERT INTO games (id, name_zh, name_en, normalized_name, publisher, product_type, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
-      .bind("game-overcooked", "胡闹厨房 2", "Overcooked! 2", "overcooked! 2|team17|game", "Team17", "game", "2026-07-16T00:00:00.000Z"),
-    env.DB.prepare("INSERT INTO regional_products (id, game_id, region_code, currency, product_url, match_source, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?)")
-      .bind("product-overcooked-us", "game-overcooked", "US", "USD", overcookedUs().productUrl, "manual_selection", "2026-07-16T00:00:00.000Z"),
-    env.DB.prepare("INSERT INTO subscriptions (id, game_id, enabled, global_target_cny_fen, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .bind("subscription-overcooked", "game-overcooked", 1, 5000, "2026-07-16T00:00:00.000Z", "2026-07-16T00:00:00.000Z"),
-    env.DB.prepare("INSERT INTO subscription_regions (subscription_id, regional_product_id) VALUES (?, ?)")
-      .bind("subscription-overcooked", "product-overcooked-us"),
-    env.DB.prepare("INSERT INTO price_snapshots (regional_product_id, amount_minor, currency, cny_fen, source, captured_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .bind("product-overcooked-us", 999, "USD", 6800, "official", "2026-07-16T00:00:00.000Z"),
-  ]);
+function seedUsOnlySubscription(): void {
+  confirmationStore.seedExisting({
+    anchor: overcookedUs(),
+    historySnapshotCount: 1,
+    globalTargetCnyFen: 5000,
+    confirmation: {
+      game: {
+        id: "game-overcooked",
+        nameZh: "胡闹厨房 2",
+        nameEn: "Overcooked! 2",
+        normalizedName: "overcooked! 2|team17|game",
+        publisher: "Team17",
+        productType: "game",
+        coverUrl: overcookedUs().coverUrl,
+      },
+      subscriptionId: "subscription-overcooked",
+      regions: [{
+        id: "product-overcooked-us",
+        regionCode: "US",
+        currency: "USD",
+        officialPriceId: null,
+        productUrl: overcookedUs().productUrl,
+        matchSource: "manual_selection",
+      }],
+    },
+  });
 }
 
 /** 读取当前订阅实际监控的地区，而不是游戏全部地区商品，确保补全确实创建了新的订阅关联。 */
 async function readRegionCodes(): Promise<string[]> {
-  const result = await env.DB.prepare(
-    "SELECT products.region_code AS regionCode FROM subscription_regions INNER JOIN regional_products AS products ON products.id = subscription_regions.regional_product_id WHERE subscription_regions.subscription_id = ? ORDER BY products.region_code ASC",
-  ).bind("subscription-overcooked").all<{ regionCode: string }>();
-  return result.results.map((row) => row.regionCode);
+  return confirmationStore.regionCodes("subscription-overcooked");
 }
 
-/** 美区快照计数是历史不被重写的直接证据；补全不应触及 `price_snapshots`。 */
+/** 历史计数哨兵位于补全端口能力之外；服务追加地区时不得改变它。 */
 async function readUsSnapshotCount(): Promise<number> {
-  const row = await env.DB.prepare("SELECT COUNT(*) AS count FROM price_snapshots WHERE regional_product_id = ?").bind("product-overcooked-us").first<{ count: number }>();
-  return row?.count ?? 0;
+  return confirmationStore.protectedState("subscription-overcooked")?.historySnapshotCount ?? 0;
 }
 
 /** 全局目标价属于订阅配置，补全只添加地区映射，不能覆盖该字段。 */
 async function readGlobalTarget(): Promise<number | null> {
-  const row = await env.DB.prepare("SELECT global_target_cny_fen AS target FROM subscriptions WHERE id = ?").bind("subscription-overcooked").first<{ target: number | null }>();
-  return row?.target ?? null;
+  return confirmationStore.protectedState("subscription-overcooked")?.globalTargetCnyFen ?? null;
 }
 
 /** 美区官方候选既是已有订阅的持久化锚点，也是跨区身份比较的起点。 */

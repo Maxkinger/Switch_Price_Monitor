@@ -3,7 +3,7 @@ import { defineConfig } from "vite";
 
 /**
  * Vite 只构建 React 管理界面到 dist/client；Node 服务由独立 tsup 配置构建，
- * 避免前端产物重新打包 Worker、D1 或 Cloudflare 静态绑定。开发代理保持浏览器请求同源语义，
+ * 避免前端产物打包 Node 服务端、PostgreSQL 适配器或任何部署期资源。开发代理保持浏览器请求同源语义，
  * 目标仅为本机 Node 默认端口，不代理数据库、Chromium 调试口或任何外部来源。
  */
 export default defineConfig({

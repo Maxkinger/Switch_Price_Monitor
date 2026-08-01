@@ -1,7 +1,7 @@
 import type { PriceSource, SubscriptionRegionPreview } from "../shared/domain";
 import type { OfficialPriceIdCandidate, OfficialPriceIdResolution } from "./official-price-id-service";
 
-/** 允许预览服务依赖真实 ID 确认服务或离线测试桩件，而不耦合网络、D1 或任天堂实现细节。 */
+/** 允许预览服务依赖真实 ID 确认服务或离线测试桩件，而不耦合网络、PostgreSQL 或任天堂实现细节。 */
 export interface OfficialPriceIdResolver {
   resolve(candidate: OfficialPriceIdCandidate): Promise<OfficialPriceIdResolution>;
 }

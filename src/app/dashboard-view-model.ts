@@ -10,7 +10,7 @@ export interface TrendPoint {
 }
 
 /**
- * 已确认的五个监控地区的中文名称。地区代码是 Worker 与数据库之间稳定的机器字段，
+ * 已确认的五个监控地区的中文名称。地区代码是 Node API 与数据库之间稳定的机器字段，
  * 仅在展示层翻译，避免改变订阅、采集和价格来源接口的既有数据契约。
  */
 const REGION_NAMES: Record<string, string> = {
@@ -82,7 +82,7 @@ export function formatRegionalPrice(amountMinor: number, currency: string, regio
 }
 
 /**
- * 将 Worker 返回的人民币分转换为“约”值。汇率缺失时必须显式提示待换算，
+ * 将服务端返回的人民币分转换为“约”值。汇率缺失时必须显式提示待换算，
  * 不能用 0 元、上一日汇率或浏览器请求外部汇率来填补，避免误导跨区比较。
  */
 export function formatCnyFen(cnyFen: number | null): string {
@@ -90,7 +90,7 @@ export function formatCnyFen(cnyFen: number | null): string {
 }
 
 /**
- * 把 Worker 统一传输的 UTC ISO 时刻转成管理员保存时区中的固定中文可读格式。
+ * 把 Node API 统一传输的 UTC ISO 时刻转成管理员保存时区中的固定中文可读格式。
  * 使用 formatToParts 而非浏览器默认 locale，避免不同设备把日期顺序、12 小时制或秒数展示成不同结果；
  * timezone 来自服务端已验证的 IANA 设置，调用方在设置尚未初始化时显式传入 UTC，不依赖浏览器本地时区。
  */

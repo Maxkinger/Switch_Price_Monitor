@@ -22,7 +22,7 @@ export class SubscriptionService {
 
   /**
    * 重复提交同一 gameId 时返回既有订阅而不覆盖地区范围，保护管理员已经确认的监控配置。
-   * 新建记录的时间由 Worker 生成，不能信任浏览器提供的 createdAt，以保证审计时间和服务端时钟一致。
+   * 新建记录的时间由 Node 服务端生成，不能信任浏览器提供的 createdAt，以保证审计时间和服务端时钟一致。
    */
   public async createOrOpen(
     input: Omit<SubscriptionInput, "createdAt">,

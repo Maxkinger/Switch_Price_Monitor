@@ -1,168 +1,108 @@
 # 系统架构说明
 
-## 1. 文档状态
+状态：仓库内迁移、M1 生产运行时 Compose 与业务自动化分层证据已完成；公开镜像发布和 DS423+ 部署待验收
+最后更新：2026-08-01
 
-本说明包含截至 2026-07-27 已获确认的架构、核心流程与可靠性约束。详细数据模型、接口和验收策略分别维护在关联文档中。
+## 1. 当前支持边界
 
-## 2. 已确认架构
+仓库当前唯一支持的运行路径是 Node.js 22、PostgreSQL 17 与本地 Playwright Chromium。旧 Cloudflare Worker、D1、Cron Trigger、Static Assets Binding、Secrets 和 Browser Binding 的运行时代码、依赖及测试入口已经移除；Cloudflare 的历史生产证据仅用于审计，不代表当前仓库仍支持双平台。
 
-```text
-React 前端（Workers Static Assets）
-          │
-          ▼
-Cloudflare Worker API
-  ├─ 管理员登录、初始化、订阅与设置
-  ├─ 商品搜索和跨区匹配
-  ├─ 官方优先的价格采集与第三方回退
-  ├─ 汇率、税费和降价判断
-  ├─ Telegram 日报与即时提醒
-  └─ 定时任务及手动刷新控制
-          │
-          ▼
-Cloudflare D1
-  ├─ 管理员、会话与恢复码
-  ├─ 商品、地区商品、订阅和区域选择
-  ├─ 价格快照、汇率和历史统计
-  ├─ 采集/通知日志和失败状态
-  └─ 设置、来源优先级和保留策略
-```
+线上 Cloudflare 资源尚未删除。它们必须等 NAS 等价验收完成并取得独立退役授权后再处理，不能因为仓库代码已经迁移就推断线上资源已停用。
 
-迁移前生产采用单一 Cloudflare Worker：静态前端与 API 共用同一部署单元，D1 通过 Worker Binding 访问；日区升级包关系发现曾使用同一 Worker 的隔离浏览器能力，且不连接 D1、Cron、价格采集或通知链路。迁移分支的 Worker 仅保留 D1 回归入口，已移除浏览器配置和运行时包；Node 本地 Playwright 成为唯一浏览器实现。敏感配置仍不得写入源码、镜像或普通日志。
-
-### 2.1 已确认的 NAS 目标架构
-
-Cloudflare 架构仍是实施完成前的当前生产环境。迁移完成并通过功能等价、备份恢复与回滚验收后，生产环境改为 Synology DS423+ 上的 Docker Compose，且不保留双平台兼容层：
+## 2. 生产拓扑
 
 ```text
 局域网浏览器
-          │
-          ▼
-Node.js 应用容器
-  ├─ React 静态资源与同源 API
-  ├─ 管理员认证与全部现有业务服务
-  ├─ 每分钟通知/日报与每六小时采集
-  └─ 本地 Playwright + Chromium
-          │ Compose 内部网络
-          ▼
-项目专属 PostgreSQL 容器
+    │ HTTP（首阶段）
+    ▼
+app：Node.js 22，唯一映射 NAS 端口
+    ├─ 同源 React 静态资源与 SPA 回退
+    ├─ 受认证 API 与业务服务
+    ├─ UTC 进程内调度器
+    └─ 本地 Playwright + Chromium
+    │ Compose 私有网络
+    ▼
+postgres：PostgreSQL 17，不映射宿主 5432
+    └─ 项目专属数据库、普通应用所有者与持久化目录
 ```
 
-应用容器是唯一映射 NAS 端口的服务；PostgreSQL 与 Chromium 调试能力均不向局域网开放。原 D1 批处理改为显式 PostgreSQL 事务，迁移与调度使用 advisory lock 防止并发重复执行。日区升级包继续使用一个浏览器、最多三个串行隔离上下文、单项三十秒和保存前二次官方复核。
+生产 Compose 只含两个常驻服务。Chromium 不提供 CDP、远程调试端口或持久用户目录；PostgreSQL 只在 Compose 网络内可达。NAS 只保存 Compose、未提交 `.env`、只读初始化脚本和数据/备份目录，不在设备上编译源码。
 
-本地 Apple Silicon M1 提供开发与生产 Compose 验收。GitHub Actions 仅在完整质量门禁通过后，向公开 Docker Hub 仓库发布 `linux/arm64` 与 `linux/amd64` 的固定版本镜像；NAS Compose 只拉取镜像，不构建源码。运行时数据库与 Telegram 凭据只通过未提交环境配置注入。详细边界见 [NAS Docker 与 PostgreSQL 迁移设计规格](../superpowers/specs/2026-07-27-nas-docker-postgresql-migration-design.md) 与 [ADR-003](../decisions/ADR-003-nas-docker-postgresql.md)。
+本地 M1 可使用开发 Compose 与本机 Node 调试。2026-08-01 当前工作树以原生 arm64 构建最终镜像，并用生产 Compose 从空 bind mount 启动：app/postgres 均健康，app 以 `10001:10001` 运行，仅映射应用 HTTP，PostgreSQL 只保留容器网络 `5432`。验收还覆盖首次初始化、登录/退出、一次性恢复码改密、连续失败锁定、设置保存、app 重启持久化，以及镜像内无网络 Chromium 启停；全部使用合成凭据和唯一临时项目，未连接既有数据库。
 
-### 2.2 Node HTTP 迁移入口
+## 3. 组件职责
 
-Node.js 22 入口现已独立构建到 `dist/server`，React 只构建到 `dist/client`；迁移期 Worker 入口仅用于既有回归，不会被 Vite 重新打入 Node 生产产物。Node 启动严格读取环境白名单，要求数据库 URL 与显式 `COOKIE_SECURE=true|false`，只在 Telegram token/chat id 成对存在时注入，并以固定错误码拒绝非法端口、请求体上限和关停时间，错误不包含秘密值。
+- `src/server/`：校验运行配置，装配 Hono/Fetch 应用、静态资源、PostgreSQL、调度器与优雅关停；不得吸收业务判断。
+- `src/routes/`：认证守卫、请求解析、输入约束和安全错误映射。
+- `src/services/`：订阅确认、采集、通知、历史保留和业务规则。
+- `src/repositories/postgres/`：参数化 SQL、显式事务、行模型转换与 PostgreSQL 锁。
+- `src/providers/`：任天堂、汇率与 Telegram 外部边界；第三方价格源未经 ADR-002 准入时不得发请求。
+- `src/providers/playwright/`：日区升级包关系发现；每批一个本地无头 Chromium，最多三个商品串行使用隔离上下文，单项 30 秒且不自动重试。
+- `migrations/postgres/`：按文件名排序、带 SHA-256 账本的不可变迁移。
 
-启动顺序固定为 PostgreSQL 连接池、版本迁移、PostgreSQL 仓储与平台中立服务装配、HTTP 监听、进程内 UTC 调度器。HTTP 请求依次进入健康检查、认证、设置、仪表盘、手动刷新、历史、导出、商品与订阅路由；未知 `/api/*` 返回 JSON 404，非 API 路径才读取规范静态根并回退 `index.html`。静态读取在访问前拒绝目录穿越、绝对路径、重复编码和越根符号链接；请求体在业务路由前受固定字节上限保护。
+## 4. 核心数据流
 
-认证 Cookie 固定 `HttpOnly; SameSite=Strict`，`Secure` 完全取自可信启动配置，不读取 `Forwarded` 或 `X-Forwarded-Proto`。Node 进程收到 `SIGINT`/`SIGTERM` 或 HTTP 自行结束后，进程协调器先停止分钟/六小时触发，再停止接受新连接，并在同一个 `shutdownGraceMs` 总预算内等待 HTTP 与已接收调度任务，最后关闭 PostgreSQL。信号只由进程协调器订阅和清理，不能绕过调度器直接关闭 HTTP；调度 timer 使用 `unref()`，不会独自阻止容器退出。
+### 4.1 订阅发现与确认
 
-Node 日区升级关系现由本地 Playwright Chromium 提供：只有 launcher 模块可以导入 Playwright，并固定调用本地 `chromium.launch` 的无头模式；不提供远程端点、CDP、持久上下文、调试端口、用户目录或跨请求保活能力。关系适配器只接收 `launch/newContext/newPage/goto/locator/close` 窄接口，不取得 PostgreSQL、Telegram、HTTP 或调度器依赖。空批次及全部非法根不会启动浏览器；有效批次只启动一次，最多三个根各用全新 context/page 串行运行，每项三十秒且不重试，最终按 page、context、browser 释放。启动、导航和清理异常统一转换为不含路径、页面正文、Cookie、进程或堆栈的安全业务分类。Worker 入口仅保留迁移回归且不再装配浏览器能力。
+1. 已登录管理员通过同源 API 搜索默认区或提交任天堂官方链接。
+2. Node 服务读取已保存的启用地区，调用各区官方适配器；浏览器不直接访问商店。
+3. 日区升级包仅在静态官方接口不能证明关系时启动本地 Chromium；失败按商品降级，不猜测 ID。
+4. 确认前重新验证官方 URL、地区、币种、类型、发行商和本区价格 ID。
+5. PostgreSQL 显式事务一次写入商品、地区映射、订阅及关联；任一步失败全部回滚。
 
-### 2.3 Docker 运行合同
+### 4.2 价格采集与手动刷新
 
-应用镜像现使用 Node.js 22 Bookworm glibc 多阶段构建：完整依赖和生产依赖分别以 `npm ci` 从同一 lockfile 安装，前端与服务端构建产物分别进入 `dist/client` 和 `dist/server`。最终层只复制生产依赖、双构建产物、`migrations/postgres` 与必要 package 元数据；源码、测试、Git、环境文件、文档、本地数据库和备份均由显式 Docker ignore 排除。`playwright@1.62.0` 在 BuildKit 当前平台安装对应 Chromium 和 Debian 系统依赖，不包含 arm64/amd64 下载分支，因此同一 Dockerfile 可分别由 M1 与发布流水线构建。
+- 六小时任务在专用 PostgreSQL advisory lock 内执行一次保留清理和统一采集；未取得锁立即跳过，不等待、不排队、不补跑。
+- 每个已认证 `POST /api/refresh` 都在当前请求内同步执行同一采集链并返回统计。目前没有冷却、队列或调度器认领语义，数据库只记录最近请求时间。
+- 官方结果必须匹配地区、币种、身份与本区价格 ID。全部来源失败时保留最近成功快照并标记过期，不制造价格。
+- 只有官方成功快照可触发即时降价；第三方来源即使未来获准，也只用于展示与日报。
 
-最终容器固定使用 UID/GID 10001、可写 HOME/缓存/临时目录和只读浏览器安装，并由 tini 回收 Node/Chromium 子进程。镜像只声明默认 HTTP 3000，健康检查只访问容器回环 `/api/health`，启动命令只执行 `node dist/server/index.js`；数据库、CDP 和调试端口既不声明也不映射。
+### 4.3 通知与日报
 
-生产 Compose 恰好包含 `app` 与 `postgres` 两个常驻服务。`app` 只拉取 `${DOCKERHUB_IMAGE}:${APP_VERSION}` 且在版本缺失时于解析阶段失败，是唯一拥有 NAS host port 的服务；`postgres:17` 只以 `expose` 向 Compose 内部网络标注 5432，并把显式 `${POSTGRES_DATA_DIR}` bind mount 用作持久化目录。两项服务均使用 `unless-stopped` 与健康检查，app 等待数据库 healthy。
+- Node 进程按 UTC 对齐每分钟检查日报和待投递事件，使用与六小时采集不同的 PostgreSQL advisory lock。
+- Telegram 只在 `TELEGRAM_BOT_TOKEN` 与 `TELEGRAM_CHAT_ID` 成对存在时装配。设置页不接收、不保存也不回显这两项秘密。
+- 事件先以唯一业务键在 PostgreSQL 中预留，投递成功后从 `pending` 原子更新为 `delivered`；失败保留待重试状态，普通日志只记录脱敏类别。
 
-官方 PostgreSQL 镜像必须在空数据目录引导时保留一个独立 bootstrap 管理角色；该角色及其随机密码只进入 postgres 容器，不能出现在 app 环境或 `DATABASE_URL`。随 Compose 分发的只读 `docker/postgres/init-app-role.sh` 只在 initdb 阶段执行一次，通过 psql 环境变量和 `%I`/`%L` 安全引用，在单事务内创建 `LOGIN NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS` 普通应用角色，并把专属数据库和 public schema 所有权交给它。bootstrap 与 app 密码必须在任何 psql 前证明非空且互不相同，比较失败只退出而不输出值。app 从首次连接和第一条迁移 SQL 起只使用该普通角色的 `DATABASE_URL`；PostgreSQL 健康检查必须使用普通角色及其 `PGPASSWORD`，以 Compose 服务名 `postgres` 进入容器网络 SCRAM host 规则，再由 `current_user` 证明可登录且五项集群权限均关闭。官方镜像的 Unix socket、`127.0.0.1` 与 `::1` 默认 trust 规则不能证明密码，bootstrap 角色代查也不能算健康。
+## 5. 认证与秘密边界
 
-首次生产启动的 `${POSTGRES_DATA_DIR}` 必须是已创建且权限正确的空项目目录；官方 entrypoint 对非空数据目录不会执行 init hook，此时若普通角色缺失或仍有集群级权限，健康检查必须保持失败并阻止 app 启动，不能静默退回 bootstrap 管理连接。NAS 的最小部署资产因此是生产 Compose、未提交 `.env`、只读 init hook 与固定公开 app 镜像，不包含应用源码或构建工具。
+- 系统只允许单一管理员。密码、恢复码和会话令牌只保存不可逆校验材料或摘要；恢复码仅初始化时显示一次。
+- 会话 Cookie 始终使用 `HttpOnly` 与 `SameSite=Strict`。局域网纯 HTTP 必须显式设置 `COOKIE_SECURE=false`；未来接入可信 HTTPS（包括经正确 TLS 终止的 FRP）必须改为 `true`。应用不会依据转发头自动降低该约束。
+- 登录连续失败会临时锁定；成功登录清理失败状态。退出、恢复密码和修改密码按业务规则撤销会话。
+- PostgreSQL bootstrap 管理角色只存在于数据库容器。应用只取得普通数据库所有者的 `DATABASE_URL`，两类用户名和密码必须不同。
+- Docker Hub、数据库、Telegram、密码、恢复码和 Cookie 均不得进入 Git、镜像层、普通日志或文档。
 
-数据库、Cookie 与可选 Telegram 凭据只由未提交的运行时 `.env` 注入。M1 开发继续在宿主机运行 `npm run dev`，隔离测试 PostgreSQL 使用同一双角色 init hook，只把普通 `switch_test` 暴露到 `127.0.0.1:54329` 并使用可销毁 tmpfs，不连接 NAS 数据。
+## 6. 数据、备份与生命周期
 
-控制任务已在 M1 独占完成 `linux/arm64` 生产验收：本地镜像约 546 MB，镜像架构为 arm64、默认用户为 `10001:10001`；临时生产 Compose 的 app/postgres 均 healthy，app 容器实际 UID 为 10001，PostgreSQL host bindings 为空。容器内 Chromium 已完成 loopback fixture 导航与清理；首次管理员初始化、登录和设置读取成功，重启 app/postgres 后初始化状态保持。普通数据库角色经真实查询证明 `rolsuper`、`rolcreaterole`、`rolcreatedb`、`rolreplication` 与 `rolbypassrls` 全部为 false。该证据仅完成 M1 arm64 本地生产形态，不表示 GitHub Actions 双架构 manifest 已发布或 DS423+ 已切换。
+- NAS 使用全新项目专属 PostgreSQL 数据库，不导入 D1 历史数据；首次数据目录必须为空，官方 entrypoint 才会执行普通角色初始化脚本。
+- 迁移器在启动时使用独立 advisory lock，验证已应用迁移的文件名和校验和；漂移或失败使进程退出。
+- 价格快照不可变；采集日志固定保留 90 天，价格历史按管理员设置保留。
+- 宿主备份脚本生成经 `pg_restore --list` 校验的 custom archive，并按数据库独立保留最近 14 份。恢复只允许 app 已停止、目标为独立空库且迁移 manifest 一致的项目，禁止覆盖在线业务库。
+- 进程关停顺序为停止接收调度、停止 HTTP、等待受控任务并关闭数据库池；超出共享宽限时间后退出，由下一轮幂等状态恢复。
 
-## 3. 核心数据流
+## 7. 发布与部署状态
 
-### 3.1 新建订阅
+GitHub Actions 普通 CI 验证测试、类型、构建、秘密扫描和双架构镜像构建，但不登录 Docker Hub。标签发布只接受仓库最高的严格 `vX.Y.Z`，完整门禁通过后发布 `X.Y.Z`、`X.Y`、`sha-<12位提交>` 与 `latest`；NAS 必须固定使用精确 `APP_VERSION`，不能使用 `latest`。
 
-1. 前端读取全局默认搜索区；该值在首次初始化时由管理员从已选初始地区中指定。
-2. Worker 仅使用服务端不可变的任天堂官方地区搜索档案检索默认区：US、MX、BR 分别使用本区公开索引，HK 只读取可稳定访问的香港普通官网搜索页一次，JP 使用官方公开软件索引。港区不请求会对 Cloudflare Worker 返回 403 的 Magento 商城搜索，也不保留该临时网络诊断响应；价格 ID 不由管理员手填。
-3. 管理员确认商品后，匹配器只读取保存的 `enabledRegions` 查询其他启用地区；浏览器不能传入、扩大或缩小该范围。每区始终独立解析官方链接、货币与价格 ID，绝不跨区复用。
-4. 唯一的标题、类型和（双方均存在时）发行商严格匹配以 `automatic` 自动加入；同类型的语言化或多个官方候选必须由管理员选择。日区首轮英文检索没有同类型候选时，服务仅可从唯一、同发行商且同拉丁系列标记的官方日文结果提取一个片假名别名并重试一次。目标为升级包且日区直接搜索仍无同类型候选时，服务从官方软件响应中要求唯一 `upgrade: 1`、同发行商、同拉丁系列且标题明确为 Switch 2 Edition 的下载根商品，再通过 Node 本地 Playwright Chromium 同步读取唯一可见的 `アップグレードパス` 官方 URL；任天堂价格 API 继续证明升级包自己的 JP/JPY/在售/同 ID 价格。一次请求只启动一个浏览器，最多用三个全新无痕上下文串行处理三个商品，单商品 30 秒且不自动重试；超限在启动前返回 `422`。港区首轮没有同类型候选时，仅对已审核的 Gourmet/Upgrade Pack 后缀生成一次基础标题搜索；只接受 1–5 个官方 `titles/{ID}` 本体，每根最多展开 50 个一层 `includedBundleItems/dlcItems/upgradeInfo` 关系。RSC 根只从已验证的 `fragment/serverFragment` 字段读取，`dlcItems.items` 依据官方 `DlcItem/BundleItem` 类型生成 `aocs/bundles` URL，再重新解析同类型关联商品自己的详情。任一未知类型或未验证关系均不以部分集合推断唯一性。
-5. 保存前服务重新验证每区官方商品：US、MX、BR 重新解析本区官方商品页；JP 普通游戏和组合商品以待保存候选的官方日区标题通过软件搜索 API 重新取得精确标题 ID、标题、发行商和类型，再以官方价格 API 确认 JP/JPY/在售状态。日区 `automatic` 升级包必须重新运行根商品、本地 Chromium 唯一关系和升级包价格全链路，不能复用浏览器提交的旧证据；`manual_link` 也先尝试关系复核，只有浏览器暂时失败且精确官方 URL 与 JP/JPY/在售/同 ID 价格全部有效时才允许以人工来源保存，不能升级为自动来源。HK 从已核验的 `ec.nintendo.com/HK/zh/titles/{ID}`、`/aocs/{ID}` 或 `/bundles/{ID}` 官方链接提取本区 ID，再以官方价格 API 确认 HK/HKD/在售状态。港区关系只提供发现线索，关联详情的 `nsUid` 必须与 URL ID 相同，发行商不得从本体或默认区复制。非日区 `automatic` 在页面身份通过后还要复用同一请求内的官方发现服务，重新证明该 URL 仍为唯一自动候选；所有失败均发生在价格 ID 和持久化写入之前。任一地区无效即整体拒绝，只有全部确认或显式跳过后才由仓储以单个原子事务保存地区商品与监控区域；Worker 兼容入口由 D1 适配器提供等价批次，Node 入口使用 PostgreSQL 显式事务。
-6. 取消订阅采用软停用：关闭采集与通知，但不删除商品或历史快照；重新启用时沿用原有配置。
-7. 创建前以规范化商品标识和管理员范围执行重复检测；命中时返回既有订阅标识，前端跳转编辑而非插入重复记录。
-8. 永久删除使用单独的受认证批量接口：仓储事务在首条写入前锁定并验证全部订阅存在，再按依赖顺序删除目标价、地区关联、通知事件、健康状态、快照、采集日志、地区商品、订阅和游戏。任一 ID 缺失或中途语句失败时不删除任何记录；设置、汇率和认证资料始终保留。游戏一订阅约束确保目标游戏不会属于未选订阅。仪表盘只在管理员经共享确认框确认后发送所选 ID，并通过重新读取概览反映结果；详情页成功后先释放局部详情、地区与补全草稿，再用现有路由返回仪表盘。
+当前本地门禁为 Vitest 69 个文件/420 项、DOM 16 项、Chromium 4 项、Docker/平台合同 19/19，以及 TypeScript 和生产构建通过。远程 CI run `30686052256` 通过的是平台移除前的提交，不能证明当前工作树。Docker Hub Secrets 尚未配置，`v0.1.0` 尚未创建，公开镜像、DS423+ 部署、真实 Telegram/Nintendo 样本与 Cloudflare 资源退役均未完成。
 
-### 3.2 价格采集
+### 7.1 M1 本地开发命令
 
-1. 定时任务每 6 小时查询所有启用的地区商品。
-2. 地区适配器注册表为每区选择已验证的任天堂公开价格 API、官方商品页结构化数据或官方公开页面；JP 使用固定 JP/JPY/ja 参数并接受已准入 `DL_DLC` 组合商品 ID，HK 使用固定 HK/HKD/zh 参数并只接受本区 `titles/aocs/bundles` 商品 ID，US、MX、BR 维持本区页面结构化数据。仅当响应的地区、货币、可用价格 ID 与地区商品映射相符，且关联商品身份已在添加流程确认时，才保存并标记为官方来源。单一区域的 URL、商品 ID 或价格 ID 规则不得复用于其他地区。
-3. 官方失败时，按管理员设置的第三方优先级逐个尝试；成功则保存第三方来源和站点名。
-4. 全部失败时不覆盖最近成功快照，写入失败日志并在读取模型中标为过期。
-5. 通过内置汇率服务每日读取一次中间汇率，并记录来源与更新时间；将该汇率和美区税务口径关联到价格快照。
-6. 当日汇率读取失败时，复用最近一次成功汇率并在读取模型和日报中标记汇率过期，不中断价格日报。
-7. 手动刷新临时不执行 15 分钟冷却：已认证请求无条件更新单行最近刷新时间并在当前请求同步运行采集器；六小时 Node 调度不读取或消费该记录。恢复服务端限流需另行确认，不能依赖前端按钮状态。
+以下命令只使用 `docker-compose.dev.yml` 的 tmpfs 一次性 PostgreSQL 和回环 `54329`，不会连接 NAS 或项目现有数据库：
 
-### 3.3 通知
+```bash
+docker compose -f docker-compose.dev.yml up -d postgres
+docker compose -f docker-compose.dev.yml ps postgres
+DATABASE_URL=postgres://switch_test:switch_test@127.0.0.1:54329/switch_test \
+  COOKIE_SECURE=false npm run dev
+```
 
-1. 比较本次官方快照与上一条官方成功快照。
-2. 仅官方降价可触发即时通知；将同轮变化聚合成一条 Telegram 消息。
-3. 目标价按“单区当地货币优先、全局人民币其次”判定。
-4. 日报服务由 Node UTC 时钟每分钟触发，并在专用 PostgreSQL 非阻塞 advisory lock 内按管理员保存的 IANA 时区与播报时间精确判断是否汇总全部订阅；格式化层将每款商品的当前价格、全监控区历史最低价及各地区历史最低当地货币价格转为简体中文，并在超长时按 Telegram 限制分页。发送边界按页顺序投递，且只回传安全状态码、不保存 Telegram 原始错误或凭据；Node 仅在运行时同时存在 Telegram Token 与 Chat ID 时才读取价格并发送。
-5. 同一每分钟锁内任务还会独立读取 `pending` 即时通知事件：每条消息仅携带关联游戏名与地区标签，不暴露内部商品标识；Telegram 确认成功后才安全更新为 `delivered`，网络或服务端失败则保留 `pending` 供下一分钟重试。日报与 pending 两条路径收到同一个捕获的 UTC ISO，任一路径异常只生成任务种类与计划时刻组成的安全失败事件。采集执行器及异常的最近成功时间、连续次数和安全错误摘要仍待接入消息内容。
-6. 目标价状态按“未命中 / 已命中”保存；仅从未命中转换为已命中时通知，价格恢复到目标之上后重置为未命中。
+测试使用同一受守卫 URL：
 
-### 3.4 认证与配置
+```bash
+TEST_DATABASE_URL=postgres://switch_test:switch_test@127.0.0.1:54329/switch_test \
+  npx vitest run
+```
 
-- 仅在首次无管理员记录时开放初始化。初始化同时设置管理员密码、至少一个初始监控地区，并从已选地区中指定默认搜索区。
-- 默认搜索区必须属于当前已启用地区集合。后续设置变更不得影响既有订阅的监控地区。
-- 密码使用安全哈希；会话使用 HttpOnly、Secure Cookie。
-- 密码连续输错 5 次后临时锁定 15 分钟；成功登录或锁定期结束后清空失败计数。
-- 恢复码以不可逆校验值保存，并在成功重设密码后永久失效；重设会撤销所有已签发的会话。单设备退出只撤销其 Cookie 对应的会话。
-- NAS 迁移中的认证服务只依赖平台中立 `AuthRepository`：首次凭据与初始设置在一个 PostgreSQL 事务中写入，密码恢复则在一个事务内同时更新密码派生值、消费恢复码、撤销全部会话并清空失败计数。会话原始 Cookie 既不作为主键也不持久化，只保存独立随机 ID 与 SHA-256 摘要；并发首次初始化由数据库唯一约束转换为固定冲突响应。
-- 订阅新建、已有地区补全、目标价/地区替换与永久删除使用显式 PostgreSQL transaction 回调，事务内每条 SQL 只能使用回调提供的受限执行器。规范化游戏唯一索引负责并发最终裁决；批量删除在第一条写入前锁定并验证全部 ID，任一缺失或中途故障均保持所有业务表不变。
-- HTTP 路由只接收认证会话读取器和业务服务，不持有数据库绑定。Cookie 的 `Secure` 策略由可信部署入口显式配置，禁止依据客户端可伪造的转发请求头推断；现有 Worker 入口仅在迁移兼容期显式装配旧 D1 适配器。
-- Cloudflare Secret 优先于设置页保存的 Telegram 配置；任一密钥均不得被 API 回显。
+停止开发数据库使用 `docker compose -f docker-compose.dev.yml down`；tmpfs 数据不可恢复，不能存放需要保留的调试资料。
 
-### 3.5 前端结构
-
-- 桌面端采用左侧固定导航。
-- 仪表盘采用概览优先布局：显示全部订阅的五区当前价、跨区历史最低价、采集/日报状态与手动刷新；点击整张商品卡进入单页订阅详情。
-- 订阅详情集中展示五区价格、按地区筛选的价格趋势及各区历史最低价，并可安全编辑订阅启用状态、已确认地区商品范围和目标价。新增尚未确认的地区必须回到官方商品确认流程，不能由详情页直接写入。
-- 仪表盘与详情的读取模型只来自 Worker 的受保护同源 API；浏览器不重新计算官方性、汇率或最低价，也不直接访问商店、汇率服务或 Telegram。
-- 添加订阅为完整页面；独立全局历史页和设置页将在对应功能实施时接入导航。
-- 价格 UI 必须展示原始货币、人民币估算、数据来源及采集/过期状态。
-- 主题为管理员设置项，初始值为 `warm-card`（温暖游戏库），可切换为 `calm-dark`（沉稳深色）或 `clean-light`（清爽工具）。主题通过 CSS 变量实现，避免影响价格数据和业务逻辑。
-
-### 3.6 数据导出
-
-- 导出 API 仅接受已认证管理员会话，按导出类型生成 CSV 响应。
-- 支持的导出类型为订阅配置、价格历史与采集日志。
-- 导出查询采用分页/流式处理策略，避免大量历史数据造成 Worker 内存压力。
-- 导出 DTO 必须显式排除所有认证和第三方通信密钥字段。
-
-### 3.7 采集异常状态
-
-- 每个地区商品维护连续采集失败计数、最近成功时间和异常通知状态。
-- 任一来源成功后，将连续失败计数清零；若此前已发出异常通知，则追加发送恢复通知。
-- 连续失败计数达到 3 时发送一次 Telegram 异常通知，并将该轮标记为已通知，避免后续每轮重复提醒。
-- 超时、HTTP 错误、解析失败和商品校验失败均应写入采集日志；日志对外仅显示安全的错误摘要。
-
-## 5. 可靠性与安全约束
-
-- 每个外部来源请求均设置超时。网络类临时失败最多重试一次，再按来源优先级继续回退。
-- 采集器在写入前校验商品标题、发行商、商品类型及可用的关联信息；任一关键校验不匹配即视为采集失败。
-- 官方价格 ID 是地区绑定的公开商品标识，不能跨区复用；未确认、未找到或响应不匹配均必须回退，而不能猜测价格或复用其他地区 ID。
-- 密码使用安全哈希保存；会话 Cookie 使用 `HttpOnly`、`Secure` 和适当的 `SameSite` 属性。
-- 登录端点实施限流和连续失败后的临时锁定。恢复码仅保存不可逆校验值。
-- 日志不保存或暴露密码、会话令牌、Telegram 凭据或完整第三方响应；仅保存可诊断的安全摘要。
-
-## 4. 定时调度约束
-
-- Node 时钟递归对齐下一 UTC 分钟与 UTC 00/06/12/18 点，回调使用预先捕获的目标 epoch，不读取本地时区，也不用 `setInterval` 累积漂移。
-- 每分钟与每六小时任务使用两个固定、不同的 PostgreSQL signed bigint advisory lock key。`pg_try_advisory_lock` 未取得时立即跳过本轮，不等待、不排队，也不在锁释放后补跑。
-- 每分钟锁内任务并发启动日报判断与待发送通知，两条路径共享同一 UTC ISO；每六小时锁内任务只调用一次既有组合服务，由其先执行价格历史/九十天采集日志保留清理，再运行一次与手动刷新共享的真实采集器。
-- 任务 promise 全部由调度器追踪；数据库、Telegram、价格来源或安全记录出口异常均不得形成未处理 rejection。安全失败记录只包含任务种类与已捕获计划时刻，不包含 Error、URL、价格正文、Telegram 响应或凭据。
-- `stop()` 后不再接收新工作；`waitForIdle()` 只观察已接收任务且不强制取消事务。进程关停时 HTTP 与调度任务共享一个宽限总预算，超过上限后由下一轮既有幂等和 pending 状态规则恢复。
-
-## 5. PostgreSQL 备份与空库恢复
-
-NAS 宿主使用 `scripts/backup-postgres.sh` 和 `scripts/restore-postgres.sh`，每次均显式传入 Compose 文件、project 名、应用/数据库服务、数据库、项目根、备份目录、保留数与归档路径。脚本在 postgres:17 容器内使用同主版本客户端，密码仅留在容器环境；备份先流入受限同目录临时文件、校验 custom archive 后原子改名，且只保留当前安全数据库标识归档。恢复拒绝任何非 exited/dead 的 app 状态、非普通 app owner、目录外归档和 `--clean`；空库探针覆盖用户 schema、关系、例程、类型、collation、文本搜索、运算符、publication、large object、扩展、默认权限、外部数据及其他可恢复 catalog 对象。
-备份以每库原子目录锁和 18 位单调 sequence 排序，保留数限制 1..10000；恢复以独立锁、`--single-transaction` 和两次 app 全状态复核阻止并发。一次性 app 镜像读取精确迁移 manifest 并逐字校验账本，认证状态仅允许 0 行或唯一 id=1；若 checksum、核心表或管理员 post-validation 失败，脚本只在同一锁内、再次确认 app 停止后事务性清理显式目标库内的 extension、event trigger、publication、foreign server/wrapper、large object、language 与用户 schema。该 typed cleanup 禁止使用会撤销其他数据库、表空间或配置参数授权的角色级清理命令；清理后必须由同一 catalog 探针重新证明空库，才能允许直接用合法归档重试。
+部署步骤见 [群晖 DS423+ 部署](../deployment/synology-ds423-plus.md)、[Docker Hub 发布](../deployment/docker-hub-release.md)和 [PostgreSQL 备份恢复](../deployment/postgres-backup-restore.md)。

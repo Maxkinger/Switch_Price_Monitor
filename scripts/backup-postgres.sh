@@ -7,7 +7,7 @@ umask 077
 
 usage() {
   # 固定用法不回显任何环境变量；数据库和应用密码始终只在 postgres 容器环境内被 pg_dump 读取。
-  printf '%s\n' 'usage: backup-postgres.sh --compose-file ABSOLUTE --project-name NAME --database-service NAME --database NAME --project-root ABSOLUTE --backup-dir ABSOLUTE --retention POSITIVE_INTEGER' >&2
+  printf '%s\n' 'usage: backup-postgres.sh --compose-file ABSOLUTE --env-file ABSOLUTE --project-name NAME --database-service NAME --database NAME --project-root ABSOLUTE --backup-dir ABSOLUTE --retention POSITIVE_INTEGER' >&2
 }
 
 die() {
@@ -40,6 +40,7 @@ increment_sequence() {
 }
 
 compose_file=''
+env_file=''
 project_name=''
 database_service=''
 database_name=''
@@ -49,10 +50,11 @@ retention=''
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --compose-file|--project-name|--database-service|--database|--project-root|--backup-dir|--retention)
+    --compose-file|--env-file|--project-name|--database-service|--database|--project-root|--backup-dir|--retention)
       require_value "$1" "${2-}"
       case "$1" in
         --compose-file) compose_file="$2" ;;
+        --env-file) env_file="$2" ;;
         --project-name) project_name="$2" ;;
         --database-service) database_service="$2" ;;
         --database) database_name="$2" ;;
@@ -67,20 +69,25 @@ while [[ $# -gt 0 ]]; do
 done
 
 # 所有路径先要求绝对形式再 canonicalize 既有对象；符号链接、.. 和相对路径都不能绕过项目目录边界。
-[[ "$compose_file" == /* && "$project_root" == /* && "$backup_dir" == /* ]] || die '路径必须为绝对路径'
+[[ "$compose_file" == /* && "$env_file" == /* && "$project_root" == /* && "$backup_dir" == /* ]] || die '路径必须为绝对路径'
 [[ "$project_name" =~ ^[a-z0-9][a-z0-9_-]{0,62}$ ]] || die 'Compose project 名不合法'
 [[ "$database_service" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$ ]] || die '数据库服务名不合法'
 [[ "$database_name" =~ ^[a-z_][a-z0-9_]{0,62}$ ]] || die '数据库名不合法'
 [[ "$retention" =~ ^[1-9][0-9]*$ && ( ${#retention} -lt 5 || ( ${#retention} -eq 5 && "$retention" < 10001 ) ) ]] || die '保留份数必须为 1..10000'
 
 compose_file="$(canonical_existing_path "$compose_file")" || die 'Compose 文件不存在'
+env_file="$(canonical_existing_path "$env_file")" || die 'Compose env 文件不存在'
 project_root="$(canonical_existing_path "$project_root")" || die '项目根目录不存在'
 backup_dir="$(canonical_existing_path "$backup_dir")" || die '备份目录不存在'
-[[ -f "$compose_file" && -d "$project_root" && -d "$backup_dir" ]] || die '路径类型不符合要求'
+[[ -f "$compose_file" && -f "$env_file" && -d "$project_root" && -d "$backup_dir" ]] || die '路径类型不符合要求'
 [[ "$project_root" != / && "$backup_dir" != / && "$backup_dir" != "$project_root" && "$backup_dir" == "$project_root"/* ]] || die '备份目录必须是项目根目录的严格子目录'
 
-# 先让 Compose 解析显式文件和 project；失败时还没有创建临时归档或改动任何旧备份。
-docker compose -f "$compose_file" -p "$project_name" config -q >/dev/null 2>&1 || die 'Compose 配置无效'
+# 所有 Compose 子命令都显式携带同一绝对 env 文件；DSM 计划任务无论从哪个 cwd 启动都不能退回自动发现 `.env`。
+# 函数只转发固定前缀和本脚本已校验的参数，不打印展开后的数据库或 Telegram 秘密。
+compose() { docker compose --env-file "$env_file" -f "$compose_file" -p "$project_name" "$@"; }
+
+# 先让 Compose 解析显式文件、env 和 project；失败时还没有创建临时归档或改动任何旧备份。
+compose config -q >/dev/null 2>&1 || die 'Compose 配置无效'
 
 # mkdir 是同一文件系统上的原子互斥原语；同一数据库的两个备份绝不能并发计算相同 sequence 或交叉删除归档。
 lock_directory="$backup_dir/.switch-price-monitor-backup-$database_name.lock"
@@ -102,7 +109,7 @@ error_file="$(mktemp "$backup_dir/.switch-price-monitor-backup-error.XXXXXXXX")"
 
 # 归档字节经 stdout 直接流到同目录临时文件；pg_dump 与服务器同在 postgres:17 容器，主机无需安装客户端。
 # PGPASSWORD 只在容器内 pg_dump 子进程环境存在，不作为 host 参数、日志或归档内容的一部分。
-if ! docker compose -f "$compose_file" -p "$project_name" exec -T "$database_service" sh -ceu '
+if ! compose exec -T "$database_service" sh -ceu '
   exec env PGPASSWORD="$APP_DATABASE_PASSWORD" pg_dump \
     --format=custom --compress=9 --no-owner --no-acl \
     --host="$1" --username="$APP_DATABASE_USER" --dbname="$2"
@@ -111,7 +118,7 @@ if ! docker compose -f "$compose_file" -p "$project_name" exec -T "$database_ser
 fi
 
 # 在同一 PostgreSQL 17 容器内验证 custom archive；远端临时文件由 trap 精确清理，避免把未验证字节改名为成功备份。
-if ! cat -- "$temporary_file" | docker compose -f "$compose_file" -p "$project_name" exec -T "$database_service" sh -ceu '
+if ! cat -- "$temporary_file" | compose exec -T "$database_service" sh -ceu '
   archive="$(mktemp /tmp/switch-price-monitor-backup.XXXXXXXX)"
   trap "rm -f -- \"$archive\"" EXIT
   cat >"$archive"

@@ -6,15 +6,15 @@ const officialAlgoliaSearchEndpoint = "https://U3B6GR4UA3-dsn.algolia.net/1/inde
 
 /**
  * 此值来自任天堂美区公开搜索页面的浏览器配置，属于公开检索配置而非本系统或用户的秘密。
- * 它只允许在 Worker 内请求官网同一公开索引，绝不返回浏览器、写入 D1、记录日志或用于任何第三方价格站。
+ * 它只允许 Node 服务请求官网同一公开索引，绝不返回浏览器、写入 PostgreSQL、记录日志或用于任何第三方价格站。
  */
-const officialAlgoliaPublicSearchKey = "a29c6927638bfd8cee23993e51e721c9";
+const officialAlgoliaPublicSearchKey = "a29c6927638bfd8cee23993e51e721c9"; // gitleaks:allow：仅放行任天堂官网页面公开的只读搜索配置；不得用于真实凭据、其他文件或整条规则豁免。
 
 /** 同一公开搜索端点下，只有这三个任天堂官网游戏索引已逐项验证；未知地区不能猜测索引或复用相邻地区结果。 */
 type OfficialAlgoliaRegionCode = Extract<RegionCode, "US" | "MX" | "BR">;
 
 /**
- * 每个地区档案把公开索引、币种与官方 URL 前缀绑定在 Worker 源码中。
+ * 每个地区档案把公开索引、币种与官方 URL 前缀绑定在服务端源码中。
  * 这是地区隔离边界：浏览器只能提交搜索词，不能改变索引、币种或把一个地区的商品地址伪装成另一区商品。
  */
 interface OfficialAlgoliaSearchProfile {
@@ -31,7 +31,7 @@ const officialAlgoliaProfiles: readonly OfficialAlgoliaSearchProfile[] = [
   { regionCode: "BR", gameIndex: "store_game_pt_br", currency: "BRL", officialPathPrefix: "/pt-br/" },
 ];
 
-/** 所有 Algolia 命中都只允许补齐到任天堂官网主机，禁止外部索引字段诱导 Worker 访问第三方地址。 */
+/** 所有 Algolia 命中都只允许补齐到任天堂官网主机，禁止外部索引字段诱导 Node 服务访问第三方地址。 */
 const officialNintendoStoreOrigin = "https://www.nintendo.com";
 
 /** 香港官网搜索为 Next/RSC 页面；请求只携带关键词，返回的 NSUID 仍须转换并验证为 eShop 官方商品页。 */
@@ -90,7 +90,7 @@ async function searchOfficialHongKong(
   timeoutMs: number,
 ): Promise<OfficialSearchResult> {
   const softwareCandidates = await searchOfficialHongKongSoftware(fetchOfficialSearch, query, signal, timeoutMs);
-  // Magento 商城搜索会拒绝 Cloudflare Worker，名称检索只依赖可用的香港普通官网；组合商品将在已验证本体详情的一层官方关系中补齐。
+  // 迁移前 Cloudflare Worker 探测曾被 Magento 商城搜索拒绝；当前 Node 路径仍保守地只依赖已验证的香港普通官网，组合商品在本体详情的一层官方关系中补齐。
   return softwareCandidates === null ? unavailableSearch() : { status: "available", candidates: softwareCandidates };
 }
 
@@ -384,7 +384,7 @@ function toOfficialAlgoliaCandidate(value: unknown, profile: OfficialAlgoliaSear
 
 /**
  * 只接受地区档案对应的 Nintendo 商店链接。相对链接会补齐固定官网主机，绝对链接则必须精确匹配主机与该区路径前缀，
- * 防止搜索索引的错误字段把外部页面带入下一阶段的 Worker 解析请求。
+ * 防止搜索索引的错误字段把外部页面带入下一阶段的服务端解析请求。
  */
 function readOfficialAlgoliaProductUrl(value: unknown, profile: OfficialAlgoliaSearchProfile): string | null {
   if (typeof value !== "string" || !value.trim()) return null;

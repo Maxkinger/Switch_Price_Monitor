@@ -45,7 +45,7 @@ export type RegionalProductMatchSource = (typeof regionalProductMatchSources)[nu
 
 /**
  * 最终确认的一个地区商品。候选的身份、封面与价格仍是瞬时公开数据，`matchSource` 只记录映射形成方式，
- * 不能携带浏览器自行填写的官方价格 ID；价格 ID 必须由 Worker 在写入前重新验证。
+ * 不能携带浏览器自行填写的官方价格 ID；价格 ID 必须由同源服务端在写入前重新验证。
  */
 export interface ConfirmedRegionalProduct extends OfficialProductCandidate {
   matchSource: RegionalProductMatchSource;
@@ -53,14 +53,14 @@ export interface ConfirmedRegionalProduct extends OfficialProductCandidate {
 
 /**
  * 一次批量提交中的一个逻辑游戏及其全部已选地区。`selected` 是默认区的起点，`regions` 必须包含各自已验证的映射，
- * Worker 会重新读取每个官方链接而不是信任浏览器的标题、发行商、币种或价格。
+ * Node 服务会重新读取每个官方链接，而不是信任浏览器的标题、发行商、币种或价格。
  */
 export interface ConfirmedSubscriptionInput {
   selected: OfficialProductCandidate;
   regions: ConfirmedRegionalProduct[];
   /**
    * 管理员明确不监控的已启用地区。空数组表示所有启用地区均已有官方确认映射；
-   * 该字段不能替代任意候选，Worker 仍会用保存的设置检查覆盖范围，防止旧页面静默创建仅默认区订阅。
+   * 该字段不能替代任意候选，服务端仍会用保存的设置检查覆盖范围，防止旧页面静默创建仅默认区订阅。
    */
   skippedRegionCodes: RegionCode[];
 }
@@ -81,7 +81,7 @@ export type OfficialSearchResult =
   | { status: "unavailable"; message: "该区官方搜索暂不可用，请粘贴任天堂官方商品链接。" };
 
 /**
- * 官方名称检索的最小可注入契约。调用方必须传入地区和取消信号，适配器不能自行扩区或让悬挂外部请求耗尽 Worker 运行时间。
+ * 官方名称检索的最小可注入契约。调用方必须传入地区和取消信号，适配器不能自行扩区或让悬挂外部请求占用 Node 进程资源。
  */
 export interface OfficialProductSearch {
   search(regionCode: RegionCode, query: string, signal: AbortSignal): Promise<OfficialSearchResult>;

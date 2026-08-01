@@ -8,7 +8,7 @@ export type ProductType = "game" | "upgrade-pack" | "dlc" | "season-pass" | "bun
 
 /**
  * 已确认的单个地区商品。该模型只含采集所需的公开身份信息，
- * 不携带 Cookie、商店账户或任何访问令牌，确保来源请求可由无状态 Worker 安全执行。
+ * 不携带 Cookie、商店账户或任何访问令牌，确保来源请求可由无状态 Node 适配器安全执行。
  */
 export interface RegionalProduct {
   id: string;
@@ -45,7 +45,7 @@ export interface ProviderResult {
 }
 
 /**
- * 具体来源适配器的统一契约。适配器必须尊重 signal，才能在 Worker 的 15 秒上限后真正中止外部请求，
+ * 具体来源适配器的统一契约。适配器必须尊重 signal，才能在来源链的 15 秒上限后真正中止外部请求，
  * 而不是让悬挂连接继续消耗运行时间；返回 null 表示页面可访问但未找到可验证价格。
  */
 export interface PriceProvider {

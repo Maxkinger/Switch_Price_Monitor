@@ -435,7 +435,7 @@ git push origin codex/nas-docker-postgresql
 把 `docs/README.md` 中新设计规格状态改为：
 
 ```markdown
-| [PostgreSQL 登录失败状态并发竞态修复设计规格](superpowers/specs/2026-07-30-postgres-login-attempt-upsert-race-design.md) | 用单条原子 upsert 消除成功登录删除状态与并发登录锁定读取之间的缺行窗口 | 已实施并通过确定性 PostgreSQL 回归 |
+| [PostgreSQL 登录失败状态并发竞态修复设计规格](../specs/2026-07-30-postgres-login-attempt-upsert-race-design.md) | 用单条原子 upsert 消除成功登录删除状态与并发登录锁定读取之间的缺行窗口 | 已实施并通过确定性 PostgreSQL 回归 |
 ```
 
 在 `docs/quality/quality-and-acceptance.md` 的 Task 10 验收之后增加：

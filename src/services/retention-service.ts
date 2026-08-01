@@ -4,7 +4,7 @@ import type { AppSettings } from "../shared/domain";
 const fetchLogRetentionDays = 90;
 
 /**
- * 保留服务依赖的最小持久化能力。通过窄接口隔离 D1 实现，
+ * 保留服务依赖的最小持久化能力。通过窄接口隔离 PostgreSQL 实现，
  * 让策略层只能请求受控的截止时间删除，不能读取或暴露不必要的历史价格内容。
  */
 export interface RetentionStore {
@@ -46,7 +46,7 @@ export class RetentionService {
 
   /**
    * 在单个调度周期内执行两类清理并返回可审计计数。永久价格策略只跳过快照删除，
-   * 绝不跳过日志删除；所有截止时间由纯函数生成，确保不同 Worker 节点使用相同 UTC 边界。
+   * 绝不跳过日志删除；所有截止时间由纯函数生成，确保 Node 进程重启或多副本执行仍使用相同 UTC 边界。
    */
   public async cleanup(now: string, policy: AppSettings["priceHistoryRetention"]): Promise<RetentionCleanupResult> {
     const priceCutoff = priceRetentionCutoff(now, policy);

@@ -8,7 +8,7 @@ export interface JapaneseUpgradeRootCandidate {
 }
 
 /**
- * 日区升级根商品的最小可注入检索契约。调用者必须提供取消信号，避免外部公开搜索在 Worker 请求结束后继续占用资源。
+ * 日区升级根商品的最小可注入检索契约。调用者必须提供取消信号，避免外部公开搜索在 Node 请求结束后继续占用资源。
  */
 export interface JapaneseUpgradeRootSearch {
   search(anchor: OfficialProductCandidate, signal: AbortSignal): Promise<JapaneseUpgradeRootCandidate | null>;
@@ -21,7 +21,7 @@ const officialJapaneseSearchEndpoint = "https://search.nintendo.jp/nintendo_soft
 const officialJapaneseStoreSoftwarePrefix = "https://store-jp.nintendo.com/item/software/D";
 
 /**
- * 创建只读的日区升级本体查找器。它不使用 Browser Run、D1 或第三方站点；只有唯一同时满足下载版、升级标记与跨语言身份的官方项目才返回。
+ * 创建只读的日区升级本体查找器。它不启动本地浏览器、不写 PostgreSQL，也不访问第三方站点；只有唯一同时满足下载版、升级标记与跨语言身份的官方项目才返回。
  * 多条完整命中故意返回 null，而不是按 API 顺序选择，防止同发行商同系列的不同版本被自动保存为错误关系。
  */
 export function createOfficialJapaneseUpgradeRootSearch(fetchSearch: typeof fetch = fetch): JapaneseUpgradeRootSearch {
@@ -111,7 +111,7 @@ function hasMatchingRootIdentity(anchor: OfficialProductCandidate, root: Japanes
 
 /**
  * 发行商文本只为身份比较而规范化，不修改展示或持久化的官方名称。保留普通标点而只去掉商标符号，
- * 并用与运行地区无关的 Unicode 小写规则，避免不同 Worker locale 把相同发行商判成不同身份。
+ * 并用与运行地区无关的 Unicode 小写规则，避免不同 Node locale 把相同发行商判成不同身份。
  */
 function normalizePublisher(value: string): string {
   return value.normalize("NFKC").toLowerCase().replace(/[®™℠]/gu, "").trim().replace(/\s+/gu, " ");

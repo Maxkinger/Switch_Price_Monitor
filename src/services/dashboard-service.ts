@@ -53,7 +53,7 @@ export interface DashboardOverview {
 
 /**
  * 仪表盘服务只依赖返回平台中立 DTO 的窄 reader。
- * SQL、pg 行、D1 API 与敏感列白名单均留在仓储实现，服务保持现有公共方法供路由和日报调用。
+ * SQL、pg 行、驱动 API 与敏感列白名单均留在仓储实现，服务保持现有公共方法供路由和日报调用。
  */
 export class DashboardService {
   public constructor(private readonly dashboard: DashboardReader) {}

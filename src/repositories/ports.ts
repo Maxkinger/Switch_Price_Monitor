@@ -1,30 +1,21 @@
-import type { RateResult, RegionalProduct } from "../providers/types";
+import type { ProductType, RateResult, RegionalProduct } from "../providers/types";
 import type {
   AppSettings,
   HistoricalLow,
   InitialSettings,
+  OfficialProductCandidate,
+  RegionalProductMatchSource,
+  RegionCode,
   SubscriptionInput,
   SubscriptionRecord,
 } from "../shared/domain";
-import type {
-  ExistingSubscriptionConfirmation,
-  ExistingSubscriptionRegionCompletion,
-  ValidatedConfirmedRegion,
-  ValidatedSubscriptionConfirmation,
-} from "./subscription-confirmation-repository";
-import type { ManualRefreshRequestResult } from "./manual-refresh-repository";
 import type { DashboardOverview } from "../services/dashboard-service";
 import type { ProductHealthState } from "../services/price-rules";
-import type { SubscriptionDetail } from "./subscription-detail-repository";
-import type {
-  NotificationEventReservation,
-  PendingNotificationEvent,
-} from "./notification-event-repository";
 
 /**
  * PostgreSQL 迁移期间供服务层使用的窄仓储端口。
- * 这些接口只暴露消费者实际需要的领域 DTO，不包含 pg 类型、SQL、数据库行或 D1 API，
- * 以便 Node 与临时 Worker 兼容装配共享同一业务服务而不共享持久化细节。
+ * 这些接口只暴露消费者实际需要的领域 DTO，不包含 pg 类型、SQL、数据库行或驱动 API，
+ * 以便 Node 服务与内存测试替身共享同一业务服务而不共享持久化细节。
  */
 export interface SettingsReader {
   get(): Promise<AppSettings | null>;
@@ -32,7 +23,7 @@ export interface SettingsReader {
 
 /**
  * 设置写端口只允许完整替换已验证的公开偏好；单例 ID、认证列和未来 Telegram 秘密均不由服务传入。
- * Node/PostgreSQL 与迁移期 D1 适配器可共享 SettingsService，而无需把数据库类型带入业务层。
+ * PostgreSQL 适配器与内存测试替身可共享 SettingsService，而无需把数据库类型带入业务层。
  */
 export interface SettingsStore extends SettingsReader {
   save(settings: AppSettings, updatedAt: string): Promise<void>;
@@ -120,7 +111,7 @@ export type PasswordVerifier = (
 
 /**
  * 平台中立认证端口把安全规则留在 AuthService，只暴露最小认证状态和原子写命令。
- * 实现不得泄漏 pg 客户端、SQL 结果或 D1 API；初始化与密码恢复必须各自在单一事务中完成。
+ * 实现不得泄漏 pg 客户端、SQL 结果或驱动 API；初始化与密码恢复必须各自在单一事务中完成。
  */
 export interface AuthRepository {
   isInitialized(): Promise<boolean>;
@@ -159,14 +150,76 @@ export class AuthRecoveryRejectedError extends Error {
   }
 }
 
-/** 手动刷新只持久化最近请求时刻；临时无冷却规则仍由既有结果 DTO 明确表达。 */
+/**
+ * 平台中立的手动刷新结果只表达本次业务决定与时间边界，不包含数据库行、队列句柄或 SQL 状态。
+ * 临时无冷却阶段每次请求都会被接受，`nextAllowedAt` 等于本次时间；恢复冷却必须另行修改业务规则。
+ */
+export interface ManualRefreshRequestResult {
+  accepted: boolean;
+  requestedAt: string;
+  nextAllowedAt: string;
+}
+
+/** 手动刷新只持久化最近请求时刻；具体数据库适配器不能把驱动结果泄漏给调用服务。 */
 export interface ManualRefreshRequestStore {
   request(now: string): Promise<ManualRefreshRequestResult>;
 }
 
 /**
+ * 已有订阅查询只返回幂等确认所需的稳定业务标识；该 DTO 属于服务/仓储端口，
+ * 不包含 PostgreSQL 行别名、主键序列或驱动元数据，避免持久化实现污染确认流程。
+ */
+export interface ExistingSubscriptionConfirmation {
+  normalizedName: string;
+  gameId: string;
+  subscriptionId: string;
+}
+
+/**
+ * 单区确认写入只接受已经完成官方页面与价格 ID 复核的数据；原始网页响应和数据库类型不得进入端口。
+ * `id` 由服务端生成，地区、货币与来源仍受既有业务校验约束，浏览器不能覆盖内部实体归属。
+ */
+export interface ValidatedConfirmedRegion {
+  id: string;
+  regionCode: RegionCode;
+  currency: string;
+  officialPriceId: string | null;
+  productUrl: string;
+  matchSource: RegionalProductMatchSource;
+}
+
+/**
+ * 新订阅的原子写入 DTO 汇总游戏、订阅与已验证地区，供 PostgreSQL 实现和内存测试替身共享。
+ * 它只描述业务数据，不暴露 batch、transaction、SQL executor 或任一数据库的返回行。
+ */
+export interface ValidatedSubscriptionConfirmation {
+  game: {
+    id: string;
+    nameZh: string;
+    nameEn: string;
+    normalizedName: string;
+    publisher: string | null;
+    productType: ProductType;
+    coverUrl: string | null;
+  };
+  subscriptionId: string;
+  regions: ValidatedConfirmedRegion[];
+}
+
+/**
+ * 已有订阅补全 DTO 只携带受控官方锚点和当前地区覆盖；锚点仍须由服务重新复核，不能单独授权写入。
+ * 该端口模型不携带数据库查询对象、SQL 列名或旧价格快照，防止历史数据被误当成当前官方报价。
+ */
+export interface ExistingSubscriptionRegionCompletion {
+  subscriptionId: string;
+  gameId: string;
+  anchor: OfficialProductCandidate;
+  existingRegionCodes: RegionCode[];
+}
+
+/**
  * 订阅确认写端口覆盖规范化身份查询、新建原子批次和已有订阅地区补全。
- * 服务只依赖这些领域 DTO，不接触 D1 batch、PostgreSQL transaction 或任何驱动客户端。
+ * 服务只依赖这些领域 DTO，不接触 PostgreSQL transaction 或任何驱动客户端。
  */
 export interface SubscriptionConfirmationStore {
   findExistingByNormalizedNames(
@@ -238,6 +291,49 @@ export interface SubscriptionReader {
   findByGameId(gameId: string): Promise<SubscriptionRecord | null>;
 }
 
+/**
+ * 订阅详情价格快照沿用最小货币单位与人民币分；缺失人民币换算使用 null，不能伪造为零。
+ * 这是 HTTP 服务与仓储共享的平台中立 DTO，不包含数据库时间对象、SQL 来源行或驱动标识。
+ */
+export interface SubscriptionDetailPriceSnapshot {
+  amountMinor: number;
+  cnyFen: number | null;
+  source: string;
+  capturedAt: string;
+}
+
+/**
+ * 详情地区只公开受控地区商品、监控状态和展示所需价格；商品 URL、内部健康行和认证信息均不得泄漏。
+ * `isStale` 由仓储依照既有快照/连续失败规则计算，服务与浏览器不接触数据库原始布尔表示。
+ */
+export interface SubscriptionDetailRegion {
+  regionalProductId: string;
+  regionCode: string;
+  currency: string;
+  monitored: boolean;
+  current: SubscriptionDetailPriceSnapshot | null;
+  historicalLow: SubscriptionDetailPriceSnapshot | null;
+  isStale: boolean;
+}
+
+/**
+ * 脱敏订阅详情是服务/仓储端口的稳定读取模型，只包含管理员页面所需的业务字段。
+ * 会话、恢复码、Telegram 配置、原始来源响应以及数据库错误或行类型均禁止进入该 DTO。
+ */
+export interface SubscriptionDetail {
+  subscriptionId: string;
+  game: {
+    id: string;
+    nameZh: string;
+    nameEn: string;
+    productType: string;
+  };
+  enabled: boolean;
+  globalTargetCnyFen: number | null;
+  regionTargets: Array<{ regionCode: string; targetAmountMinor: number }>;
+  regions: SubscriptionDetailRegion[];
+}
+
 /** 详情服务只读取一个已经脱敏的订阅 DTO，缺失语义由服务转换为业务 404。 */
 export interface SubscriptionDetailReader {
   find(subscriptionId: string): Promise<SubscriptionDetail | null>;
@@ -252,6 +348,30 @@ export interface ProductHealthStore {
     lastSuccessAt: string | null,
     updatedAt: string,
   ): Promise<void>;
+}
+
+/**
+ * 通知预留命令只包含去重资格所需业务字段；消息正文、Token、Chat ID 与任意数据库状态都不能由调用方传入。
+ * 事件类型是封闭联合，PostgreSQL 适配器与内存测试替身必须以同一端口语义执行唯一键预留。
+ */
+export interface NotificationEventReservation {
+  regionalProductId: string | null;
+  eventType: "collection-failure" | "collection-recovered" | "official-price-drop" | "target-price";
+  dedupeKey: string;
+  createdAt: string;
+}
+
+/**
+ * 待发送事件仅公开格式化与确认投递所需字段；关联商品删除后游戏名和地区可为空，发送器必须安全降级。
+ * 自增主键、数据库行状态和未来审计列保持在适配器内部，不能泄漏给调度服务或 Telegram 边界。
+ */
+export interface PendingNotificationEvent {
+  regionalProductId: string | null;
+  eventType: NotificationEventReservation["eventType"];
+  dedupeKey: string;
+  createdAt: string;
+  gameNameZh: string | null;
+  regionCode: string | null;
 }
 
 /** 通知事件端口保留数据库唯一键预留、成功确认与待发送读取三项能力。 */

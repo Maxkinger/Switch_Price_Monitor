@@ -5,7 +5,7 @@ import type { OfficialPriceIdCandidate, OfficialPriceIdResolution } from "../src
 
 /**
  * 预览服务测试仅注入地区 ID 解析结果，隔离“给管理员什么提示”的业务规则；
- * 它不请求任天堂、第三方站点或 D1，保证创建前比较候选的操作无外部副作用。
+ * 它不请求任天堂、第三方站点或 PostgreSQL，保证创建前比较候选的操作无外部副作用。
  */
 describe("SubscriptionPreviewService", () => {
   const jpCandidate = candidate("JP", "JPY");

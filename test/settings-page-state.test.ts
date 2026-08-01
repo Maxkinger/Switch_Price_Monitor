@@ -11,7 +11,7 @@ import { applySettingsRequestFailure } from "../src/app/settings-page-state";
  */
 describe("settings page request state", () => {
   it("keeps the public settings draft after a 422 and drops it after a 401", () => {
-    // Worker 对时间等跨字段规则有最终决定权；422 需要保留草稿供修正，401 则不能保留任何受保护页面数据。
+    // 同源设置 API 对时间等跨字段规则有最终决定权；422 需要保留草稿供修正，401 则不能保留任何受保护页面数据。
     const draft = createSettingsForm(settings({ dailyReportTime: "25:99" }));
 
     expect(applySettingsRequestFailure(draft, new SettingsApiError("日报时间无效。", 422)))
@@ -22,7 +22,7 @@ describe("settings page request state", () => {
 
 /**
  * 完整公开设置夹具刻意不含 Telegram、密码或会话字段，符合本阶段的安全范围。
- * 地区数组保持可变类型，模拟 D1/API 反序列化后的真实领域数据，避免只读测试常量掩盖赋值边界。
+ * 地区数组保持可变类型，模拟 PostgreSQL/API 反序列化后的真实领域数据，避免只读测试常量掩盖赋值边界。
  */
 function settings(overrides: Partial<AppSettings> = {}): AppSettings {
   return {

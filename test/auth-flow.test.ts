@@ -12,7 +12,7 @@ import {
 } from "../src/app/auth-flow";
 
 /**
- * 认证状态机测试不依赖 React、浏览器存储或 Worker。它锁定地区选择约束和敏感值清除时机，
+ * 认证状态机测试不依赖 React、浏览器存储或 Node HTTP 服务。它锁定地区选择约束和敏感值清除时机，
  * 防止界面调整后把一次性恢复码、设置密码或失效会话前的向导信息留在内存状态中。
  */
 describe("authentication flow state", () => {

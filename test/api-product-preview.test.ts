@@ -1,20 +1,25 @@
-import { env } from "cloudflare:test";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import worker, { type Env } from "../src/worker";
 import { handleProductRoute } from "../src/routes/product-routes";
-import { D1AuthRepository } from "../src/repositories/auth-repository";
+import type { AppDatabase } from "../src/server/database/types";
 import { AuthService } from "../src/services/auth-service";
 import { SubscriptionPreviewService } from "../src/services/subscription-preview-service";
+import { createApiTestDatabase, createTestAuth, initializeAndLogin as initializeAdmin, resetApiTestData } from "./support/api-postgres";
+
+// 预览只读断言与认证 helper 共享一次性 PostgreSQL；所有任天堂解析都由 fixedPreview 截断，不会联网。
+let database: AppDatabase;
 
 /**
  * 商品来源预览路由测试通过真实管理员会话验证授权边界，但向预览服务注入内存解析器。
  * 这样既覆盖 HTTP 输入收窄，也确保测试不会向任天堂发请求或因预览操作插入任何业务记录。
  */
 describe("product source preview HTTP route", () => {
+  beforeAll(async () => { database = await createApiTestDatabase(); });
+  afterAll(async () => { await database.close(); });
+
   beforeEach(async () => {
-    // 预览必须是只读操作；清空相关表后可以精确验证它不会创建游戏、地区商品或订阅。
-    await env.DB.exec("DELETE FROM subscription_regions; DELETE FROM subscriptions; DELETE FROM regional_products; DELETE FROM games; DELETE FROM sessions; DELETE FROM login_attempts; DELETE FROM admin_credentials; DELETE FROM settings;");
+    // 预览必须是只读操作；清空一次性库后可以精确验证它不会创建游戏、地区商品或订阅。
+    await resetApiTestData(database);
   });
 
   it("rejects anonymous access and returns source previews to a signed-in administrator without persisting candidates", async () => {
@@ -52,9 +57,9 @@ function fixedPreview(): SubscriptionPreviewService {
   }, ["eshop-prices", "nt-deals"]);
 }
 
-/** 路由测试显式装配 D1 兼容认证适配器，生产路由不再运行时猜测数据库对象。 */
+/** 路由测试显式装配 PostgreSQL 认证适配器，Cookie 仍由真实 PBKDF2 登录流程签发。 */
 function sessions(): AuthService {
-  return new AuthService(new D1AuthRepository(env.DB));
+  return createTestAuth(database);
 }
 
 /** 日区候选使用已确认的官方链接；路由仍会验证 HTTPS、标题、发行商、商品类型和地区代码。 */
@@ -85,41 +90,20 @@ function request(candidates: unknown[], cookie?: string): Request {
 
 /** 首次初始化与登录产生真实安全 Cookie，让预览路由与其他管理员 API 使用同一认证守卫。 */
 async function initializeAndLogin(): Promise<string> {
-  const initialized = await worker.fetch!(requestToWorker("/api/auth/initialize", {
-    password: "correct-horse-battery-staple",
-    enabledRegions: ["JP", "HK"],
-    defaultSearchRegion: "JP",
-  }) as never, workerEnv(), {} as ExecutionContext);
-  expect(initialized.status).toBe(201);
-  const login = await worker.fetch!(requestToWorker("/api/auth/login", { password: "correct-horse-battery-staple" }) as never, workerEnv(), {} as ExecutionContext);
-  expect(login.status).toBe(200);
-  return login.headers.get("set-cookie") ?? "";
-}
-
-/** 初始化/登录必须走 Worker；静态资源桩件会把遗漏的 API 路由立即暴露为 500。 */
-function requestToWorker(path: string, body: unknown): Request {
-  return new Request(`https://example.test${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-}
-
-/** 预览测试不需要前端资产；Worker 迁移回归不装配 Node Chromium，资产失败桩可防止路由回退掩盖只读边界。 */
-function workerEnv(): Env {
-  return {
-    DB: env.DB,
-    ASSETS: { fetch: async () => new Response("unexpected asset request", { status: 500 }) } as unknown as Fetcher,
-  };
+  return (await initializeAdmin(database, { enabledRegions: ["JP", "HK"], defaultSearchRegion: "JP" })).cookie;
 }
 
 /** 返回所有不应被预览写入的核心业务记录数，作为只读接口的回归保护。 */
 async function counts(): Promise<{ games: number; products: number; subscriptions: number }> {
-  const [games, products, subscriptions] = await env.DB.batch([
-    env.DB.prepare("SELECT COUNT(*) AS count FROM games"),
-    env.DB.prepare("SELECT COUNT(*) AS count FROM regional_products"),
-    env.DB.prepare("SELECT COUNT(*) AS count FROM subscriptions"),
+  // PostgreSQL count 原生为 bigint 字符串；夹具用 ::int 明确收窄安全的小表计数，避免测试把驱动差异当业务差异。
+  const [games, products, subscriptions] = await Promise.all([
+    database.query<{ count: number }>("SELECT COUNT(*)::int AS count FROM games"),
+    database.query<{ count: number }>("SELECT COUNT(*)::int AS count FROM regional_products"),
+    database.query<{ count: number }>("SELECT COUNT(*)::int AS count FROM subscriptions"),
   ]);
-  // D1 批量查询的泛型默认是未知对象；此处三条 SQL 都固定返回 count，显式收窄可让测试在编译期同步检查只读断言形状。
   return {
-    games: (games.results[0] as { count: number } | undefined)?.count ?? 0,
-    products: (products.results[0] as { count: number } | undefined)?.count ?? 0,
-    subscriptions: (subscriptions.results[0] as { count: number } | undefined)?.count ?? 0,
+    games: games.rows[0]?.count ?? 0,
+    products: products.rows[0]?.count ?? 0,
+    subscriptions: subscriptions.rows[0]?.count ?? 0,
   };
 }

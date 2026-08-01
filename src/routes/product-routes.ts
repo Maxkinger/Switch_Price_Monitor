@@ -42,13 +42,13 @@ export async function handleProductRoute(
 
   try {
     if (isSearch && discovery) {
-      // 查询长度在 Worker 边界限制为 1..100，避免匿名以外的管理员也能把超长文本原样转发给官网公开搜索服务。
-      const query = readSearchQuery(await request.json<unknown>());
+      // 查询长度在服务端路由边界限制为 1..100，避免管理员把超长文本原样转发给官网公开搜索服务。
+      const query = readSearchQuery((await request.json()) as unknown);
       return Response.json(await discovery.searchDefaultRegion(query));
     }
     if (isResolveLink && discovery) {
       // 链接与可选完整锚点均交给服务端验证；锚点只用于日区升级包关系证明，浏览器不得以任意标题或币种伪造商品身份。
-      const { regionCode, productUrl, anchor } = readOfficialLinkRequest(await request.json<unknown>());
+      const { regionCode, productUrl, anchor } = readOfficialLinkRequest((await request.json()) as unknown);
       // 未提供锚点的既有普通商品调用保持双参数契约；仅在完整锚点实际存在时扩展到日区升级包关系核验，避免旧注入服务收到多余 undefined 参数。
       const candidate = anchor === undefined
         ? await discovery.resolveOfficialLink(regionCode, productUrl)
@@ -57,21 +57,21 @@ export async function handleProductRoute(
     }
     if (isResolveRegions && discovery) {
       // 只收窄已选默认区候选；启用地区由发现服务从持久化设置读取，浏览器不能借请求体扩大或缩小官方检索范围。
-      const { candidates } = readRegionResolutionRequest(await request.json<unknown>());
+      const { candidates } = readRegionResolutionRequest((await request.json()) as unknown);
       const regions = await discovery.resolveRegions(candidates);
-      // 服务提供日区 Browser Run 的脱敏原因时优先显示；其他人工链接状态沿用既有通用提示，维持客户端 DTO 的稳定非空消息约束。
+      // 服务提供日区本地 Playwright 核验的脱敏原因时优先显示；其他人工链接状态沿用既有通用提示，维持客户端 DTO 的稳定非空消息约束。
       return Response.json({ regions: regions.map((region) => region.status === "needs-manual-link"
         ? { ...region, message: region.message ?? "请粘贴该区任天堂官方商品链接" }
         : region) });
     }
     if (isConfirmSubscriptions && confirmation) {
       // 仅把运行时收窄后的完整候选交给确认服务；服务会再次请求每个官方链接，路由绝不直接拼写游戏或订阅 SQL。
-      const subscriptions = readSubscriptionConfirmationRequest(await request.json<unknown>());
+      const subscriptions = readSubscriptionConfirmationRequest((await request.json()) as unknown);
       const results = await confirmation.confirm(subscriptions, new Date().toISOString());
       // 批量中含任一新建项才使用 201；全部为既有订阅时返回 200，前端可安全跳转既有编辑页而非误报失败。
       return Response.json({ subscriptions: results }, { status: results.some((result) => result.status === "created") ? 201 : 200 });
     }
-    const candidates = readConfirmationCandidates(await request.json<unknown>());
+    const candidates = readConfirmationCandidates((await request.json()) as unknown);
     // 服务只产生瞬时 DTO；即使官方验证失败，异常也不会把用户 URL、外部响应或秘密写入持久化仓储。
     return Response.json({ regions: await preview.create(candidates) });
   } catch (error) {
@@ -210,7 +210,7 @@ function readConfirmedRegionalProduct(value: unknown): ConfirmedRegionalProduct 
 }
 
 /**
- * 每个字段均在 Worker 边界完成基础验证：URL 只接受 HTTPS，发行商允许 null，其他身份字段不能留空。
+ * 每个字段均在服务端路由边界完成基础验证：URL 只接受 HTTPS，发行商允许 null，其他身份字段不能留空。
  * 来源预览仍由 OfficialPriceIdService 按地区验证官方价格 ID；跨区发现会在服务层额外校验任天堂主机与路径，
  * 因而此基础收窄不能被误当成官方链接认证。
  */

@@ -25,7 +25,7 @@ import type {
 
 /**
  * 地区标签仅用于 UI 文案与官方链接回退选择，绝不代表跨区业务范围。
- * 实际启用地区由 Worker 设置决定，向导不会把此展示常量发送给跨区解析接口。
+ * 实际启用地区由 Node 服务保存设置决定，向导不会把此展示常量发送给跨区解析接口。
  */
 const regionChoices: ReadonlyArray<{ code: RegionCode; name: string }> = [
   { code: "US", name: "美区" },
@@ -63,7 +63,7 @@ function resolutionLabel(resolution: RegionResolutionResponse): string {
 
 /**
  * 单个官方候选商品卡。整张卡是可多选按钮，避免“选择”按钮与卡片点击产生两套不一致的状态；
- * 图片仅使用 Worker 返回的公开封面 URL，缺图时保留固定占位，不影响名称、类型和价格核对。
+ * 图片仅使用服务端返回的公开封面 URL，缺图时保留固定占位，不影响名称、类型和价格核对。
  */
 function CandidateCard({
   candidate,
@@ -119,7 +119,7 @@ function CandidatePrice({ price, currency }: { price: CandidatePriceLabel; curre
 
 /**
  * 针对一款已选默认区商品的跨区确认面板。自动匹配也必须由管理员在最终提交前可见，
- * 手动链接只送到 Worker 验证，不能把用户输入直接作为地区商品或价格来源保存。
+ * 手动链接只送到同源 Node API 验证，不能把用户输入直接作为地区商品或价格来源保存。
  */
 function RegionalConfirmationPanel({
   selected,
@@ -141,14 +141,14 @@ function RegionalConfirmationPanel({
   confirmedCandidates: Record<string, OfficialProductCandidate>;
   manualLinks: Record<string, string>;
   pendingLinkKey: string | null;
-  /** 搜索或地区解析进行中时禁止会发网的地区操作，避免旧面板在新搜索尚未结算时启动并发 Browser Run。 */
+  /** 搜索或地区解析进行中时禁止会发网的地区操作，避免旧面板在新搜索尚未结算时并发启动本地 Playwright 核验。 */
   isRegionalInteractionDisabled: boolean;
   /** 展开键只控制当前页面的候选可见性，不能参与地区确认、跳过或最终订阅载荷。 */
   expandedRegionalKeys: string[];
   onSelectCandidate: (regionCode: RegionCode, candidate: OfficialProductCandidate, source: RegionalProductMatchSource) => void;
   onManualLinkChange: (key: string, value: string) => void;
   onResolveLink: (regionCode: RegionCode) => void;
-  /** 日区自动关系发现失败时由管理员显式再次触发；该点击不读取 effect，避免后台反复消耗 Browser Run 配额。 */
+  /** 日区自动关系发现失败时由管理员显式再次触发；该点击不读取 effect，避免后台反复消耗本地 Chromium 资源。 */
   onRetryRegions: () => void;
   onToggleSkip: (regionCode: RegionCode) => void;
   onToggleCandidateExpansion: (key: string) => void;
@@ -172,7 +172,7 @@ function RegionalConfirmationPanel({
           const key = regionalConfirmationKey(selectedKey, resolution.regionCode);
           const confirmed = confirmedCandidates[key];
           const isExpanded = expandedRegionalKeys.includes(key);
-          // Worker 已按官方身份信号排序并给出首屏数量；前端只消费这个受控结果，不能自行按标题、价格或搜索顺序猜测商品关系。
+          // 服务端已按官方身份信号排序并给出首屏数量；前端只消费这个受控结果，不能自行按标题、价格或搜索顺序猜测商品关系。
           const visibleCandidates = resolution.status === "needs-manual-selection" && !isExpanded
             ? resolution.candidates.slice(0, resolution.featuredCandidateCount)
             : resolution.status === "needs-manual-selection" ? resolution.candidates : [];
@@ -253,7 +253,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
   const [isResolvingRegions, setIsResolvingRegions] = useState(false);
   /**
    * 每次跨区解析都持有递增代次。搜索、官方链接回退或下一次解析会使旧代次失效，
-   * 这样慢速 Browser Run 的成功、失败和 finally 都不能覆盖后来搜索的地区结果或加载状态。
+   * 这样慢速本地 Playwright 核验的成功、失败和 finally 都不能覆盖后来搜索的地区结果或加载状态。
    */
   const regionResolutionGeneration = useRef(0);
   const [resolutions, setResolutions] = useState<RegionResolutionResponse[]>([]);
@@ -268,7 +268,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
 
   /**
    * 商品接口的 401 不能继续停留在旧向导页：认证壳层会卸载本组件以清除全部候选和地区映射。
-   * 其他错误只显示 Worker 已脱敏的中文摘要，不能把采集器、数据库或外站错误直接呈现给管理员。
+   * 其他错误只显示服务端已脱敏的中文摘要，不能把采集器、数据库或外站错误直接呈现给管理员。
    */
   function handleProductError(error: unknown, fallbackMessage: string): void {
     if (error instanceof ProductApiError && error.status === 401) {
@@ -362,7 +362,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
       if (regionResolutionGeneration.current !== generation) return;
       setResolutions(() => resolved);
       setResolvedCandidateKeys(() => selectedCandidates.map((candidate) => candidateKey(candidate)));
-      // 自动结果仅来自 Worker 对保存设置和官方身份的唯一匹配；页面不会自行按名称或价格猜测跨区商品。
+      // 自动结果仅来自 Node 服务对保存设置和官方身份的唯一匹配；页面不会自行按名称或价格猜测跨区商品。
       setWizard((current) => applyAutomaticRegionResolutions(current, resolved));
     } catch (error) {
       if (regionResolutionGeneration.current !== generation) return;
@@ -383,7 +383,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
     setWizard((current) => setRegionalCandidate(current, selectedKey, regionCode, candidate, source));
   }
 
-  /** 只让 Worker 解析和校验手动链接，成功后才把返回的官方候选绑定到当前游戏/地区。 */
+  /** 只让 Node 服务解析和校验手动链接，成功后才把返回的官方候选绑定到当前游戏/地区。 */
   async function handleResolveRegionalLink(selected: OfficialProductCandidate, regionCode: RegionCode) {
     const selectedKey = candidateKey(selected);
     const key = regionalConfirmationKey(selectedKey, regionCode);
@@ -396,7 +396,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
     setPendingLinkKey(key);
     setNotice(null);
     try {
-      // 已选默认区锚点必须随日区升级包人工链接一起交给 Worker；其他地区或类型会由服务端维持原页面解析流程。
+      // 已选默认区锚点必须随日区升级包人工链接一起交给 Node 服务；其他地区或类型会由服务端维持原页面解析流程。
       const candidate = await api.resolveOfficialLink(regionCode, link, selected);
       handleRegionalCandidate(selected, regionCode, candidate, "manual_link");
     } catch (error) {
@@ -407,7 +407,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
   }
 
   /**
-   * 日区 Browser Run 失败后仅在管理员点击时重新请求当前选择，避免 effect 因状态渲染循环自动重试。
+   * 日区本地 Playwright 核验失败后仅在管理员点击时重新请求当前选择，避免 effect 因状态渲染循环自动重试。
    * 不清空 manualLinks，确保管理员在自动核验仍失败时保留已输入的官方链接；代次守卫负责阻止过期回写，函数式 setWizard 只确保同一代次更新读取最新状态。
    */
   async function handleRetryRegions() {
@@ -426,7 +426,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
       if (regionResolutionGeneration.current !== generation) return;
       setResolutions(() => resolved);
       setResolvedCandidateKeys(() => selectedCandidates.map((candidate) => candidateKey(candidate)));
-      // 自动结果仍只能由 Worker 的最新官方关系发现写入；函数式更新避免读取过期向导状态。
+      // 自动结果仍只能由 Node 服务最新的官方关系发现写入；函数式更新避免读取过期向导状态。
       setWizard((current) => applyAutomaticRegionResolutions(current, resolved));
     } catch (error) {
       if (regionResolutionGeneration.current !== generation) return;
@@ -475,7 +475,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
     }
   }
 
-  /** 最终确认由 Worker 以单个 D1 批次提交；成功前页面仍允许修改地区，不会产生半成品订阅。 */
+  /** 最终确认由 Node 服务以单个 PostgreSQL 事务提交；成功前页面仍允许修改地区，不会产生半成品订阅。 */
   async function handleConfirmSubscriptions() {
     if (selectedCandidates.length === 0) return;
     setWizard((current) => ({ ...current, submitState: "submitting" }));

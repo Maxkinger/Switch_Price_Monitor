@@ -1,12 +1,10 @@
-import { env } from "cloudflare:test";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import worker, { type Env } from "../src/worker";
 import { handleManualRefreshRoute } from "../src/routes/manual-refresh-routes";
-import { D1AuthRepository } from "../src/repositories/auth-repository";
-import { ManualRefreshRepository } from "../src/repositories/manual-refresh-repository";
-import { AuthService } from "../src/services/auth-service";
+import { PostgresManualRefreshRepository } from "../src/repositories/postgres/manual-refresh-repository";
+import type { AppDatabase } from "../src/server/database/types";
 import { ManualRefreshService } from "../src/services/manual-refresh-service";
+import { createApiTestDatabase, createTestAuth, initializeAndLogin as initializeAdmin, resetApiTestData } from "./support/api-postgres";
 
 /**
  * 测试替身只返回采集聚合数，不携带任天堂响应、商品 URL 或价格正文。
@@ -16,10 +14,16 @@ interface ImmediateRefreshRunnerStub {
   run(now: string): Promise<{ attempted: number; collected: number; stale: number }>;
 }
 
+// 路由 helper 与计时器用例共享同一受守卫 PostgreSQL 连接池；外部采集始终由文件内 fake 截断。
+let database: AppDatabase;
+
 describe("manual refresh HTTP route", () => {
+  beforeAll(async () => { database = await createApiTestDatabase(); });
+  afterAll(async () => { await database.close(); });
+
   beforeEach(async () => {
-    // 刷新时间与认证单例都跨请求持久化；清理它们可证明两次同步执行完全由本用例的认证请求触发。
-    await env.DB.exec("DELETE FROM manual_refresh_requests; DELETE FROM sessions; DELETE FROM login_attempts; DELETE FROM admin_credentials; DELETE FROM settings;");
+    // 刷新时间与认证单例都跨请求持久化；清空一次性库证明两次同步执行完全由本用例请求触发。
+    await resetApiTestData(database);
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-16T01:00:00.000Z"));
   });
@@ -76,26 +80,17 @@ describe("manual refresh HTTP route", () => {
 });
 
 async function initializeAndLogin(): Promise<string> {
-  // 真实初始化与登录确保刷新端点继承管理员会话安全边界，而不是仅测试一个未受保护的写入路由。
-  const initialized = await request("/api/auth/initialize", { password: "correct-horse-battery-staple", enabledRegions: ["US"], defaultSearchRegion: "US" });
-  expect(initialized.status).toBe(201);
-  const login = await request("/api/auth/login", { password: "correct-horse-battery-staple" });
-  expect(login.status).toBe(200);
-  return login.headers.get("set-cookie") ?? "";
+  // 真实 PostgreSQL 初始化与登录确保刷新端点继承管理员会话安全边界，而不是未受保护的写入路由。
+  return (await initializeAdmin(database, { enabledRegions: ["US"], defaultSearchRegion: "US" })).cookie;
 }
 
 async function call(cookie: string, runner: ImmediateRefreshRunnerStub): Promise<Response> {
-  // 直接注入无网络采集替身，验证路由在认证后每次等待同步采集完成；静态资源层不应参与此 API。
+  // 直接注入无网络采集替身，验证路由在认证后每次等待同步采集完成；PostgreSQL 只记录服务端时间。
   const response = await handleManualRefreshRoute(
-    new Request("https://example.test/api/refresh", { method: "POST", headers: { cookie } }),
-    new AuthService(new D1AuthRepository(env.DB)),
-    new ManualRefreshService(new ManualRefreshRepository(env.DB), runner),
+    new Request("http://127.0.0.1/api/refresh", { method: "POST", headers: { cookie } }),
+    createTestAuth(database),
+    new ManualRefreshService(new PostgresManualRefreshRepository(database), runner),
   );
   if (!response) throw new Error("手动刷新路由未处理 /api/refresh 请求。");
   return response;
-}
-
-async function request(path: string, body: unknown): Promise<Response> {
-  const assets = { fetch: async () => new Response("unexpected asset request", { status: 500 }) } as unknown as Fetcher;
-  return worker.fetch!(new Request(`https://example.test${path}`, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } }) as never, { DB: env.DB, ASSETS: assets } as Env, {} as ExecutionContext);
 }

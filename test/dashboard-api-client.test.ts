@@ -4,7 +4,7 @@ import { DashboardApiError, createDashboardApiClient } from "../src/app/dashboar
 import { createApiRequestTracker } from "../src/app/api-request-tracker";
 
 /**
- * 浏览器数据客户端测试确认它只请求本站 Worker，并把 API 的节流提示转换为可展示的受控错误。
+ * 浏览器数据客户端测试确认它只请求本站 Node API，并把节流提示转换为可展示的受控错误。
  * 这里不使用真实网络，避免测试意外携带管理员 Cookie 或访问任天堂、汇率与第三方价格站。
  */
 describe("dashboard API client", () => {
@@ -61,7 +61,7 @@ describe("dashboard API client", () => {
   });
 
   it("sends a confirmed dashboard selection to the same-origin hard-delete endpoint", async () => {
-    // 浏览器只传管理员已确认的订阅 ID；Worker 负责存在性验证和原子清理，客户端不得携带游戏、价格或外部商品链接。
+    // 浏览器只传管理员已确认的订阅 ID；Node 服务负责存在性验证和 PostgreSQL 原子清理，客户端不得携带游戏、价格或外部商品链接。
     const request = vi.fn(async () => Response.json({ deletedSubscriptionIds: ["subscription-overcooked-2"] })) as unknown as typeof fetch;
     const client = createDashboardApiClient(request);
 

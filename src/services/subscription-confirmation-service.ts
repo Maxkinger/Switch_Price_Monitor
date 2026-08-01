@@ -11,8 +11,8 @@ import type { OfficialNintendoProductPageResolver } from "../providers/official-
 import {
   type ValidatedConfirmedRegion,
   type ValidatedSubscriptionConfirmation,
-} from "../repositories/subscription-confirmation-repository";
-import type { SubscriptionConfirmationStore } from "../repositories/ports";
+  type SubscriptionConfirmationStore,
+} from "../repositories/ports";
 import type { OfficialPriceIdResolution, OfficialPriceIdService } from "./official-price-id-service";
 import {
   hasHighConfidenceLocalizedIdentity,
@@ -293,7 +293,7 @@ function isMatchSource(value: unknown): value is RegionalProductMatchSource {
 /**
  * 按来源决定最终确认的身份强度。`automatic` 没有管理员逐项选择，必须保持严格身份，
  * 或使用发现与日区复核都已验证的高置信度本地化身份；后者不依据翻译或模糊语义。
- * `manual_selection`/`manual_link` 则允许地区语言和发行商写法不同，但在 Worker 已重验本区官方 URL 的前提下，
+ * `manual_selection`/`manual_link` 则允许地区语言和发行商写法不同，但在 Node 服务已重验本区官方 URL 的前提下，
  * 仍必须是与默认区相同的受控商品类型。这样不会把人工确认误扩展为任意链接或本体/DLC/升级包之间的混配。
  */
 function hasConfirmedRegionIdentity(

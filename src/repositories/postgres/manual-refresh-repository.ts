@@ -1,5 +1,4 @@
-import type { ManualRefreshRequestResult } from "../manual-refresh-repository";
-import type { ManualRefreshRequestStore } from "../ports";
+import type { ManualRefreshRequestResult, ManualRefreshRequestStore } from "../ports";
 import type { SqlExecutor } from "../../server/database/types";
 
 /**

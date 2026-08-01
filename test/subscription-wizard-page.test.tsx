@@ -21,7 +21,7 @@ const usCandidate: OfficialProductCandidate = {
   regularPriceMinor: null,
 };
 
-/** 日区第一项代表 Worker 已排序的高相关候选，第二项则代表仍可审计但默认折叠的同类型官方候选。 */
+/** 日区第一项代表服务端已排序的高相关候选，第二项则代表仍可审计但默认折叠的同类型官方候选。 */
 const featuredJapaneseCandidate: OfficialProductCandidate = {
   ...usCandidate,
   regionCode: "JP",
@@ -83,7 +83,7 @@ describe("添加订阅向导的跨区候选折叠", () => {
   });
 
   it("retries Japanese regional discovery after a safe manual-link message and renders the automatic candidate", async () => {
-    // Browser Run 暂不可用时必须保留人工链接输入，同时管理员可重新发起同一批安全地区解析；第二次响应只能由 Worker 的自动候选更新页面。
+    // 本地 Playwright 核验暂不可用时必须保留人工链接输入，同时管理员可重新发起同一批安全地区解析；第二次响应只能由服务端自动候选更新页面。
     const user = userEvent.setup();
     const candidateKey = `${usCandidate.regionCode}:${usCandidate.productUrl}`;
     const japaneseUpgrade: OfficialProductCandidate = {
@@ -97,7 +97,7 @@ describe("添加订阅向导的跨区候选折叠", () => {
     const api = wizardApi([]);
     vi.mocked(api.resolveRegions)
       .mockResolvedValueOnce([{ candidateKey, regionCode: "JP", status: "needs-manual-link", message: "日区自动核验暂不可用，请重新核验或粘贴官方链接。" }])
-      // 第二次请求保持 pending，证明按钮会在 Browser Run 重试尚未结算时禁用，不能被连续点击并发消耗浏览器配额。
+      // 第二次请求保持 pending，证明按钮会在本地浏览器重试尚未结算时禁用，不能被连续点击并发消耗 Chromium 资源。
       .mockReturnValueOnce(retryPending);
 
     render(<SubscriptionWizardPage api={api} onUnauthorized={vi.fn()} />);
@@ -118,7 +118,7 @@ describe("添加订阅向导的跨区候选折叠", () => {
   });
 
   it("ignores a stale Japanese retry after a new search starts a newer regional resolution", async () => {
-    // 搜索会重置地区确认上下文：旧 Browser Run 即使稍后成功，也不能把自动候选或安全提示写回新搜索；更不能在新一代仍 pending 时错误关闭加载状态。
+    // 搜索会重置地区确认上下文：旧的本地 Playwright 请求即使稍后成功，也不能把自动候选或安全提示写回新搜索；更不能在新一代仍 pending 时错误关闭加载状态。
     const user = userEvent.setup();
     const candidateKey = `${usCandidate.regionCode}:${usCandidate.productUrl}`;
     const staleJapaneseUpgrade: OfficialProductCandidate = {

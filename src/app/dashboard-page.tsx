@@ -15,13 +15,13 @@ interface DashboardPageApi {
 }
 
 /**
- * 概览优先首页。价格和状态完全来自 Worker；当前页面不请求任天堂、第三方站点、汇率服务或 Telegram，
- * 手动刷新只等待 Worker 侧统一采集；完成后重新读取仪表盘，防止浏览器自行合成价格或历史最低价。
+ * 概览优先首页。价格和状态完全来自同源 Node API；当前页面不请求任天堂、第三方站点、汇率服务或 Telegram，
+ * 手动刷新只等待服务端统一采集；完成后重新读取仪表盘，防止浏览器自行合成价格或历史最低价。
  */
 export function DashboardPage({ api, onNavigate, onUnauthorized }: { api: DashboardPageApi; onNavigate: (path: string) => void; onUnauthorized: () => void }) {
   const [overview, setOverview] = useState<DashboardOverview | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  // 选择状态仅存订阅 ID，不能复制价格或游戏对象；Worker 重读后才是唯一可信的展示数据来源。
+  // 选择状态仅存订阅 ID，不能复制价格或游戏对象；服务端重读后才是唯一可信的展示数据来源。
   const [selectedSubscriptionIds, setSelectedSubscriptionIds] = useState<Set<string>>(new Set());
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -61,7 +61,7 @@ export function DashboardPage({ api, onNavigate, onUnauthorized }: { api: Dashbo
   }
 
   /**
-   * 第二次确认后才调用 Worker 硬删除。成功后不在浏览器裁剪概览，而是重新读取完整仪表盘；
+   * 第二次确认后才调用 Node API 硬删除。成功后不在浏览器裁剪概览，而是重新读取完整仪表盘；
    * 读取失败时清空旧概览以避免继续展示已经永久删除的价格或历史数据。
    */
   async function confirmDelete(): Promise<void> {
@@ -104,7 +104,7 @@ export function DashboardPage({ api, onNavigate, onUnauthorized }: { api: Dashbo
     {overview.subscriptions.length === 0 ? <section className="dashboard-empty"><h2>还没有订阅</h2><p>添加一款已核验的任天堂商品后，这里会显示五区价格和历史最低价。</p><button className="primary-button" type="button" onClick={() => onNavigate(subscriptionNewPath())}>添加订阅</button></section> : <div className="subscription-list">{overview.subscriptions.map((subscription) => {
       // 历史数据可能把英文官方标题写入 nameZh；展示层统一修正，避免卡片、复选框和详情页入口使用不同游戏名。
       const gameDisplayName = displayChineseGameName(subscription.nameZh, subscription.nameEn);
-      // 仪表盘价格横向比较依赖稳定区域位置；排序只发生在展示层，不改变 Worker 返回的订阅 DTO 或历史最低价计算结果。
+      // 仪表盘价格横向比较依赖稳定区域位置；排序只发生在展示层，不改变服务端返回的订阅 DTO 或历史最低价计算结果。
       const dashboardRegions = sortDashboardRegions(subscription.regions);
       return <article className="subscription-summary" key={subscription.subscriptionId}><label className="subscription-summary__selection"><input type="checkbox" checked={selectedSubscriptionIds.has(subscription.subscriptionId)} onChange={() => toggleSubscriptionSelection(subscription.subscriptionId)} aria-label={`选择 ${gameDisplayName}`} /><span>选择</span></label><button className="subscription-summary__details" type="button" onClick={() => onNavigate(subscriptionDetailPath(subscription.subscriptionId))}><header><h2>{gameDisplayName}</h2><span>{subscription.enabled ? "监控中" : "已暂停"}</span></header><div className="summary-regions">{/* 地区代码只作为后端数据键；展示必须与详情页共用中文名称、官网价格格式和固定五区顺序，避免用户误读币种或错看横向位置。 */}{dashboardRegions.map((region) => <p key={region.regionalProductId}><b>{formatRegionName(region.regionCode)}</b>{region.current ? <><span>{formatRegionalPrice(region.current.amountMinor, region.currency, region.regionCode)}</span><small>{formatCnyFen(region.current.cnyFen)} · {region.current.source}{region.isStale ? " · 过期" : ""}</small></> : <small>等待首笔价格</small>}</p>)}</div><footer>跨区历史最低：{subscription.allRegionHistoricalLow ? `${formatRegionName(subscription.allRegionHistoricalLow.regionCode)} ${formatRegionalPrice(subscription.allRegionHistoricalLow.amountMinor, subscription.allRegionHistoricalLow.currency, subscription.allRegionHistoricalLow.regionCode)}（${formatCnyFen(subscription.allRegionHistoricalLow.cnyFen)}）` : "暂无可比较记录"}</footer></button></article>;
     })}</div>}

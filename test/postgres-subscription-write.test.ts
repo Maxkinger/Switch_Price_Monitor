@@ -4,7 +4,7 @@ import type { AppDatabase, SqlExecutor } from "../src/server/database/types";
 import { PostgresSubscriptionConfirmationRepository } from "../src/repositories/postgres/subscription-confirmation-repository";
 import { PostgresSubscriptionRepository } from "../src/repositories/postgres/subscription-repository";
 import { PostgresManualRefreshRepository } from "../src/repositories/postgres/manual-refresh-repository";
-import type { ValidatedSubscriptionConfirmation } from "../src/repositories/subscription-confirmation-repository";
+import type { ValidatedSubscriptionConfirmation } from "../src/repositories/ports";
 import { createTestDatabase } from "./support/postgres";
 
 /**
@@ -68,6 +68,77 @@ describe("PostgreSQL 订阅确认与永久删除事务", () => {
 
     await expect(countRows(database, "regional_products")).resolves.toBe(2);
     await expect(countRows(database, "subscription_regions")).resolves.toBe(2);
+  });
+
+  it("已有订阅成功补全只追加地区并保留价格历史与全局目标价", async () => {
+    /**
+     * 成功路径比故障回滚更容易被宽泛 UPDATE 或重建订阅误伤：先给美区写入一条官方价格快照，并给订阅设置人民币分目标价，
+     * 再真实调用 completeAtomically 追加墨西哥区。补全只能新增地区商品和关系，不得触碰不可逆历史或管理员价格策略。
+     */
+    const repository = new PostgresSubscriptionConfirmationRepository(database);
+    await repository.createAtomically(
+      [confirmation("game-complete-success", "subscription-complete-success", "completion success")],
+      fixedNow,
+    );
+    await database.query(
+      `UPDATE subscriptions
+          SET global_target_cny_fen = 5000
+        WHERE id = $1`,
+      ["subscription-complete-success"],
+    );
+    await database.query(
+      `INSERT INTO price_snapshots (
+         regional_product_id, amount_minor, currency, cny_fen, exchange_rate, source, captured_at
+       ) VALUES ($1, 999, 'USD', 6800, 6.806806, 'official', $2)`,
+      ["game-complete-success-product-us", fixedNow],
+    );
+
+    await repository.completeAtomically(
+      "subscription-complete-success",
+      "game-complete-success",
+      [{
+        id: "product-complete-success-mx",
+        regionCode: "MX",
+        currency: "MXN",
+        officialPriceId: "official-complete-success-mx",
+        productUrl: "https://www.nintendo.example/mx/product-complete-success-mx",
+        matchSource: "manual_link",
+      }],
+      "2026-07-27T00:05:00.000Z",
+    );
+
+    const subscription = await database.query<{ globalTargetCnyFen: number | null }>(
+      `SELECT global_target_cny_fen AS "globalTargetCnyFen"
+         FROM subscriptions
+        WHERE id = $1`,
+      ["subscription-complete-success"],
+    );
+    const snapshots = await database.query<{
+      amountMinor: number;
+      currency: string;
+      cnyFen: number | null;
+      source: string;
+      capturedAt: Date;
+    }>(
+      `SELECT amount_minor AS "amountMinor",
+              currency,
+              cny_fen AS "cnyFen",
+              source,
+              captured_at AS "capturedAt"
+         FROM price_snapshots
+        WHERE regional_product_id = $1`,
+      ["game-complete-success-product-us"],
+    );
+    expect(subscription.rows).toEqual([{ globalTargetCnyFen: 5000 }]);
+    expect(snapshots.rows).toEqual([{
+      amountMinor: 999,
+      currency: "USD",
+      cnyFen: 6800,
+      source: "official",
+      capturedAt: new Date(fixedNow),
+    }]);
+    await expect(countRows(database, "regional_products")).resolves.toBe(3);
+    await expect(countRows(database, "subscription_regions")).resolves.toBe(3);
   });
 
   it("永久删除含缺失 ID 时在任何写入前拒绝并保留全部目标", async () => {

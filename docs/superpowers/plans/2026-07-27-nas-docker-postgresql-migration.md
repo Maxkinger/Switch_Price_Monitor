@@ -1,5 +1,17 @@
 # NAS Docker and PostgreSQL Migration Implementation Plan
 
+## 2026-08-01 执行状态摘要
+
+本摘要记录实际执行结果，不勾选、删除或改写下方原始计划步骤：
+
+- 仓库内 Node.js 22、PostgreSQL 17、本地 Playwright、Docker/Compose、备份恢复、GitHub Actions 和旧平台移除已经实现。
+- 当前本地门禁通过：Vitest 69 文件/420 项、DOM 16 项、Chromium 4 项、Docker/平台合同 19/19、TypeScript 与生产构建。
+- 最新成功普通 CI run `30686052256` 对应平台移除前提交，不能代表当前工作树；当前提交仍需重新触发远程 CI。
+- 当前工作树已在 M1/arm64 完成生产镜像与 Compose 运行时验收：空库启动、双容器健康、非 root、端口隔离、认证/恢复/锁定、设置、重启持久化和镜像内 Chromium 通过；备份恢复集成门禁为 14/14。发现、订阅事务、历史/导出、刷新、调度锁与 Telegram fake transport 由同一工作树的自动化分层验证；尚未把这些 fake/fixture 流程作为生产容器内端到端外部演练。
+- Docker Hub Secrets 尚未配置，`v0.1.0` 尚未创建，公开双架构镜像与 DS423+ 部署尚未执行。
+- 真实 Telegram/Nintendo 样本尚未运行；线上 Cloudflare 资源未删除，必须在 NAS 等价验收后取得独立退役授权。
+- 本计划中的旧 Worker/D1 步骤和勾选框是实施历史，不构成当前支持路径；当前运行合同以 ADR-003、架构文档和部署手册为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the Cloudflare production runtime with a locally debuggable Node.js, PostgreSQL, Playwright, and Docker Compose stack that publishes multi-architecture images to Docker Hub and preserves every existing business feature.

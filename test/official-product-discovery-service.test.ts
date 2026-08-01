@@ -7,12 +7,12 @@ import { officialCandidateKey, OfficialProductDiscoveryService } from "../src/se
 const upgradeUrl = "https://store-jp.nintendo.com/item/software/D70050000064985/";
 
 /**
- * 商品发现服务测试以可注入的设置、名称搜索和官方页面解析器替代 D1 与真实任天堂请求，
+ * 商品发现服务测试以可注入的设置、名称搜索和官方页面解析器替代 PostgreSQL 与真实任天堂请求，
  * 证明默认区由服务端设置控制，且香港区可安全进入官方链接确认流程而不会借用美区候选。
  */
 describe("official product discovery service", () => {
   it("batches eligible Japanese upgrade fallbacks after ordinary regional search", async () => {
-    // Browser Run 只能在普通官方搜索和受限本地化回退都没有同类型候选后调用；批量注入可防止每张卡各自启动浏览器会话。
+    // 本地 Playwright 核验只能在普通官方搜索和受限本地化回退都没有同类型候选后调用；批量注入可防止每张卡各自启动浏览器会话。
     const anchor = usCandidate({ canonicalTitle: "Overcooked! 2 – Nintendo Switch 2 Edition Upgrade Pack", productType: "upgrade-pack" });
     const jpUpgrade = japaneseCandidate({ canonicalTitle: "Overcooked® 2 - オーバークック２ Nintendo Switch 2 Edition アップグレードパス", productType: "upgrade-pack", productUrl: upgradeUrl });
     const japaneseUpgrades = {
@@ -56,7 +56,7 @@ describe("official product discovery service", () => {
   });
 
   it("does not start Japanese upgrade discovery when ordinary official search is unavailable", async () => {
-    // 官方搜索不可用时没有“普通回退为空”的可审计结论，Browser Run 不得作为替代搜索入口，必须直接保留人工官方链接路径。
+    // 官方搜索不可用时没有“普通回退为空”的可审计结论，本地 Playwright 不得作为替代搜索入口，必须直接保留人工官方链接路径。
     const anchor = usCandidate({ productType: "upgrade-pack" });
     const japaneseUpgrades = { discover: vi.fn(), resolveManual: vi.fn() };
     const service = new OfficialProductDiscoveryService(
@@ -72,7 +72,7 @@ describe("official product discovery service", () => {
   });
 
   it("does not start Japanese upgrade discovery when ordinary official search contains a same-type candidate", async () => {
-    // 一条已验证的同类型官方候选已足以进入既有身份匹配流程；Browser Run 只能补足真正没有同类型结果的受限空白，而不能覆盖人工选择。
+    // 一条已验证的同类型官方候选已足以进入既有身份匹配流程；本地 Playwright 只能补足真正没有同类型结果的受限空白，而不能覆盖人工选择。
     const anchor = usCandidate({ productType: "upgrade-pack" });
     const ordinaryCandidate = japaneseCandidate({ productType: "upgrade-pack", canonicalTitle: "日区其他升级包" });
     const japaneseUpgrades = { discover: vi.fn(), resolveManual: vi.fn() };
@@ -380,7 +380,7 @@ describe("official product discovery service", () => {
   });
 
   it("rejects Hong Kong relation expansion when the controlled base search returns more than five roots", async () => {
-    // 本体根超过固定上限时不能继续发起详情请求；这既限制 Worker 请求放大，也避免宽泛系列搜索产生不可靠的自动唯一性。
+    // 本体根超过固定上限时不能继续发起详情请求；这既限制 Node 请求放大，也避免宽泛系列搜索产生不可靠的自动唯一性。
     const anchor = usCandidate({ canonicalTitle: "Overcooked! 2 - Gourmet Edition", productType: "bundle" });
     const roots = Array.from({ length: 6 }, (_unused, index) => hongKongBaseCandidate({
       productUrl: `https://ec.nintendo.com/HK/zh/titles/${70010000033098 + index}`,

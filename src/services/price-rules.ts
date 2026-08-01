@@ -15,7 +15,7 @@ export type TargetState = "unmet" | "met";
 /** 采集轮写入通知事件前需要执行的唯一状态变迁。 */
 export type TargetTransition = "trigger" | "reset" | "none";
 
-/** D1 的 regional_product_health 中与通知去重相关的最小状态，避免规则层依赖完整数据库行。 */
+/** PostgreSQL `regional_product_health` 中与通知去重相关的最小状态，避免规则层依赖完整数据库行。 */
 export interface ProductHealthState {
   consecutiveFailures: number;
   failureNotified: boolean;

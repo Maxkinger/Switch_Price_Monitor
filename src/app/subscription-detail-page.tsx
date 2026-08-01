@@ -8,7 +8,7 @@ import { displayChineseGameName } from "../shared/game-display-name";
 import { applyAutomaticMissingResolutions, immediateRefreshNotice, missingRegionPresentation } from "./dashboard-page-state";
 import { SubscriptionDeleteDialog } from "./subscription-delete-dialog";
 
-/** 详情页只依赖受控详情读取、立即采集、编辑、地区补全和硬删除接口；游戏身份与启用地区范围始终由 Worker 读取。 */
+/** 详情页只依赖受控详情读取、立即采集、编辑、地区补全和硬删除接口；游戏身份与启用地区范围始终由 Node 服务读取。 */
 interface DetailApi {
   getSubscription(id: string): Promise<SubscriptionDetail>;
   refreshNow(): Promise<CompletedRefreshResult>;
@@ -20,7 +20,7 @@ interface DetailApi {
 
 /**
  * 单页订阅详情提供三个独立保存操作：启用状态、已确认地区范围和目标价。
- * 页面不接受商品 ID 文本输入；地区复选框只来自 Worker 返回的已确认映射，商品客户端由应用壳共享以纳入全局加载状态。
+ * 页面不接受商品 ID 文本输入；地区复选框只来自服务端返回的已确认映射，商品客户端由应用壳共享以纳入全局加载状态。
  */
 export function SubscriptionDetailPage({ api, productApi, subscriptionId, onBack, onUnauthorized }: { api: DetailApi; productApi: ReturnType<typeof createProductApiClient>; subscriptionId: string; onBack: () => void; onUnauthorized: () => void }) {
   const [detail, setDetail] = useState<SubscriptionDetail | null>(null);
@@ -73,7 +73,7 @@ export function SubscriptionDetailPage({ api, productApi, subscriptionId, onBack
     }
   }
 
-  /** 从 Worker 读取当前订阅锚点对应的缺失地区；重复打开会清除旧草稿，避免将上一轮候选提交到新设置范围。 */
+  /** 从 Node API 读取当前订阅锚点对应的缺失地区；重复打开会清除旧草稿，避免将上一轮候选提交到新设置范围。 */
   async function resolveMissingRegions(): Promise<void> {
     setIsResolvingMissing(true); setNotice(null);
     try {
@@ -86,13 +86,13 @@ export function SubscriptionDetailPage({ api, productApi, subscriptionId, onBack
     } finally { setIsResolvingMissing(false); }
   }
 
-  /** 自动候选由 Worker 已完成唯一身份匹配；手动候选/链接仍需管理员动作，不能按名称或价格自行猜测。 */
+  /** 自动候选由服务端完成唯一身份匹配；手动候选/链接仍需管理员动作，不能按名称或价格自行猜测。 */
   function acceptMissingCandidate(resolution: RegionResolutionResponse, candidate: OfficialProductCandidate, matchSource: RegionalProductMatchSource): void {
     setMissingConfirmations((current) => ({ ...current, [resolution.regionCode]: { ...candidate, matchSource } }));
     setMissingSkipped((current) => current.filter((region) => region !== resolution.regionCode));
   }
 
-  /** 手动链接只交给商品 Worker 解析，成功后立即以 `manual_link` 记录映射来源，不能直接信任输入 URL。 */
+  /** 手动链接只交给商品 API 解析，成功后立即以 `manual_link` 记录映射来源，不能直接信任输入 URL。 */
   async function resolveMissingLink(regionCode: RegionCode, productUrl: string): Promise<void> {
     try { acceptMissingCandidate({ candidateKey: "", regionCode, status: "needs-manual-link", message: "" }, await productApi.resolveOfficialLink(regionCode, productUrl), "manual_link"); }
     catch (error) { if (error instanceof ProductApiError && error.status === 401) onUnauthorized(); else setNotice(error instanceof ProductApiError ? error.message : "官方链接核验失败。"); }

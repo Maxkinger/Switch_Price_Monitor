@@ -1,7 +1,7 @@
 import type { OfficialProductCandidate, RegionCode } from "../shared/domain";
 import { ProviderNetworkError, type ProductType } from "./types";
 
-/** 官方商品 URL 规则只允许精确的主机和路径组合，避免管理员输入把 Worker 变成访问任意主机的请求代理。 */
+/** 官方商品 URL 规则只允许精确的主机和路径组合，避免管理员输入把 Node 服务变成访问任意主机的请求代理。 */
 interface OfficialProductUrlRule {
   readonly hostname: string;
   readonly pathnamePrefix: string;

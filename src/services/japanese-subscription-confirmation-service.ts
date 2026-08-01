@@ -11,7 +11,7 @@ type OfficialPriceIdResolver = Pick<OfficialPriceIdService, "resolve">;
 const japaneseDownloadPath = /^\/item\/software\/D(\d+)\/?$/;
 
 /**
- * 普通日区游戏、组合商品与 DLC 的双官方接口适配层。My Nintendo Store 商品页可能向 Worker 返回排队或动态外壳，
+ * 普通日区游戏、组合商品与 DLC 的双官方接口适配层。迁移前证据显示 My Nintendo Store 商品页会向 Cloudflare Worker 返回排队或动态外壳，
  * 因而此服务以官方软件搜索 API 取得身份字段，并以官方价格 API 证明同一标题 ID 当前在 JP/JPY 上架。
  * 升级包必须由上层关系服务复核根商品与 Browser URL，本服务在任何外部调用前拒绝，防止旧双 API 绕过关系证明。
  */

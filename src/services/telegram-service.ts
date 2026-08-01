@@ -3,7 +3,7 @@ import type { TelegramMessage } from "./report-service";
 /** 可注入的最小网络边界让测试验证真实 HTTP 请求形状，同时不需要真实 Telegram 网络或凭据。 */
 type TelegramFetcher = typeof fetch;
 
-/** Telegram 凭据只由 Worker Secret 或后续加密设置提供；该模型绝不被 API 或日志直接返回。 */
+/** Telegram 凭据只由 Node 运行时环境变量提供；该模型绝不被 API、数据库或日志直接返回。 */
 export interface TelegramConfiguration {
   botToken: string;
   chatId: string;
@@ -25,7 +25,7 @@ export class TelegramService {
   private readonly fetcher: TelegramFetcher;
 
   public constructor(private readonly configuration: TelegramConfiguration) {
-    // 默认使用 Worker 原生 fetch；测试通过注入替身而不在源码、测试输出或请求结果中保存真实凭据。
+    // 默认使用 Node 原生 fetch；测试通过注入替身而不在源码、测试输出或请求结果中保存真实凭据。
     this.fetcher = configuration.fetcher ?? fetch;
   }
 

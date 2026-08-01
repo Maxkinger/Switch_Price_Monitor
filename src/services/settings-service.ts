@@ -15,7 +15,7 @@ export type SettingsPatch = Partial<Omit<AppSettings, "createdAt">>;
  * 因此管理员可以安全地更改默认搜索区而不改变历史价格的含义。
  */
 export class SettingsService {
-  // 平台中立端口避免设置路由因一个具体 D1 类而阻止 Node/PostgreSQL 装配。
+  // 平台中立端口避免设置路由依赖具体 PostgreSQL 类，也便于内存测试替身复用同一校验。
   public constructor(private readonly settings: SettingsStore) {}
 
   public async get(): Promise<AppSettings> {
@@ -62,7 +62,7 @@ function isRegionCode(value: unknown): value is RegionCode {
   return typeof value === "string" && initialRegionCodes.includes(value as RegionCode);
 }
 
-/** Intl 是 Worker 标准运行时能力；构造失败表示并非可用的 IANA 时区，日报调度不能接受它。 */
+/** Intl 是 Node 标准运行时能力；构造失败表示并非可用的 IANA 时区，日报调度不能接受它。 */
 function isTimeZone(value: string): boolean {
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: value });

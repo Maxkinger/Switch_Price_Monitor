@@ -18,6 +18,7 @@ const taskRoot = mkdtempSync(resolve(tmpdir(), "switch-price-monitor-task9-"));
 const projectRoot = resolve(taskRoot, "project");
 const backupDirectory = resolve(projectRoot, "backups");
 const composeFile = resolve(projectRoot, "compose.yml");
+const envFile = resolve(projectRoot, "task9.env");
 const projectName = `switch-price-monitor-task9-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
 const databaseService = "database17";
 const appService = "app";
@@ -30,6 +31,7 @@ const failedRestoreDatabase = "task9_restore_failure";
 const checksumFailureDatabase = "task9_checksum_failure";
 const adminFailureDatabase = "task9_admin_failure";
 const coreTableFailureDatabase = "task9_core_failure";
+const requiredTableFailureDatabase = "task9_required_table_failure";
 const catalogGuardDatabase = "task9_catalog_guard";
 // 所有数据库标识都是本测试内部固定、安全子集常量；辅助函数仍会校验它们，禁止未来把外部输入拼入 SQL 或文件名。
 const sourceFileSegment = "task9_source";
@@ -58,10 +60,11 @@ test("拒绝相对路径、项目根备份目录、符号链接逃逸和目录�
   symlinkSync(taskRoot, escapedBackup);
   writeFileSync(outsideDump, "outside", { mode: 0o600 });
   // 路径负例在 Compose/Docker 调用前失败，确保不会因为错误目录误碰现有项目或读取秘密环境。
-  assert.throws(() => runScript(backupScript, ["--compose-file", composeFile, "--project-name", projectName, "--database-service", databaseService, "--database", sourceDatabase, "--project-root", ".", "--backup-dir", backupDirectory, "--retention", "2"]), /绝对路径/);
-  assert.throws(() => runScript(backupScript, ["--compose-file", composeFile, "--project-name", projectName, "--database-service", databaseService, "--database", sourceDatabase, "--project-root", projectRoot, "--backup-dir", projectRoot, "--retention", "2"]), /严格子目录/);
-  assert.throws(() => runScript(backupScript, ["--compose-file", composeFile, "--project-name", projectName, "--database-service", databaseService, "--database", sourceDatabase, "--project-root", projectRoot, "--backup-dir", escapedBackup, "--retention", "2"]), /严格子目录/);
-  assert.throws(() => runScript(restoreScript, ["--compose-file", composeFile, "--project-name", projectName, "--app-service", appService, "--database-service", databaseService, "--project-root", projectRoot, "--backup-dir", backupDirectory, "--dump", outsideDump, "--database", freshDatabase]), /受控 custom archive/);
+  assert.throws(() => runScript(backupScript, ["--compose-file", composeFile, "--env-file", "task9.env", "--project-name", projectName, "--database-service", databaseService, "--database", sourceDatabase, "--project-root", projectRoot, "--backup-dir", backupDirectory, "--retention", "2"]), /绝对路径/);
+  assert.throws(() => runScript(backupScript, ["--compose-file", composeFile, "--env-file", envFile, "--project-name", projectName, "--database-service", databaseService, "--database", sourceDatabase, "--project-root", ".", "--backup-dir", backupDirectory, "--retention", "2"]), /绝对路径/);
+  assert.throws(() => runScript(backupScript, ["--compose-file", composeFile, "--env-file", envFile, "--project-name", projectName, "--database-service", databaseService, "--database", sourceDatabase, "--project-root", projectRoot, "--backup-dir", projectRoot, "--retention", "2"]), /严格子目录/);
+  assert.throws(() => runScript(backupScript, ["--compose-file", composeFile, "--env-file", envFile, "--project-name", projectName, "--database-service", databaseService, "--database", sourceDatabase, "--project-root", projectRoot, "--backup-dir", escapedBackup, "--retention", "2"]), /严格子目录/);
+  assert.throws(() => runScript(restoreScript, ["--compose-file", composeFile, "--env-file", envFile, "--project-name", projectName, "--app-service", appService, "--database-service", databaseService, "--project-root", projectRoot, "--backup-dir", backupDirectory, "--dump", outsideDump, "--database", freshDatabase]), /受控 custom archive/);
 });
 
 test("仅含迁移的 fresh 备份可恢复为空业务库", { timeout: 120_000 }, () => {
@@ -201,6 +204,19 @@ test("缺失核心表的 archive 必须拒绝并把目标恢复为空库", { tim
   assertRestoredFixture(coreTableFailureDatabase);
 });
 
+test("缺失任一非代表性必需表的 archive 也必须拒绝并清回空库", { timeout: 120_000 }, () => {
+  // sessions 不属于旧五表抽样，但它是认证可启动性的必需表；迁移账本仍正确时，恢复必须按完整精确表集合拒绝该归档。
+  sql(sourceDatabase, "ALTER TABLE sessions RENAME TO sessions_missing");
+  const missingRequiredTableDump = backup("10");
+  sql(sourceDatabase, "ALTER TABLE sessions_missing RENAME TO sessions");
+  createEmptyDatabase(requiredTableFailureDatabase);
+  assert.throws(() => restore(missingRequiredTableDump, requiredTableFailureDatabase), /迁移|完整|表|校验/);
+  assert.equal(countUserObjects(requiredTableFailureDatabase), 0, "任一必需表缺失都必须把目标清回可重试空库");
+  const retryDump = backup("11");
+  restore(retryDump, requiredTableFailureDatabase);
+  assertRestoredFixture(requiredTableFailureDatabase);
+});
+
 test("恢复拒绝 bootstrap 所有者、paused app 和仅 view 的目标", { timeout: 120_000 }, () => {
   const dump = newestBackup();
   createBootstrapOwnedDatabase(bootstrapOwnedDatabase);
@@ -246,7 +262,7 @@ test("目录可列但数据段截断的 archive 恢复失败仍保持空目标�
 
 test.after(() => {
   // 禁止宽泛清理：Compose down 只使用本测试生成的 project 名，宿主目录也精确指向 mkdtemp 返回值。
-  spawnSync("docker", ["compose", "-f", composeFile, "-p", projectName, "down", "--volumes", "--remove-orphans"], { stdio: "ignore" });
+  spawnSync("docker", ["compose", "--env-file", envFile, "-f", composeFile, "-p", projectName, "down", "--volumes", "--remove-orphans"], { stdio: "ignore" });
   rmSync(taskRoot, { recursive: true, force: true });
 });
 
@@ -255,7 +271,9 @@ function writeFixtureCompose() {
   mkdirSync(projectRoot, { recursive: true, mode: 0o700 });
   const initScript = resolve(repositoryRoot, "docker/postgres/init-app-role.sh");
   const migration = resolve(repositoryRoot, "migrations/postgres/0001_initial.sql");
-  writeFileSync(composeFile, `services:\n  ${databaseService}:\n    image: postgres:17\n    environment:\n      POSTGRES_DB: ${sourceDatabase}\n      POSTGRES_USER: task9_bootstrap\n      POSTGRES_PASSWORD: synthetic-bootstrap-only\n      APP_DATABASE_USER: task9_app\n      APP_DATABASE_PASSWORD: synthetic-app-only\n    volumes:\n      - type: bind\n        source: ${initScript}\n        target: /docker-entrypoint-initdb.d/010-init-app-role.sh\n        read_only: true\n      - type: bind\n        source: ${migration}\n        target: /fixtures/0001_initial.sql\n        read_only: true\n  app:\n    image: postgres:17\n    command: [\"sh\", \"-ceu\", \"sleep infinity\"]\n    volumes:\n      - type: bind\n        source: ${migration}\n        target: /app/migrations/postgres/0001_initial.sql\n        read_only: true\n`);
+  // Compose 故意只引用 env 插值且测试从项目目录外启动，证明运维脚本不能依赖 cwd 自动发现 `.env`。
+  writeFileSync(envFile, `TASK9_DATABASE=${sourceDatabase}\nTASK9_BOOTSTRAP_USER=task9_bootstrap\nTASK9_BOOTSTRAP_PASSWORD=synthetic-bootstrap-only\nTASK9_APP_USER=task9_app\nTASK9_APP_PASSWORD=synthetic-app-only\n`, { mode: 0o600 });
+  writeFileSync(composeFile, `services:\n  ${databaseService}:\n    image: postgres:17\n    environment:\n      POSTGRES_DB: \${TASK9_DATABASE:?TASK9_DATABASE_REQUIRED}\n      POSTGRES_USER: \${TASK9_BOOTSTRAP_USER:?TASK9_BOOTSTRAP_USER_REQUIRED}\n      POSTGRES_PASSWORD: \${TASK9_BOOTSTRAP_PASSWORD:?TASK9_BOOTSTRAP_PASSWORD_REQUIRED}\n      APP_DATABASE_USER: \${TASK9_APP_USER:?TASK9_APP_USER_REQUIRED}\n      APP_DATABASE_PASSWORD: \${TASK9_APP_PASSWORD:?TASK9_APP_PASSWORD_REQUIRED}\n    volumes:\n      - type: bind\n        source: ${initScript}\n        target: /docker-entrypoint-initdb.d/010-init-app-role.sh\n        read_only: true\n      - type: bind\n        source: ${migration}\n        target: /fixtures/0001_initial.sql\n        read_only: true\n  app:\n    image: postgres:17\n    command: [\"sh\", \"-ceu\", \"sleep infinity\"]\n    volumes:\n      - type: bind\n        source: ${migration}\n        target: /app/migrations/postgres/0001_initial.sql\n        read_only: true\n`);
 }
 
 /** 所有 Docker 调用都明确 Compose 文件与 project，避免 Docker 默认项目名意外选择现有开发或验收容器。 */
@@ -263,7 +281,7 @@ function compose(argumentsList, options = {}) {
   // 归档校验必须把受控 custom dump 的 Buffer 真实送进容器 stdin；其余 Compose 命令继续忽略 stdin，
   // 防止测试进程意外继承终端输入或秘密。不能固定 ignore，否则 pg_restore 只能读取空归档而伪造恢复失败。
   const acceptsInput = Object.prototype.hasOwnProperty.call(options, "input");
-  return execFileSync("docker", ["compose", "-f", composeFile, "-p", projectName, ...argumentsList], {
+  return execFileSync("docker", ["compose", "--env-file", envFile, "-f", composeFile, "-p", projectName, ...argumentsList], {
     cwd: projectRoot,
     encoding: "utf8",
     ...options,
@@ -280,7 +298,7 @@ function startDatabase() {
 /** 等待只探测本项目普通角色；不能借 bootstrap 角色把错误 init 伪装成可恢复的应用数据库。 */
 function waitForDatabase() {
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    const probe = spawnSync("docker", ["compose", "-f", composeFile, "-p", projectName, "exec", "-T", databaseService, "sh", "-ceu", `PGPASSWORD=\"$APP_DATABASE_PASSWORD\" psql --host ${databaseService} --username \"$APP_DATABASE_USER\" --dbname \"$POSTGRES_DB\" --quiet --no-psqlrc --command 'SELECT 1'`], { encoding: "utf8" });
+    const probe = spawnSync("docker", ["compose", "--env-file", envFile, "-f", composeFile, "-p", projectName, "exec", "-T", databaseService, "sh", "-ceu", `PGPASSWORD=\"$APP_DATABASE_PASSWORD\" psql --host ${databaseService} --username \"$APP_DATABASE_USER\" --dbname \"$POSTGRES_DB\" --quiet --no-psqlrc --command 'SELECT 1'`], { encoding: "utf8" });
     if (probe.status === 0) return;
     execFileSync("sleep", ["1"]);
   }
@@ -353,17 +371,18 @@ function seedSourceFixture() {
 
 /** 所有备份目标均来自本测试固定常量；retention 参数仅用于边界断言，禁止测试默认 Docker project。 */
 function backup(retention = "2") {
-  return runBackupScript(["--compose-file", composeFile, "--project-name", projectName, "--database-service", databaseService, "--database", sourceDatabase, "--project-root", projectRoot, "--backup-dir", backupDirectory, "--retention", retention]);
+  return runBackupScript(["--compose-file", composeFile, "--env-file", envFile, "--project-name", projectName, "--database-service", databaseService, "--database", sourceDatabase, "--project-root", projectRoot, "--backup-dir", backupDirectory, "--retention", retention]);
 }
 
 /** 恢复只向白名单目标库发送 BACKUP_DIR 内的受控 dump，避免辅助函数扩大删除或覆盖范围。 */
 function restore(dump, database) {
-  return runRestoreScript(["--compose-file", composeFile, "--project-name", projectName, "--app-service", appService, "--database-service", databaseService, "--project-root", projectRoot, "--backup-dir", backupDirectory, "--dump", dump, "--database", database]);
+  return runRestoreScript(["--compose-file", composeFile, "--env-file", envFile, "--project-name", projectName, "--app-service", appService, "--database-service", databaseService, "--project-root", projectRoot, "--backup-dir", backupDirectory, "--dump", dump, "--database", database]);
 }
 
 /** 共用执行器捕获输出且拒绝合成密码；调用方再按备份/恢复各自公开 stdout 合同断言。 */
 function runScript(script, argumentsList) {
-  const result = spawnSync(script, argumentsList, { cwd: repositoryRoot, encoding: "utf8" });
+  // 从 Compose/项目目录外启动，模拟 DSM 计划任务的任意工作目录；成功只能来自显式绝对 env 文件，不能依赖 cwd 自动发现。
+  const result = spawnSync(script, argumentsList, { cwd: taskRoot, encoding: "utf8" });
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
   assert.doesNotMatch(output, /synthetic-(?:bootstrap|app)-only/, "脚本输出不得泄露容器密码");
   if (result.status !== 0) throw new Error(output || `脚本退出码 ${result.status}`);
@@ -373,7 +392,7 @@ function runScript(script, argumentsList) {
 /** 备份成功只能公开新归档路径，避免测试把 restore 固定成功消息误判为文件名。 */
 function runBackupScript(argumentsList) { const output = runScript(backupScript, argumentsList); /* macOS /var 是 /private/var 别名，脚本 canonicalize 后输出真实路径，测试必须比较同一安全边界。 */ const canonicalBackupDirectory = realpathSync(backupDirectory); assert.match(output, new RegExp(`^${canonicalBackupDirectory.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}/switch-price-monitor-${sourceFileSegment}-\\d{18}-\\d{8}T\\d{6}Z\\.dump$`)); return output; }
 /** 恢复成功使用固定无秘密消息；与备份路径合同分离，防止两种操作互相掩盖回归。 */
-function runRestoreScript(argumentsList) { const output = runScript(restoreScript, argumentsList); assert.equal(output, "恢复完成并通过迁移与核心表验证"); return output; }
+function runRestoreScript(argumentsList) { const output = runScript(restoreScript, argumentsList); assert.equal(output, "恢复完成并通过迁移与完整表集合验证"); return output; }
 
 /** 在 postgres:17 容器内真实列 archive，验证 18 位 sequence 命名和 custom 格式，不暴露 archive 内容。 */
 function assertCustomArchive(dump) {
@@ -384,7 +403,7 @@ function assertCustomArchive(dump) {
 
 /** bootstrap 仅创建白名单空库并交给普通 app owner；待测恢复脚本从不使用 bootstrap。 */
 function createEmptyDatabase(database) {
-  assert.match(database, /^(?:task9_fresh|task9_fixture|task9_view_only|task9_restore_failure|task9_checksum_failure|task9_admin_failure|task9_core_failure|task9_catalog_guard)$/);
+  assert.match(database, /^(?:task9_fresh|task9_fixture|task9_view_only|task9_restore_failure|task9_checksum_failure|task9_admin_failure|task9_core_failure|task9_required_table_failure|task9_catalog_guard)$/);
   compose(["exec", "-T", databaseService, "sh", "-ceu", `psql --username \"$POSTGRES_USER\" --dbname postgres --quiet --no-psqlrc --command \"DROP DATABASE IF EXISTS ${database}\"; psql --username \"$POSTGRES_USER\" --dbname postgres --quiet --no-psqlrc --command \"CREATE DATABASE ${database} OWNER $APP_DATABASE_USER\"`]);
 }
 
@@ -401,7 +420,7 @@ function countRestoreTemporaryArchives() { const output = compose(["exec", "-T",
  * 且数据库白名单阻止测试辅助函数查询 Task 2/8 或其他现有项目。
  */
 function countUserObjects(database) {
-  assert.match(database, /^(?:task9_restore_failure|task9_checksum_failure|task9_admin_failure|task9_core_failure)$/);
+  assert.match(database, /^(?:task9_restore_failure|task9_checksum_failure|task9_admin_failure|task9_core_failure|task9_required_table_failure)$/);
   const catalogQuery = `WITH user_namespaces AS (
     SELECT oid,nspname FROM pg_namespace WHERE nspname <> 'information_schema' AND nspname !~ '^pg_'
   ), objects AS (

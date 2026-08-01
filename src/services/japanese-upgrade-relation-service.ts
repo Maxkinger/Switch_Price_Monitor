@@ -26,14 +26,14 @@ export type JapaneseUpgradeConfirmationResult =
   | { status: "verified-automatic" | "verified-manual"; candidate: OfficialProductCandidate }
   | { status: "rejected" };
 
-/** 将根检索、Browser Run 与官方报价组合为三个窄入口；接口不暴露缓存、日志、D1 或重试能力。 */
+/** 将根检索、本地 Playwright 关系核验与官方报价组合为三个窄入口；接口不暴露缓存、日志、数据库或重试能力。 */
 export interface JapaneseUpgradeRelationService {
   discover(anchors: OfficialProductCandidate[]): Promise<Map<string, JapaneseUpgradeDiscoveryResult>>;
   resolveManual(anchor: OfficialProductCandidate, productUrl: string): Promise<OfficialProductCandidate | null>;
   verifyForConfirmation(items: JapaneseUpgradeConfirmationItem[]): Promise<Map<string, JapaneseUpgradeConfirmationResult>>;
 }
 
-/** 已批准的 Browser Run 深度核验上限；服务层须在任何官网或浏览器调用前强制执行，防止绕过低层适配器的配额保护。 */
+/** 已批准的本地浏览器深度核验上限；服务层须在任何官网或浏览器调用前强制执行，防止绕过低层适配器的资源保护。 */
 const batchLimit = 3;
 
 /** 重复结果键无法由 Map 保留为两项独立结论；使用路由已识别的受控错误类型整体拒绝，避免后项覆盖前项。 */
@@ -55,7 +55,7 @@ interface ConfirmationPlan {
 
 /**
  * 创建无状态日区升级包关系服务。所有依赖都由调用方注入，生产路径不会自行访问网络；
- * 每个入口仅创建内部 AbortController 信号，使外部调用可被 Worker 生命周期统一约束而不扩展公共 API。
+ * 每个入口仅创建内部 AbortController 信号，使外部调用可被 Node 请求生命周期统一约束而不扩展公共 API。
  */
 export function createJapaneseUpgradeRelationService(
   roots: JapaneseUpgradeRootSearch,
@@ -88,7 +88,7 @@ export function createJapaneseUpgradeRelationService(
       let browserResults: Map<string, JapaneseUpgradeBrowserResult> | null = null;
       if (uniqueRoots.length > 0) {
         try {
-          // 本入口对去重后的根只启动一次批处理，确保同一请求不会为共享根重复消耗 Browser Run 配额。
+          // 本入口对去重后的根只启动一次本地浏览器批处理，确保同一请求不会为共享根重复消耗 Chromium 资源。
           browserResults = await browser.resolve(uniqueRoots, controller.signal);
         } catch {
           // 批处理异常没有可供人工回退的单项状态；发现阶段统一安全降级，绝不回传异常正文。
@@ -132,7 +132,7 @@ export function createJapaneseUpgradeRelationService(
       const controller = new AbortController();
       let root: JapaneseUpgradeRootCandidate | null;
       try {
-        // 此处故意不调用 Browser Run：管理员的链接只形成待复核候选，最终保存前仍由 verifyForConfirmation 重新检查关系。
+        // 此处故意不调用本地 Playwright 核验：管理员的链接只形成待复核候选，最终保存前仍由 verifyForConfirmation 重新检查关系。
         root = await roots.search(anchor, controller.signal);
       } catch {
         return null;
@@ -233,7 +233,7 @@ function assertBatchLimit(length: number): void {
 }
 
 /**
- * 在创建任何 AbortController、官网搜索、Browser Run 或价格请求前拒绝重复业务键。
+ * 在创建任何 AbortController、官网搜索、本地浏览器或价格请求前拒绝重复业务键。
  * 这些键正是两个公开入口返回 Map 的键；若允许重复，后项会覆盖前项并使管理员无法知道哪一项真正被复核。
  */
 function assertNoDuplicateKeys<T>(items: T[], readKey: (item: T) => string): void {
@@ -269,7 +269,7 @@ function isUsableRoot(root: JapaneseUpgradeRootCandidate | null): root is Japane
     && typeof root.publisher === "string" && root.publisher.trim() !== "";
 }
 
-/** 对根 URL 去重但不缓存任何外部响应；仅避免同一批 Browser Run 为同一入口创建重复上下文。 */
+/** 对根 URL 去重但不缓存任何外部响应；仅避免同一本地 Playwright 批次为同一入口创建重复上下文。 */
 function uniqueUsableRoots(roots: Iterable<JapaneseUpgradeRootCandidate | null>): JapaneseUpgradeRootCandidate[] {
   const unique = new Map<string, JapaneseUpgradeRootCandidate>();
   for (const root of roots) if (isUsableRoot(root) && !unique.has(root.productUrl)) unique.set(root.productUrl, root);

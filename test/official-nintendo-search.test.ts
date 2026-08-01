@@ -133,7 +133,7 @@ describe("official Nintendo product search", () => {
 
   it("parses Hong Kong official search RSC data into an eShop candidate", async () => {
     // 港区官网搜索结果将商品页写成 ec.nintendo.com 模板；适配器只能替换同一条官方数据中的 NSUID，不能接受页面中任意外链。
-    // Cloudflare Worker 会被港区 Magento 商城搜索拒绝，因此名称搜索只能访问经生产验证可用的普通香港官网一次；关联商品须在后续详情解析中补齐。
+    // 迁移前 Cloudflare Worker 探测曾被港区 Magento 商城搜索拒绝；当前 Node 测试仍锁定只访问已验证的普通香港官网一次，关联商品由后续详情解析补齐。
     const fetchOfficialSearch = vi.fn<typeof fetch>().mockResolvedValue(new Response(hongKongSearchHtml()));
     const search = createOfficialNintendoSearch(fetchOfficialSearch);
 
@@ -155,8 +155,8 @@ describe("official Nintendo product search", () => {
     expect(String(fetchOfficialSearch.mock.calls[0]?.[0])).toBe("https://www.nintendo.com/hk/search?k=Overcooked+2");
   });
 
-  it("falls back safely when the single Hong Kong official search endpoint rejects the Worker", async () => {
-    // HTTP 拒绝只能说明本次普通香港官网搜索不可用；响应不能附带临时网络诊断，也不能再次访问已知会拒绝 Worker 的 Magento 入口。
+  it("falls back safely when the single Hong Kong official search endpoint rejects the request", async () => {
+    // HTTP 拒绝只能说明本次普通香港官网搜索不可用；响应不能附带临时网络诊断，也不能再次访问迁移前已证实不可用的 Magento 入口。
     const fetchOfficialSearch = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 403 }));
     const search = createOfficialNintendoSearch(fetchOfficialSearch);
 

@@ -2,7 +2,7 @@ import type { JapaneseUpgradeRootCandidate } from "./official-japanese-upgrade-r
 
 /**
  * 日区升级包关系核验的跨平台契约与纯 URL 规则。
- * 此模块不导入 Browser Binding、Cloudflare 类型或 Playwright，使 Node 运行时可复用相同的业务结果、批量限制和输入安全约束；实际浏览器生命周期仅由 Worker 适配器实现。
+ * 此模块不导入 Playwright，使业务结果、批量限制和输入安全约束与具体浏览器驱动解耦；实际浏览器生命周期仅由本地 Playwright 适配器实现。
  */
 
 /** 单项关系核验只返回已脱敏的业务分类，绝不向上层暴露页面正文、会话标识或底层运行时异常。 */

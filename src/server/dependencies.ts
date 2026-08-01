@@ -94,7 +94,7 @@ export function createApiDispatcher(
 
 /**
  * Node 入口只在此处把一个 AppDatabase 装配为 PostgreSQL 仓储、平台中立服务与既有路由。
- * 不传入连接串、pg 客户端、process.env 或 Telegram 凭据；所有 API 顺序与迁移期 Worker 保持一致。
+ * 不传入连接串、pg 客户端、process.env 或 Telegram 凭据；所有 API 顺序由当前 Node 同源入口统一维护。
  */
 export function createServerDependencies(
   database: AppDatabase,

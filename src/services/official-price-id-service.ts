@@ -1,7 +1,7 @@
 import type { PriceProvider, ProductType, RegionalProduct } from "../providers/types";
 
 /**
- * 商品确认界面提交的最小公开候选信息。它尚未写入 D1；管理员看到来源预览并确认后，
+ * 商品确认界面提交的最小公开候选信息。它尚未写入 PostgreSQL；管理员看到来源预览并确认后，
  * 后续持久化流程才会创建地区商品，因此取消操作不会留下错误价格 ID 或半成品订阅。
  */
 export interface OfficialPriceIdCandidate {

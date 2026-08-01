@@ -13,7 +13,7 @@ const regionCurrencies: Record<RegionCode, string> = {
 };
 
 /**
- * 地区官方来源注册表把“哪个地区可以使用哪种任天堂公开入口”集中在 Worker 侧。
+ * 地区官方来源注册表把“哪个地区可以使用哪种任天堂公开入口”集中在 Node 服务端。
  * 它只返回已验证或具备严格结构校验的官方提供方；第三方来源不会在这里注册，防止尚未获准的站点被意外请求。
  */
 export class OfficialProviderRegistry {

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { evaluateHealthTransition, evaluateOfficialDrop, evaluateTarget } from "../src/services/price-rules";
 
 /**
- * 价格规则保持纯函数，测试不接触 D1、Telegram 或外部商店。
+ * 价格规则保持纯函数，测试不接触 PostgreSQL、Telegram 或外部商店。
  * 这保证通知判断在采集重试、日报生成或未来 UI 改造后仍有稳定且可审计的业务语义。
  */
 describe("price monitoring rules", () => {
