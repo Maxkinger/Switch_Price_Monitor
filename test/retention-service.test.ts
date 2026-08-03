@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { priceRetentionCutoff, fetchLogRetentionCutoff } from "../src/worker/services/retention-service";
+import { priceRetentionCutoff, fetchLogRetentionCutoff } from "../src/services/retention-service";
 
 describe("retention cutoffs", () => {
   it("calculates calendar-year price cutoffs and keeps forever history", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createOfficialNintendoSearch } from "../src/worker/providers/official-nintendo-search";
+import { createOfficialNintendoSearch } from "../src/providers/official-nintendo-search";
 
 /**
  * 官方商品搜索适配器必须把任天堂官网公开搜索结果收窄为可确认候选，测试始终注入本地响应，

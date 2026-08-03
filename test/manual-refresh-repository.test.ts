@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { ManualRefreshRepository } from "../src/worker/repositories/manual-refresh-repository";
+import { ManualRefreshRepository } from "../src/repositories/manual-refresh-repository";
 
 /**
  * 临时无冷却阶段的手动刷新仍只保留最近一次执行时间；测试覆盖连续请求都可进入采集，

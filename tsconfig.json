@@ -19,5 +19,6 @@
       "vite/client"
     ]
   },
+  // 以整个 src 作为编译边界，使 routes、services、repositories 和 providers 的平台中立根与暂留的 Worker 入口同时受严格检查；迁移期间不得因目录拆分漏检跨平台导入。
   "include": ["src", "test", "vite.config.ts", "vitest.config.mts"]
 }

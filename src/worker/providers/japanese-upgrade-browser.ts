@@ -1,6 +1,6 @@
 import { launch, type BrowserWorker } from "@cloudflare/playwright";
 
-import type { JapaneseUpgradeRootCandidate } from "./official-japanese-upgrade-root";
+import type { JapaneseUpgradeRootCandidate } from "../../providers/official-japanese-upgrade-root";
 
 /** 单项 Browser Run 关系核验只返回已脱敏的业务分类，绝不向上层暴露页面正文、会话标识或底层异常。 */
 export type JapaneseUpgradeBrowserResult =

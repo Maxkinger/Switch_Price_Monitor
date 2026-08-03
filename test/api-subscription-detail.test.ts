@@ -2,9 +2,9 @@ import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import worker, { type Env } from "../src/worker";
-import { handleSubscriptionRoute } from "../src/worker/routes/subscription-routes";
-import type { RegionResolution } from "../src/worker/services/official-product-discovery-service";
-import type { CompletionRegionsInput, CompletionRegionsResult } from "../src/worker/services/subscription-region-completion-service";
+import { handleSubscriptionRoute } from "../src/routes/subscription-routes";
+import type { RegionResolution } from "../src/services/official-product-discovery-service";
+import type { CompletionRegionsInput, CompletionRegionsResult } from "../src/services/subscription-region-completion-service";
 
 /**
  * 订阅详情读取接口测试覆盖三项管理员可见的业务事实：详情仅对已登录会话开放、

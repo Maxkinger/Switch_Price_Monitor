@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import worker, { type Env } from "../src/worker";
 import { JapaneseUpgradeBatchLimitError } from "../src/worker/providers/japanese-upgrade-browser";
-import { handleProductRoute } from "../src/worker/routes/product-routes";
-import { SubscriptionPreviewService } from "../src/worker/services/subscription-preview-service";
+import { handleProductRoute } from "../src/routes/product-routes";
+import { SubscriptionPreviewService } from "../src/services/subscription-preview-service";
 
 /**
  * 商品发现 API 必须先验证管理员会话，再调用注入的发现服务。测试使用本地服务桩件，

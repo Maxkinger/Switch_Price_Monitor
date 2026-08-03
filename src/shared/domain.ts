@@ -1,4 +1,4 @@
-import type { ProductType } from "../worker/providers/types";
+import type { ProductType } from "../providers/types";
 
 /**
  * 前后端共用的核心业务类型。这里集中枚举可持久化的受控值，

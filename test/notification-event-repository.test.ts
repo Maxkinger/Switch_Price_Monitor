@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { NotificationEventRepository } from "../src/worker/repositories/notification-event-repository";
+import { NotificationEventRepository } from "../src/repositories/notification-event-repository";
 
 describe("NotificationEventRepository", () => {
   beforeEach(async () => {

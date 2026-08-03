@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import * as schedulerService from "../src/worker/services/scheduler-service";
-import { runPendingNotificationDelivery, type PendingNotificationDeliveryDependencies, type PendingNotificationDeliveryResult } from "../src/worker/services/scheduler-service";
-import type { PendingNotificationEvent } from "../src/worker/repositories/notification-event-repository";
-import type { DailyReportSubscription, TelegramMessage } from "../src/worker/services/report-service";
+import * as schedulerService from "../src/services/scheduler-service";
+import { runPendingNotificationDelivery, type PendingNotificationDeliveryDependencies, type PendingNotificationDeliveryResult } from "../src/services/scheduler-service";
+import type { PendingNotificationEvent } from "../src/repositories/notification-event-repository";
+import type { DailyReportSubscription, TelegramMessage } from "../src/services/report-service";
 
 /**
  * 此测试函数类型引用生产端口，确保读取 pending、调用既有 Telegram 边界和成功回写审计状态的契约不会随重构漂移。

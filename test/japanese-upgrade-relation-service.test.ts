@@ -2,12 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { OfficialProductCandidate } from "../src/shared/domain";
 import { JapaneseUpgradeBatchLimitError } from "../src/worker/providers/japanese-upgrade-browser";
-import type { JapaneseUpgradeRootCandidate } from "../src/worker/providers/official-japanese-upgrade-root";
+import type { JapaneseUpgradeRootCandidate } from "../src/providers/official-japanese-upgrade-root";
 import {
   createJapaneseUpgradeRelationService,
   japaneseUpgradeConfirmationKey,
-} from "../src/worker/services/japanese-upgrade-relation-service";
-import { officialCandidateKey } from "../src/worker/services/official-product-discovery-service";
+} from "../src/services/japanese-upgrade-relation-service";
+import { officialCandidateKey } from "../src/services/official-product-discovery-service";
 
 /**
  * 关系服务测试只替换三个窄外部边界；断言始终针对服务输出的候选或拒绝结论，

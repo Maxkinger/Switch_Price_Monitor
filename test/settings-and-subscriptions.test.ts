@@ -1,8 +1,8 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { SettingsRepository } from "../src/worker/repositories/settings-repository";
-import { SubscriptionRepository } from "../src/worker/repositories/subscription-repository";
+import { SettingsRepository } from "../src/repositories/settings-repository";
+import { SubscriptionRepository } from "../src/repositories/subscription-repository";
 
 describe("settings and subscriptions repositories", () => {
   // 两个仓储共享同一临时 D1，以验证设置单例与订阅关系的实际 SQL 行为。

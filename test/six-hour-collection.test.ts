@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { runSixHourCollection } from "../src/worker/services/scheduler-service";
+import { runSixHourCollection } from "../src/services/scheduler-service";
 
 describe("runSixHourCollection", () => {
   it("runs maintenance and one collection without reading manual refresh state", async () => {

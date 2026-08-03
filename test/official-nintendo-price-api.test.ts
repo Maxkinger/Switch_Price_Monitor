@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { createNintendoOfficialPriceQuoteResolver, createNintendoPriceApiProvider } from "../src/worker/providers/official-nintendo-price-api";
-import { ProviderNetworkError, type RegionalProduct } from "../src/worker/providers/types";
+import { createNintendoOfficialPriceQuoteResolver, createNintendoPriceApiProvider } from "../src/providers/official-nintendo-price-api";
+import { ProviderNetworkError, type RegionalProduct } from "../src/providers/types";
 
 /**
  * 任天堂公开价格接口测试只使用内存响应，既验证 JP/HK 请求中的地区与价格 ID 绑定，

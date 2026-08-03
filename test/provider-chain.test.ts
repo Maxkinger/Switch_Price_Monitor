@@ -6,7 +6,7 @@ import {
   type PriceProvider,
   type ProviderResult,
   type RegionalProduct,
-} from "../src/worker/providers/provider-chain";
+} from "../src/providers/provider-chain";
 
 /**
  * 提供方链测试仅使用内存桩件，不向任天堂或第三方网站发出请求。

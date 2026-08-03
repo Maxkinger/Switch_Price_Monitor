@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { OfficialProductCandidate, OfficialProductSearch } from "../src/shared/domain";
-import { officialCandidateKey, OfficialProductDiscoveryService } from "../src/worker/services/official-product-discovery-service";
+import { officialCandidateKey, OfficialProductDiscoveryService } from "../src/services/official-product-discovery-service";
 
 /** 日区升级包人工核验只允许这一条完整、无参数的官方软件页；测试不能以模糊链接掩盖服务端关系证明的边界。 */
 const upgradeUrl = "https://store-jp.nintendo.com/item/software/D70050000064985/";

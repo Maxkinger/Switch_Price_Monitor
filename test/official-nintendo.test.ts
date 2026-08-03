@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { createOfficialNintendoProvider } from "../src/worker/providers/official-nintendo";
-import type { RegionalProduct } from "../src/worker/providers/types";
+import { createOfficialNintendoProvider } from "../src/providers/official-nintendo";
+import type { RegionalProduct } from "../src/providers/types";
 
 /**
  * 官方页解析测试使用最小化 JSON-LD 样本，不调用真实任天堂站点。

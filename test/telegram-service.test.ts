@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { TelegramService } from "../src/worker/services/telegram-service";
+import { TelegramService } from "../src/services/telegram-service";
 
 describe("TelegramService", () => {
   it("sends report pages in order and returns safe per-page results without exposing credentials", async () => {

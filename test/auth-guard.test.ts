@@ -1,8 +1,8 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { AuthService } from "../src/worker/services/auth-service";
-import { requireAdmin } from "../src/worker/routes/auth-guard";
+import { AuthService } from "../src/services/auth-service";
+import { requireAdmin } from "../src/routes/auth-guard";
 
 /**
  * 受保护 API 的守卫测试直接使用真实 D1 会话记录，确保未来路由不会因为仅检查 Cookie 是否存在而被伪造请求绕过。

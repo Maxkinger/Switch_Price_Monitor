@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { CollectionService, type PriceSnapshotWriter, type RegionalPriceCollector } from "../src/worker/services/collection-service";
-import type { PriceProvider, ProviderResult, RegionalProduct } from "../src/worker/providers/types";
+import { CollectionService, type PriceSnapshotWriter, type RegionalPriceCollector } from "../src/services/collection-service";
+import type { PriceProvider, ProviderResult, RegionalProduct } from "../src/providers/types";
 
 /**
  * 采集服务测试以显式内存端口替代 D1 和网络提供方，验证业务结果而不是某个请求库实现。
