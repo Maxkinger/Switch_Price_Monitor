@@ -1,23 +1,7 @@
-/** 预留通知事件所需的最小公开数据；不允许调用方传入消息正文、Token、Chat ID 或任意状态值。 */
-export interface NotificationEventReservation {
-  regionalProductId: string | null;
-  eventType: "collection-failure" | "collection-recovered" | "official-price-drop" | "target-price";
-  dedupeKey: string;
-  createdAt: string;
-}
+import type { NotificationEventReservation, PendingNotificationEvent } from "./ports";
 
-/**
- * 待发送读取模型只暴露格式化和确认投递需要的字段，隐藏自增主键及任何未来内部审计列。
- * 游戏名和地区标签来自关联主档，供 Telegram 生成可读文本；关联记录被删除时允许为 null，发送器必须安全降级而非泄露内部标识。
- */
-export interface PendingNotificationEvent {
-  regionalProductId: string | null;
-  eventType: NotificationEventReservation["eventType"];
-  dedupeKey: string;
-  createdAt: string;
-  gameNameZh: string | null;
-  regionCode: string | null;
-}
+// 迁移期间从旧仓储路径重导出平台中立通知 DTO，保证尚未切换的 Worker 调度测试无需同步改动行为。
+export type { NotificationEventReservation, PendingNotificationEvent } from "./ports";
 
 /**
  * 通知事件的 D1 去重边界。唯一键由业务层以地区商品、事件类型和状态变迁时刻组成，

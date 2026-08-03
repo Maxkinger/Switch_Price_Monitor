@@ -1,42 +1,78 @@
-/** 导出行仅列出价格分析所需字段，服务中不存在认证或第三方密钥列，避免未来 SELECT * 泄露秘密。 */
-interface PriceExportRow { regionCode: string; amountMinor: number; currency: string; cnyFen: number | null; source: string; capturedAt: string; }
+import type { ExportReader } from "../repositories/ports";
 
-/** CSV 导出服务；每个种类独立查询与字段白名单，严禁复用可能包含秘密字段的管理查询。 */
+/** 价格导出白名单只包含分析字段；认证、通知、内部主键和外部响应不属于该模型。 */
+export interface PriceExportRow {
+  regionCode: string;
+  amountMinor: number;
+  currency: string;
+  cnyFen: number | null;
+  source: string;
+  capturedAt: string;
+}
+
+/** 订阅导出允许空地区联接；enabled 固定为旧 CSV 契约的 0/1，而不是数据库方言相关布尔文本。 */
+export interface SubscriptionExportRow {
+  subscriptionId: string;
+  gameId: string;
+  enabled: number;
+  regionCode: string | null;
+  regionalProductId: string | null;
+}
+
+/** 诊断日志导出只含脱敏摘要；地区商品删除后 regionCode 可空，消息仍必须经过 CSV 转义。 */
+export interface FetchLogExportRow {
+  regionCode: string | null;
+  source: string;
+  status: string;
+  message: string | null;
+  capturedAt: string;
+}
+
+/**
+ * CSV 服务只委托三个固定读取方法，不接受表名、列名或通用查询输入。
+ * 固定端口使未来认证、会话或 Telegram 字段即使新增，也不能通过调用参数进入任何导出。
+ */
 export class ExportService {
-  public constructor(private readonly database: D1Database) {}
+  public constructor(private readonly reader: ExportReader) {}
+
   public async pricesCsv(): Promise<string> {
-    const result = await this.database.prepare(
-      `SELECT products.region_code AS regionCode, snapshots.amount_minor AS amountMinor, snapshots.currency AS currency,
-              snapshots.cny_fen AS cnyFen, snapshots.source AS source, snapshots.captured_at AS capturedAt
-       FROM price_snapshots AS snapshots INNER JOIN regional_products AS products ON products.id = snapshots.regional_product_id
-       ORDER BY snapshots.captured_at ASC, snapshots.id ASC`,
-    ).all<PriceExportRow>();
-    const rows = result.results.map((row) => [row.regionCode, row.amountMinor, row.currency, row.cnyFen ?? "", row.source, row.capturedAt].map(csvCell).join(","));
-    return ["region_code,amount_minor,currency,cny_fen,source,captured_at", ...rows].join("\r\n");
+    return this.reader.pricesCsv();
   }
 
-  /** 导出订阅配置与已确认地区商品，不含管理员、密码或会话字段，方便管理员备份监控范围。 */
   public async subscriptionsCsv(): Promise<string> {
-    const result = await this.database.prepare(
-      `SELECT subscriptions.id AS subscriptionId, subscriptions.game_id AS gameId, subscriptions.enabled AS enabled,
-              products.region_code AS regionCode, products.id AS regionalProductId
-       FROM subscriptions LEFT JOIN subscription_regions ON subscription_regions.subscription_id = subscriptions.id
-       LEFT JOIN regional_products AS products ON products.id = subscription_regions.regional_product_id
-       ORDER BY subscriptions.created_at ASC, products.region_code ASC`,
-    ).all<{ subscriptionId: string; gameId: string; enabled: number; regionCode: string | null; regionalProductId: string | null }>();
-    return ["subscription_id,game_id,enabled,region_code,regional_product_id", ...result.results.map((row) => [row.subscriptionId, row.gameId, row.enabled, row.regionCode ?? "", row.regionalProductId ?? ""].map(csvCell).join(","))].join("\r\n");
+    return this.reader.subscriptionsCsv();
   }
 
-  /** 导出可诊断的安全日志摘要；日志消息经 CSV 转义，但不含原始外部响应、令牌或 Cookie。 */
   public async fetchLogsCsv(): Promise<string> {
-    const result = await this.database.prepare(
-      `SELECT products.region_code AS regionCode, logs.source AS source, logs.status AS status, logs.message AS message, logs.captured_at AS capturedAt
-       FROM fetch_logs AS logs LEFT JOIN regional_products AS products ON products.id = logs.regional_product_id
-       ORDER BY logs.captured_at ASC, logs.id ASC`,
-    ).all<{ regionCode: string | null; source: string; status: string; message: string | null; capturedAt: string }>();
-    return ["region_code,source,status,message,captured_at", ...result.results.map((row) => [row.regionCode ?? "", row.source, row.status, row.message ?? "", row.capturedAt].map(csvCell).join(","))].join("\r\n");
+    return this.reader.fetchLogsCsv();
   }
 }
 
-/** 将引号包裹和双引号转义集中处理，防止未来文本来源或时间字段破坏 CSV 列边界。 */
-function csvCell(value: string | number): string { return `"${String(value).replaceAll('"', '""')}"`; }
+/** 价格 CSV 使用固定列顺序和 CRLF，人民币缺失保持空单元格而不是零。 */
+export function formatPricesCsv(rows: PriceExportRow[]): string {
+  return [
+    "region_code,amount_minor,currency,cny_fen,source,captured_at",
+    ...rows.map((row) => [row.regionCode, row.amountMinor, row.currency, row.cnyFen ?? "", row.source, row.capturedAt].map(csvCell).join(",")),
+  ].join("\r\n");
+}
+
+/** 订阅 CSV 只导出监控配置；空地区保持两个空单元格，BOOLEAN 已由仓储明确映射为兼容的 0/1。 */
+export function formatSubscriptionsCsv(rows: SubscriptionExportRow[]): string {
+  return [
+    "subscription_id,game_id,enabled,region_code,regional_product_id",
+    ...rows.map((row) => [row.subscriptionId, row.gameId, row.enabled, row.regionCode ?? "", row.regionalProductId ?? ""].map(csvCell).join(",")),
+  ].join("\r\n");
+}
+
+/** 诊断日志 CSV 不含原始响应、令牌或 Cookie；可空地区和消息统一为空单元格并执行标准转义。 */
+export function formatFetchLogsCsv(rows: FetchLogExportRow[]): string {
+  return [
+    "region_code,source,status,message,captured_at",
+    ...rows.map((row) => [row.regionCode ?? "", row.source, row.status, row.message ?? "", row.capturedAt].map(csvCell).join(",")),
+  ].join("\r\n");
+}
+
+/** 将引号包裹和双引号转义集中处理，防止文本来源、日志摘要或时间字段破坏 CSV 列边界。 */
+function csvCell(value: string | number): string {
+  return `"${String(value).replaceAll('"', '""')}"`;
+}

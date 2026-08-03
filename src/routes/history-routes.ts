@@ -1,3 +1,4 @@
+import { HistoryRepository } from "../repositories/d1/history-repository";
 import { HistoryService } from "../services/history-service";
 import { requireAdmin } from "./auth-guard";
 
@@ -9,5 +10,6 @@ export async function handleHistoryRoute(request: Request, database: D1Database)
   const subscriptionId = url.searchParams.get("subscriptionId")?.trim();
   if (!subscriptionId) return Response.json({ code: "VALIDATION_ERROR", error: "订阅标识无效。" }, { status: 422 });
   const region = url.searchParams.get("region")?.trim() || null;
-  return Response.json(await new HistoryService(database).list(subscriptionId, region));
+  // 过渡 D1 仓储实现新端口，路由仍保留现有数据库参数与认证流程，避免提前进入 Node HTTP 迁移范围。
+  return Response.json(await new HistoryService(new HistoryRepository(database)).list(subscriptionId, region));
 }

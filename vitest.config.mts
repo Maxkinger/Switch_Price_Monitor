@@ -2,6 +2,22 @@ import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
 
 /**
+ * 迁移中的读路径测试保留原文件名，以便逐组对照旧 D1 断言并执行实施计划指定的 focused 命令。
+ * 显式清单同时把这些文件排除出 Worker 项目并加入 Node/PostgreSQL 项目，避免同一 destructive 测试被两个运行时重复执行。
+ */
+const postgresReadTestFiles = [
+  "test/collection-repository.test.ts",
+  "test/exchange-rate-repository.test.ts",
+  "test/notification-event-repository.test.ts",
+  "test/price-repository.test.ts",
+  "test/product-health-service.test.ts",
+  "test/retention-repository.test.ts",
+  "test/schema-and-repositories.test.ts",
+  "test/settings-and-subscriptions.test.ts",
+  "test/subscription-detail-repository.test.ts",
+];
+
+/**
  * 将既有 Worker/D1 测试与新增 PostgreSQL 集成测试分到各自真实运行时：
  * Worker 项目继续验证 D1、Web Crypto 与 Request/Cookie，PostgreSQL 项目则使用 Node 驱动访问明确指定的可丢弃测试库。
  * 两类测试不得共享 setupFiles，避免旧 D1 迁移误作用于 PostgreSQL，也防止数据库测试读取任何生产绑定或秘密配置。
@@ -19,7 +35,7 @@ export default defineConfig({
           name: "worker",
           // Worker 项目排除 PostgreSQL 文件；这些文件依赖 Node 的文件系统、加密和 TCP 能力，不能装载进 Miniflare。
           include: ["test/**/*.test.ts"],
-          exclude: ["test/postgres-*.test.ts"],
+          exclude: ["test/postgres-*.test.ts", ...postgresReadTestFiles],
           setupFiles: ["./test/apply-migrations.ts"],
         },
       },
@@ -27,8 +43,8 @@ export default defineConfig({
         test: {
           name: "postgres",
           environment: "node",
-          // 数据库测试只连接 TEST_DATABASE_URL 指向的 disposable 实例；串行文件执行避免跨文件清理互相覆盖约束验证现场。
-          include: ["test/postgres-*.test.ts"],
+          // 数据库测试只连接 TEST_DATABASE_URL 指向的 disposable 实例；显式加入迁移清单，并串行执行以避免跨文件重建 schema 互相覆盖现场。
+          include: ["test/postgres-*.test.ts", ...postgresReadTestFiles],
           fileParallelism: false,
         },
       },

@@ -1,45 +1,7 @@
-/**
- * 订阅详情的单笔价格快照。金额始终沿用数据库中的最小货币单位与人民币分，
- * 使浏览器只负责格式化而不会重新计算汇率、误把缺失值当成零或伪装价格来源。
- */
-export interface SubscriptionDetailPriceSnapshot {
-  amountMinor: number;
-  cnyFen: number | null;
-  source: string;
-  capturedAt: string;
-}
+import type { SubscriptionDetail, SubscriptionDetailPriceSnapshot } from "./ports";
 
-/**
- * 已确认地区商品的详情行。`monitored` 与商品确认状态分离：前者只表示当前订阅是否采集它，
- * 后者已经由地区商品写入流程保证，因而详情页只能在这些受控 ID 之间编辑，不能输入任意商品 ID。
- */
-export interface SubscriptionDetailRegion {
-  regionalProductId: string;
-  regionCode: string;
-  currency: string;
-  monitored: boolean;
-  current: SubscriptionDetailPriceSnapshot | null;
-  historicalLow: SubscriptionDetailPriceSnapshot | null;
-  isStale: boolean;
-}
-
-/**
- * Worker 对浏览器承诺的订阅详情读取模型。它刻意不含会话、恢复码、Telegram 配置、商品 URL、
- * 来源原始响应或数据库错误，从而让详情页获得所需业务数据但不会扩大管理员敏感配置的暴露面。
- */
-export interface SubscriptionDetail {
-  subscriptionId: string;
-  game: {
-    id: string;
-    nameZh: string;
-    nameEn: string;
-    productType: string;
-  };
-  enabled: boolean;
-  globalTargetCnyFen: number | null;
-  regionTargets: Array<{ regionCode: string; targetAmountMinor: number }>;
-  regions: SubscriptionDetailRegion[];
-}
+// 迁移期间继续从旧路径重导出平台中立 DTO，避免尚未切换的 Worker 路由和测试因类型移动发生无关行为变化。
+export type { SubscriptionDetail, SubscriptionDetailPriceSnapshot, SubscriptionDetailRegion } from "./ports";
 
 /** 订阅与游戏联表后的基础行；不存在时仓储返回 null，由服务层转换为安全的业务 404。 */
 interface SubscriptionDetailRow {

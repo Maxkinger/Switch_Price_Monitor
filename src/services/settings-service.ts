@@ -1,5 +1,5 @@
 import { initialRegionCodes, themes, type AppSettings, type RegionCode } from "../shared/domain";
-import { SettingsRepository } from "../repositories/settings-repository";
+import type { SettingsStore } from "../repositories/ports";
 
 /** 设置记录异常缺失时使用明确错误，避免在已登录但未完成初始化的异常状态下返回空对象。 */
 export class SettingsNotInitializedError extends Error {}
@@ -15,7 +15,7 @@ export type SettingsPatch = Partial<Omit<AppSettings, "createdAt">>;
  * 因此管理员可以安全地更改默认搜索区而不改变历史价格的含义。
  */
 export class SettingsService {
-  public constructor(private readonly settings: SettingsRepository) {}
+  public constructor(private readonly settings: SettingsStore) {}
 
   public async get(): Promise<AppSettings> {
     const current = await this.settings.get();
@@ -32,7 +32,7 @@ export class SettingsService {
       enabledRegions: patch.enabledRegions ?? current.enabledRegions,
       defaultSearchRegion: patch.defaultSearchRegion ?? current.defaultSearchRegion,
     };
-    validate(next);
+    validateSettings(next);
     await this.settings.save(next, now);
     return next;
   }
@@ -42,8 +42,8 @@ export class SettingsService {
  * 所有设置校验集中在持久化前执行。地区数组去重并限制为当前五区，默认区必须包含在数组中，
  * 否则商品发现会在一个未启用地区发起请求而产生无法解释的失败。
  */
-function validate(settings: AppSettings): void {
-  if (settings.enabledRegions.length === 0 || settings.enabledRegions.some((region) => !isRegionCode(region)) || new Set(settings.enabledRegions).size !== settings.enabledRegions.length) {
+export function validateSettings(settings: AppSettings): void {
+  if (!Array.isArray(settings.enabledRegions) || settings.enabledRegions.length === 0 || settings.enabledRegions.some((region) => !isRegionCode(region)) || new Set(settings.enabledRegions).size !== settings.enabledRegions.length) {
     throw new SettingsValidationError("请至少选择一个不重复的受支持地区。");
   }
   if (!settings.enabledRegions.includes(settings.defaultSearchRegion)) {
@@ -61,7 +61,7 @@ function isRegionCode(value: unknown): value is RegionCode {
   return typeof value === "string" && initialRegionCodes.includes(value as RegionCode);
 }
 
-/** Intl 是 Worker 标准运行时能力；构造失败表示并非可用的 IANA 时区，日报调度不能接受它。 */
+/** Intl 是浏览器、Worker 与 Node 共用的标准能力；构造失败表示并非可用的 IANA 时区，日报调度不能接受它。 */
 function isTimeZone(value: string): boolean {
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: value });

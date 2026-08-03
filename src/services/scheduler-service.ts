@@ -1,5 +1,5 @@
 import type { AppSettings } from "../shared/domain";
-import type { PendingNotificationEvent } from "../repositories/notification-event-repository";
+import type { PendingNotificationEvent } from "../repositories/ports";
 import { buildDailyReport, type DailyReportSubscription, type TelegramMessage } from "./report-service";
 import type { RetentionCleanupResult } from "./retention-service";
 import type { TelegramDeliveryResult } from "./telegram-service";
@@ -19,7 +19,7 @@ export interface DailyReportTelegramSender {
   send(messages: TelegramMessage[]): Promise<TelegramDeliveryResult[]>;
 }
 
-/** 待发送事件读取端口只提供未确认消息；调度器不直接访问 D1，从而能单独验证失败重试与投递审计边界。 */
+/** 待发送事件读取端口只提供未确认消息；调度器不直接访问具体数据库，从而能单独验证失败重试与投递审计边界。 */
 export interface PendingNotificationEventReader {
   pending(): Promise<PendingNotificationEvent[]>;
 }
@@ -99,7 +99,7 @@ export type PendingNotificationDeliveryResult =
 
 /**
  * 在每分钟 Cron 唤醒时按管理员时区决定是否发送日报。只有命中精确 HH:mm 且 Telegram Secret 完整时
- * 才读取价格和发送消息，因此配置缺失、非日报分钟都不会扩大 D1 读取或外部网络访问。
+ * 才读取价格和发送消息，因此配置缺失、非日报分钟都不会扩大数据库读取或外部网络访问。
  */
 export async function runScheduled(now: string, dependencies: SchedulerDependencies): Promise<ScheduledResult> {
   const settings = await dependencies.settings.get();

@@ -1,3 +1,4 @@
+import { ExportRepository } from "../repositories/d1/export-repository";
 import { ExportService } from "../services/export-service";
 import { requireAdmin } from "./auth-guard";
 
@@ -6,7 +7,8 @@ export async function handleExportRoute(request: Request, database: D1Database):
   const url = new URL(request.url);
   if (request.method !== "GET" || url.pathname !== "/api/export") return null;
   if (!(await requireAdmin(request, database))) return Response.json({ code: "UNAUTHORIZED", error: "请先登录。" }, { status: 401 });
-  const service = new ExportService(database);
+  // 导出服务只看固定读取端口；当前路由继续装配 D1 适配器，Node/PostgreSQL 路由依赖替换留给后续任务。
+  const service = new ExportService(new ExportRepository(database));
   const kind = url.searchParams.get("kind");
   const exportResult = kind === "prices"
     ? { content: await service.pricesCsv(), filename: "switch-price-history.csv" }

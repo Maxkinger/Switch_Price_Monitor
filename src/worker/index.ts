@@ -23,8 +23,10 @@ import { CollectionRepository } from "../repositories/collection-repository";
 import { ExchangeRateRepository } from "../repositories/exchange-rate-repository";
 import { PriceRepository } from "../repositories/price-repository";
 import { NotificationEventRepository } from "../repositories/notification-event-repository";
+import { ProductHealthRepository } from "../repositories/product-health-repository";
 import { SettingsRepository } from "../repositories/settings-repository";
 import { SubscriptionConfirmationRepository } from "../repositories/subscription-confirmation-repository";
+import { DashboardRepository } from "../repositories/d1/dashboard-repository";
 import { DashboardService } from "../services/dashboard-service";
 import { OfficialPriceIdService } from "../services/official-price-id-service";
 import { OfficialProductDiscoveryService } from "../services/official-product-discovery-service";
@@ -168,7 +170,8 @@ const worker: ExportedHandler<Env> = {
       ? new TelegramService({ botToken: env.TELEGRAM_BOT_TOKEN, chatId: env.TELEGRAM_CHAT_ID })
       : undefined;
     // DashboardService 的结果完全由本 Worker 构造；在单一适配点收窄为日报 DTO，避免在 Telegram 服务传播宽松的数据库读取类型。
-    const overview = new DashboardService(env.DB);
+    // 调度器继续使用现有 D1 绑定，但通过仓储端口读取统一 DTO；后续 PostgreSQL Node 装配无需改动日报业务规则。
+    const overview = new DashboardService(new DashboardRepository(env.DB));
     // 即时事件不等日报时刻：成功后才由仓储原子更新为 delivered，失败则保持 pending 留给下一分钟重试。
     ctx.waitUntil(runPendingNotificationDelivery(scheduledAt, {
       events: new NotificationEventRepository(env.DB),
@@ -194,7 +197,8 @@ function createLiveCollectionRunner(env: Env): LiveCollectionRunner {
     rates: new DailyCnyRateService(createFrankfurterExchangeRateProvider(), new ExchangeRateRepository(env.DB)),
     officialProviders: createOfficialProviderRegistry(),
     collection: new CollectionService(new ProviderChain(), prices),
-    health: new ProductHealthService(env.DB),
+    // 过渡期 Worker 仍装配 D1 适配器，但服务只接收窄端口；后续 Node 入口可替换为 PostgreSQL 而无需改健康业务规则。
+    health: new ProductHealthService(new ProductHealthRepository(env.DB), new NotificationEventRepository(env.DB)),
     previousOfficial: prices,
     events: new NotificationEventRepository(env.DB),
   });

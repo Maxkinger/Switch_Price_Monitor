@@ -1,13 +1,11 @@
-import type { SubscriptionDetail } from "../repositories/subscription-detail-repository";
+import type { SubscriptionDetail, SubscriptionDetailReader } from "../repositories/ports";
 import { SubscriptionNotFoundError } from "./subscription-service";
 
 /**
- * 详情仓储的最小读取边界。接口使服务可在不依赖 D1 的情况下测试业务 404 语义，
+ * 详情仓储的最小读取边界。接口使服务可在不依赖具体数据库实现的情况下测试业务 404 语义，
  * 并明确路由只能得到已经脱敏、稳定的 SubscriptionDetail，而不是原始数据库记录。
  */
-export interface SubscriptionDetailRepositoryPort {
-  find(subscriptionId: string): Promise<SubscriptionDetail | null>;
-}
+export type SubscriptionDetailRepositoryPort = SubscriptionDetailReader;
 
 /**
  * 订阅详情服务只负责将“缺失”翻译为既有订阅领域错误。路由复用同一 404 响应，
