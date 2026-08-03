@@ -63,6 +63,17 @@ describe("NotificationEventRepository", () => {
     await expect(events.pending()).resolves.toEqual([{ regionalProductId: "product-notification", eventType: "collection-recovered", dedupeKey: "pending", createdAt: "2026-07-16T18:00:00.000Z", gameNameZh: "通知测试游戏", regionCode: "US" }]);
   });
 
+  it("orders pending events by identity when their creation timestamps are equal", async () => {
+    // 同一 Cron 批次可为多个状态变迁写入完全相同的服务器时间；created_at 相等时必须再按 BIGINT 主键排序，避免 PostgreSQL 返回非确定顺序导致发送队列重放次序漂移。
+    const createdAt = "2026-07-16T18:00:00.000Z";
+    await events.reserve({ regionalProductId: "product-notification", eventType: "collection-failure", dedupeKey: "same-time-first", createdAt });
+    await events.reserve({ regionalProductId: "product-notification", eventType: "collection-recovered", dedupeKey: "same-time-second", createdAt });
+
+    const pendingEvents = await events.pending();
+    expect(pendingEvents.map((event) => event.dedupeKey)).toEqual(["same-time-first", "same-time-second"]);
+    expect(pendingEvents.map((event) => event.createdAt)).toEqual([createdAt, createdAt]);
+  });
+
   it("returns nullable labels after the referenced product and game are deleted", async () => {
     // 审计事件通过 ON DELETE SET NULL 保留；关联主档删除后发送器只能收到空标签并使用中性文案，不能回退暴露内部商品 ID。
     await events.reserve({ regionalProductId: "product-notification", eventType: "collection-failure", dedupeKey: "orphaned", createdAt: "2026-07-16T12:00:00.000Z" });

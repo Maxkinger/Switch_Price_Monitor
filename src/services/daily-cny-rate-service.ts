@@ -1,7 +1,7 @@
 import type { ExchangeRateProvider, RateResult } from "../providers/types";
 import type { DailyCnyRate } from "./collection-service";
 
-/** 汇率存储端口使服务可由真实 D1 或内存夹具驱动，并限制它只能写入成功值和读取最近历史。 */
+/** 汇率存储端口使服务可注入当前 Worker 的 D1 适配器、PostgreSQL 仓储或内存夹具，并限制它只能写入成功值和读取最近历史。 */
 export interface ExchangeRateStore {
   append(value: RateResult): Promise<void>;
   latestFor(currency: string): Promise<RateResult | null>;

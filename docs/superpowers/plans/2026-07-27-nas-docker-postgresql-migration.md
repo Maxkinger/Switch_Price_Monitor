@@ -321,6 +321,12 @@ git push
 - Create: `src/repositories/postgres/subscription-detail-repository.ts`
 - Create: `src/repositories/postgres/product-health-repository.ts`
 - Create: `src/repositories/postgres/notification-event-repository.ts`
+- Create: `src/repositories/postgres/dashboard-repository.ts`
+- Create: `src/repositories/postgres/history-repository.ts`
+- Create: `src/repositories/postgres/export-repository.ts`
+- Create: `src/repositories/d1/dashboard-repository.ts`
+- Create: `src/repositories/d1/history-repository.ts`
+- Create: `src/repositories/d1/export-repository.ts`
 - Modify: `src/services/dashboard-service.ts`
 - Modify: `src/services/history-service.ts`
 - Modify: `src/services/export-service.ts`
@@ -329,6 +335,8 @@ git push
 **Interfaces:**
 - Consumes: `SqlExecutor` and `AppDatabase` from Task 2.
 - Produces: PostgreSQL repositories with the same public business methods and DTO results currently consumed by services and routes.
+- Direct-query responsibilities: dedicated PostgreSQL dashboard, history and export repositories own their read SQL; the corresponding services depend only on narrow ports and retain platform-neutral DTOs.
+- Worker transition boundary: dedicated D1 dashboard, history and export adapters preserve existing Worker route constructors and production behavior while Node/PostgreSQL runtime composition is deferred; they are temporary compatibility code, not a second query-service design.
 
 - [ ] **Step 1: Define narrow repository ports**
 
@@ -386,7 +394,7 @@ Convert in this order:
 2. collection and price;
 3. subscription list and detail;
 4. product health and notification events;
-5. dashboard, history, and export direct-query services.
+5. dashboard, history, and export direct-query services, each extracted into its dedicated PostgreSQL read repository while temporary D1 adapters keep the existing Worker routes stable.
 
 For every repository, first run its current test against PostgreSQL and record the expected failure, then implement only the required SQL and rerun.
 

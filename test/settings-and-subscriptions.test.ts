@@ -8,7 +8,7 @@ import { SettingsValidationError } from "../src/services/settings-service";
 import { createTestDatabase, resetDisposableTestSchema } from "./support/postgres";
 
 describe("settings and subscriptions repositories", () => {
-  // 两个仓储最终共享同一可丢弃 PostgreSQL；设置先完成 RED/GREEN，订阅读取按任务顺序稍后切换到 PostgreSQL 实现。
+  // 两个仓储共享同一可丢弃 PostgreSQL：SettingsRepository 与 Task 3 的订阅只读查询都直接验证 PostgreSQL 语义；创建和更新等事务写入仍留在 Task 4，避免测试暗示读取仓储承担写入职责。
   const database = createTestDatabase();
   const settings = new SettingsRepository(database);
   const subscriptions = new SubscriptionRepository(database);

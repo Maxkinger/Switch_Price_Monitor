@@ -53,4 +53,20 @@ describe("ProductHealthService", () => {
     const events = await database.query<{ eventType: string; status: string }>(`SELECT event_type AS "eventType", status FROM notification_events ORDER BY created_at, id`);
     expect(events.rows).toEqual([{ eventType: "collection-failure", status: "pending" }, { eventType: "collection-recovered", status: "pending" }]);
   });
+
+  it("retains the last successful collection timestamp after a later failure", async () => {
+    // 外部来源在成功采集后的单次故障不能抹去 last_success_at；该字段是仪表盘判断数据新鲜度的唯一成功证据，不能用失败轮次时间冒充刷新完成。
+    const health = new ProductHealthService(healthRepository, notificationRepository);
+
+    await expect(health.record("product-health", true, "2026-07-16T12:00:00.000Z")).resolves.toMatchObject({ consecutiveFailures: 0, failureNotified: false });
+    await expect(health.record("product-health", false, "2026-07-16T18:00:00.000Z")).resolves.toMatchObject({ consecutiveFailures: 1, failureNotified: false });
+
+    const state = await database.query<{ consecutiveFailures: number; lastSuccessAt: Date | null }>(
+      `SELECT consecutive_failures AS "consecutiveFailures", last_success_at AS "lastSuccessAt"
+         FROM regional_product_health WHERE regional_product_id = $1`,
+      ["product-health"],
+    );
+    expect(state.rows[0]?.consecutiveFailures).toBe(1);
+    expect(state.rows[0]?.lastSuccessAt?.toISOString()).toBe("2026-07-16T12:00:00.000Z");
+  });
 });
