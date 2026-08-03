@@ -4,19 +4,10 @@ import { join, resolve } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { runMigrations } from "../src/server/database/migrations";
 import type { AppDatabase, SqlExecutor } from "../src/server/database/types";
-import { createTestDatabase } from "./support/postgres";
+import { createTestDatabase, resetDisposableTestSchema } from "./support/postgres";
 
 const migrationsDirectory = resolve("migrations/postgres");
 const fixedTime = "2026-08-03T08:00:00.000Z";
-
-/**
- * 迁移测试只重建 TEST_DATABASE_URL 内的 public schema。
- * 显式删除整个 schema 可以覆盖表、索引、序列和迁移记录，同时环境变量硬门禁保证该操作不会落到开发库或 NAS 数据库。
- */
-async function resetDisposableSchema(database: AppDatabase): Promise<void> {
-  await database.query("DROP SCHEMA public CASCADE");
-  await database.query("CREATE SCHEMA public");
-}
 
 /** 为约束测试建立一组合法父记录，后续每条失败写入只改变一个外键或唯一键条件。 */
 async function seedConstraintParents(database: SqlExecutor): Promise<void> {
@@ -85,7 +76,8 @@ describe("PostgreSQL 初始模式", () => {
   });
 
   beforeEach(async () => {
-    await resetDisposableSchema(database);
+    // destructive reset 会再次校验固定回环目标与显式 marker；仅持有一个数据库 executor 不足以获得 DROP SCHEMA 权限。
+    await resetDisposableTestSchema(database);
     await runMigrations(database, migrationsDirectory);
   });
 
@@ -311,7 +303,8 @@ describe("PostgreSQL 迁移执行器", () => {
   });
 
   beforeEach(async () => {
-    await resetDisposableSchema(database);
+    // checksum 与并发用例同样复用 fail-closed reset，避免后续重构绕过首次连接前的目标校验。
+    await resetDisposableTestSchema(database);
   });
 
   afterAll(async () => {
