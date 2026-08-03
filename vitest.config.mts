@@ -2,18 +2,36 @@ import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
 
 /**
- * 使用 Cloudflare Workers 测试池而非 Node mock，使 D1 迁移、Web Crypto 与 Worker Request/Cookie 行为在接近生产的运行时验证。
- * 全局迁移设置文件在每个隔离测试 Worker 启动时执行，确保各测试均拥有相同表结构。
+ * 将既有 Worker/D1 测试与新增 PostgreSQL 集成测试分到各自真实运行时：
+ * Worker 项目继续验证 D1、Web Crypto 与 Request/Cookie，PostgreSQL 项目则使用 Node 驱动访问明确指定的可丢弃测试库。
+ * 两类测试不得共享 setupFiles，避免旧 D1 迁移误作用于 PostgreSQL，也防止数据库测试读取任何生产绑定或秘密配置。
  */
 export default defineConfig({
-  plugins: [
-    cloudflareTest({
-      wrangler: { configPath: "./wrangler.jsonc" },
-    }),
-  ],
   test: {
-    // 该配置只收集 Worker/D1 `.ts` 测试；DOM `.tsx` 测试必须由独立 jsdom 配置运行，避免把浏览器依赖错误装载为 Worker 模块。
-    include: ["test/**/*.test.ts"],
-    setupFiles: ["./test/apply-migrations.ts"],
+    projects: [
+      {
+        plugins: [
+          cloudflareTest({
+            wrangler: { configPath: "./wrangler.jsonc" },
+          }),
+        ],
+        test: {
+          name: "worker",
+          // Worker 项目排除 PostgreSQL 文件；这些文件依赖 Node 的文件系统、加密和 TCP 能力，不能装载进 Miniflare。
+          include: ["test/**/*.test.ts"],
+          exclude: ["test/postgres-*.test.ts"],
+          setupFiles: ["./test/apply-migrations.ts"],
+        },
+      },
+      {
+        test: {
+          name: "postgres",
+          environment: "node",
+          // 数据库测试只连接 TEST_DATABASE_URL 指向的 disposable 实例；串行文件执行避免跨文件清理互相覆盖约束验证现场。
+          include: ["test/postgres-*.test.ts"],
+          fileParallelism: false,
+        },
+      },
+    ],
   },
 });

@@ -1,0 +1,27 @@
+# 本文件只启动可丢弃的本地 PostgreSQL 集成测试实例；账号、密码和端口均不是生产配置，禁止复制到 NAS 或任何公网环境。
+services:
+  postgres:
+    # 固定 PostgreSQL 17 大版本，使本地事务、约束和迁移行为与后续 NAS 目标版本保持一致。
+    image: postgres:17
+    environment:
+      # 这些明文值只服务于本机 disposable 测试数据库，不得替换或承载真实管理员、Telegram 或生产数据库凭据。
+      POSTGRES_DB: switch_test
+      POSTGRES_USER: switch_test
+      POSTGRES_PASSWORD: switch_test
+    ports:
+      # 端口只绑定回环地址供本地自动化测试使用；生产 Compose 必须保持 PostgreSQL 不对宿主机和局域网发布端口。
+      - "127.0.0.1:54329:5432"
+    healthcheck:
+      # 健康检查只验证测试账号可连接指定测试库，不读取业务数据，也不会把凭据写入应用日志。
+      test: ["CMD-SHELL", "pg_isready -U switch_test -d switch_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 5s
+    volumes:
+      # 独立命名卷避免污染系统 PostgreSQL；该卷仅保存可丢弃测试数据，不得用于生产备份或恢复。
+      - postgres_dev_data:/var/lib/postgresql/data
+
+volumes:
+  # 命名卷限定在本 Compose 项目内，后续清理测试环境时可与服务一起显式删除。
+  postgres_dev_data:
