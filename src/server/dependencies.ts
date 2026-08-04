@@ -48,6 +48,9 @@ import { CollectionService } from "../services/collection-service";
 import { DailyCnyRateService } from "../services/daily-cny-rate-service";
 import { LiveCollectionRunner } from "../services/live-collection-runner";
 import { createFrankfurterExchangeRateProvider } from "../providers/frankfurter-exchange-rate";
+import { runPendingNotificationDelivery, runScheduled, runSixHourCollection } from "../services/scheduler-service";
+import { TelegramService } from "../services/telegram-service";
+import type { SchedulerDependencies } from "./scheduler";
 
 /** Node 装配所需的公开部署开关；Telegram 成对校验已在 config 层完成，路由不会读取环境对象。 */
 export interface ServerDependencyOptions {
@@ -63,16 +66,7 @@ export interface ServerDependencyOptions {
 export function createPostgresServerDependencies(database: AppDatabase, options: ServerDependencyOptions): ServerDependencies {
   const auth = new AuthService(new AuthRepository(database));
   const settings = new SettingsService(new SettingsRepository(database));
-  const prices = new PriceRepository(database);
-  const collection = new LiveCollectionRunner({
-    products: new CollectionRepository(database),
-    rates: new DailyCnyRateService(createFrankfurterExchangeRateProvider(), new ExchangeRateRepository(database)),
-    officialProviders: createOfficialProviderRegistry(),
-    collection: new CollectionService(new ProviderChain(), prices),
-    health: new ProductHealthService(new ProductHealthRepository(database), new NotificationEventRepository(database)),
-    previousOfficial: prices,
-    events: new NotificationEventRepository(database),
-  });
+  const collection = createLiveCollectionRunner(database);
   const preview = new SubscriptionPreviewService(new OfficialPriceIdService(createNintendoPriceApiProvider()), defaultFallbackSources);
   return {
     async dispatchApi(request) {
@@ -98,4 +92,51 @@ export function createPostgresServerDependencies(database: AppDatabase, options:
       return subscriptionResponse;
     },
   };
+}
+
+/**
+ * 将原 Worker Cron 的三条业务路径装配到 PostgreSQL advisory lock 调度器。
+ * 每项任务只接收同一次 UTC 触发时刻；Telegram 未成对配置时传 undefined，既有服务会安全跳过消息读取或外部发送。
+ */
+export function createPostgresSchedulerDependencies(database: AppDatabase, options: ServerDependencyOptions): SchedulerDependencies {
+  const settings = new SettingsRepository(database);
+  const events = new NotificationEventRepository(database);
+  const telegram = options.telegramBotToken && options.telegramChatId
+    ? new TelegramService({ botToken: options.telegramBotToken, chatId: options.telegramChatId })
+    : undefined;
+  return {
+    database,
+    async runMinute(scheduledAt) {
+      // 即时通知不等日报时刻；两条读取共享同一触发时刻但彼此独立，某条业务失败会由外层安全记录而不泄漏响应细节。
+      await Promise.all([
+        runPendingNotificationDelivery(scheduledAt, { events, marker: events, telegram }),
+        runScheduled(scheduledAt, { settings, overview: new DashboardService(new DashboardRepository(database)), telegram }),
+      ]);
+    },
+    async runSixHour(scheduledAt) {
+      await runSixHourCollection(scheduledAt, {
+        settings,
+        retention: new RetentionService(new RetentionRepository(database)),
+        collection: createLiveCollectionRunner(database),
+      });
+    },
+    recordSafeFailure({ task, scheduledAt }) {
+      // 日志只保留固定任务名和服务端 UTC 时刻；错误对象可能含数据库 URL、外部页面或 Telegram 返回正文，绝不序列化。
+      console.error(`scheduler ${task} failed at ${scheduledAt}`);
+    },
+  };
+}
+
+/** 统一构造手动刷新与六小时任务共用的采集器，保证价格来源、汇率、健康状态和即时降价事件规则一致。 */
+function createLiveCollectionRunner(database: AppDatabase): LiveCollectionRunner {
+  const prices = new PriceRepository(database);
+  return new LiveCollectionRunner({
+    products: new CollectionRepository(database),
+    rates: new DailyCnyRateService(createFrankfurterExchangeRateProvider(), new ExchangeRateRepository(database)),
+    officialProviders: createOfficialProviderRegistry(),
+    collection: new CollectionService(new ProviderChain(), prices),
+    health: new ProductHealthService(new ProductHealthRepository(database), new NotificationEventRepository(database)),
+    previousOfficial: prices,
+    events: new NotificationEventRepository(database),
+  });
 }

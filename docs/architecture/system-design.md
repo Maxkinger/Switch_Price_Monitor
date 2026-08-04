@@ -55,6 +55,8 @@ Task 4 起所有 HTTP 路由只接收显式服务依赖和会话读取端口，�
 
 Task 5 已加入独立的 Node Fetch HTTP 入口：严格读取端口、数据库连接、Cookie Secure、正文上限和优雅关闭时间；API 先于客户端静态资源处理，未知 `/api/*` 返回 JSON 404，客户端页面仅在受控路径回退 `index.html`，静态路径始终限制在 `dist/client` 根目录。前端由 Vite 输出 `dist/client`，Node 入口由独立 SSR 配置输出 `dist/server/index.js`。当前执行环境拒绝下载 Hono Node 适配器依赖，因此暂以 Node 原生 `http` 转换 Fetch Request/Response，保持路由契约不变；后续若批准新增依赖，可在此边界替换适配器而不改业务服务。
 
+Task 6 以 Node 计时器替代 Cloudflare Cron：分钟任务和六小时任务使用两个固定 PostgreSQL advisory lock 键，锁竞争立即跳过而不排队。分钟任务同时处理待发送即时通知和按 IANA 时区判断的日报；六小时任务执行保留清理及统一采集。进程退出时先停止新调度触发、再停止 HTTP、等待已开始的 HTTP/调度工作至配置的优雅期限，最后关闭数据库连接池；失败日志只记录任务类别与 UTC 时刻，不能序列化数据库或 Telegram 错误对象。
+
 ## 3. 核心数据流
 
 ### 3.1 新建订阅

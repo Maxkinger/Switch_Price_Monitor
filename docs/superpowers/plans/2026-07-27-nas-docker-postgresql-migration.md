@@ -768,6 +768,8 @@ git push
 
 ### Task 6: Replace Cloudflare Cron with an Advisory-Locked Scheduler
 
+> 2026-08-04 实施记录：Node 调度器、固定分钟/六小时 advisory lock、停止与优雅等待、PostgreSQL 业务装配和进程启动顺序已完成。锁竞争跳过而不排队，失败仅记录任务类型及 UTC 时刻。
+
 **Files:**
 - Create: `src/server/scheduler.ts`
 - Create: `test/server-scheduler.test.ts`
@@ -807,7 +809,7 @@ export function startScheduler(
 ): SchedulerHandle;
 ```
 
-- [ ] **Step 1: Write failing scheduler lifecycle tests**
+- [x] **Step 1: Write failing scheduler lifecycle tests**
 
 Using a fake clock, prove:
 
@@ -818,15 +820,15 @@ Using a fake clock, prove:
 - `stop()` prevents new work;
 - `waitForIdle()` returns true on completion and false on grace timeout.
 
-- [ ] **Step 2: Run the scheduler tests to verify RED**
+- [x] **Step 2: Run the scheduler tests to verify RED**
 
 Expected: FAIL because `startScheduler` does not exist.
 
-- [ ] **Step 3: Implement scheduler triggers and distinct lock keys**
+- [x] **Step 3: Implement scheduler triggers and distinct lock keys**
 
 Use fixed documented `bigint` lock keys for minute and six-hour tasks. Capture the scheduled instant once and pass its ISO value into existing services. Never infer local system timezone.
 
-- [ ] **Step 4: Connect scheduler and process shutdown**
+- [x] **Step 4: Connect scheduler and process shutdown**
 
 Startup order:
 
@@ -844,11 +846,13 @@ Shutdown order:
 4. close Playwright resources;
 5. close PostgreSQL pool.
 
-- [ ] **Step 5: Run focused and full service tests**
+- [x] **Step 5: Run focused and full service tests**
 
 Run scheduler, notification, report, retention, live collection, manual refresh, and server shutdown tests, followed by typecheck and build.
 
 - [ ] **Step 6: Request commit confirmation, then commit and push**
+
+实际结果：调度器服务器测试 4 文件/15 测试通过；DOM 4 文件/16 测试、PostgreSQL 16 文件/76 测试通过；Worker 全量命令退出 0；`npx tsc --noEmit`、`npm run build`、`git diff --check` 通过。构建包含 `dist/client` 和 `dist/server/index.js`。
 
 After explicit approval:
 
