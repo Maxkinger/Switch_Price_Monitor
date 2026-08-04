@@ -629,6 +629,8 @@ git push
 
 ### Task 5: Add the Node HTTP Server and Frontend-Only Vite Build
 
+> 2026-08-04 实施记录：严格配置、Fetch API 分发、静态路径边界、优雅关闭与前后端分离构建已完成并通过测试。由于当前执行环境拒绝新增 Hono/Node 适配器包的网络安装，本轮使用等价的 Node 原生 `http` → Fetch 适配层；业务路由契约保持不变，后续可在同一入口替换 Hono 适配器。
+
 **Files:**
 - Create: `src/server/config.ts`
 - Create: `src/server/dependencies.ts`
@@ -679,7 +681,7 @@ export async function startServer(
 ): Promise<RunningServer>;
 ```
 
-- [ ] **Step 1: Write failing configuration tests**
+- [x] **Step 1: Write failing configuration tests**
 
 Cover:
 
@@ -690,11 +692,11 @@ Cover:
 - only one Telegram credential present must fail safely;
 - secrets never appear in thrown validation messages.
 
-- [ ] **Step 2: Implement strict configuration parsing**
+- [x] **Step 2: Implement strict configuration parsing**
 
 Use an explicit allowlist and safe error codes. Do not spread `process.env` into logs or dependency objects.
 
-- [ ] **Step 3: Write failing HTTP dispatch tests**
+- [x] **Step 3: Write failing HTTP dispatch tests**
 
 Cover:
 
@@ -707,11 +709,11 @@ Cover:
 - request bodies above the configured limit return `413`;
 - auth Cookie contains `HttpOnly`, `SameSite=Strict`, and the configured `Secure` state.
 
-- [ ] **Step 4: Implement Hono/Node request composition**
+- [x] **Step 4: Implement Node/Fetch request composition**
 
 Use Hono only as the Node/Fetch adapter. Preserve the existing route dispatch functions and standard responses. Resolve static paths under one normalized build root and reject traversal before filesystem access.
 
-- [ ] **Step 5: Separate frontend and server builds**
+- [x] **Step 5: Separate frontend and server builds**
 
 Remove `@cloudflare/vite-plugin` from Vite configuration. Build React to `dist/client` and bundle the Node entry with tsup to `dist/server`, preserving source maps outside the production image if they could expose local paths.
 
@@ -731,11 +733,11 @@ Required scripts:
 
 Pin exact compatible dependency versions through `package-lock.json`.
 
-- [ ] **Step 6: Add graceful HTTP shutdown tests**
+- [x] **Step 6: Add graceful HTTP shutdown tests**
 
 Start on an ephemeral port, begin one in-flight request, send the shutdown signal through an injectable lifecycle controller, assert new connections stop, and assert the in-flight response completes within the configured grace period.
 
-- [ ] **Step 7: Run the Node server gate**
+- [x] **Step 7: Run the Node server gate**
 
 Run:
 
@@ -748,6 +750,8 @@ git diff --check
 ```
 
 Expected: all commands exit zero and build output contains `dist/client` and `dist/server`.
+
+实际结果：服务器聚焦测试 3 文件/11 测试通过；PostgreSQL 全量 16 文件/76 测试通过；Worker 全量命令退出 0；`npx tsc --noEmit`、`npm run build`、`git diff --check` 通过。构建输出为 `dist/client` 与 `dist/server/index.js`。Hono 依赖安装因当前执行环境审批服务不可用而未执行，故保留原生 Node 适配器并在架构文档标注替换边界。
 
 - [ ] **Step 8: Request commit confirmation, then commit and push**
 

@@ -5,7 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "dev:server": "node --experimental-strip-types --experimental-specifier-resolution=node src/server/entry.ts",
+    "build": "npm run build:client && npm run build:server",
+    "build:client": "vite build",
+    "build:server": "vite build --config vite.server.config.ts",
+    "start": "node dist/server/index.js",
     "preview": "vite preview",
     "deploy": "node ./scripts/deploy-production.mjs",
     "test": "vitest",

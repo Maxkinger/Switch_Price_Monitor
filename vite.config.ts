@@ -1,11 +1,14 @@
-import { cloudflare } from "@cloudflare/vite-plugin";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 /**
- * 同时构建 React 管理界面与 Cloudflare Worker。Cloudflare 插件读取 wrangler 配置，
- * 使本地开发、单元测试和生产构建共享同一绑定契约，避免 API 路径在不同环境失配。
+ * Vite 只负责 React 前端静态产物；Node HTTP 服务由独立 SSR 配置构建，
+ * 从构建链移除 Cloudflare 插件，避免 Worker/Static Assets 绑定重新成为 NAS 运行时依赖。
  */
 export default defineConfig({
-  plugins: [react(), cloudflare()],
+  plugins: [react()],
+  build: {
+    outDir: "dist/client",
+    emptyOutDir: true,
+  },
 });

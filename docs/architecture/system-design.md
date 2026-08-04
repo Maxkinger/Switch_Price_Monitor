@@ -2,7 +2,7 @@
 
 ## 1. 文档状态
 
-本说明包含截至 2026-08-03 已获确认的架构、核心流程与可靠性约束。详细数据模型、接口和验收策略分别维护在关联文档中。
+本说明包含截至 2026-08-04 已获确认的架构、核心流程与可靠性约束。详细数据模型、接口和验收策略分别维护在关联文档中。
 
 ## 2. 已确认架构
 
@@ -52,6 +52,8 @@ Node.js 应用容器
 Task 4 起所有 HTTP 路由只接收显式服务依赖和会话读取端口，不再接收数据库对象或自行构造仓储。认证 Cookie 的 `Secure` 由可信启动配置明确提供，禁止根据 `Forwarded`、`X-Forwarded-Proto` 等请求头自动判断；`HttpOnly` 与 `SameSite=Strict` 始终启用。PostgreSQL 认证仓储用原子 UPSERT 累积失败次数，并在建立会话时锁定、重新比较密码哈希与盐；密码恢复若在密码验证和会话插入之间提交，旧凭据不能生成逃逸会话。
 
 本地 Apple Silicon M1 提供开发与生产 Compose 验收。GitHub Actions 仅在完整质量门禁通过后，向公开 Docker Hub 仓库发布 `linux/arm64` 与 `linux/amd64` 的固定版本镜像；NAS Compose 只拉取镜像，不构建源码。运行时数据库与 Telegram 凭据只通过未提交环境配置注入。详细边界见 [NAS Docker 与 PostgreSQL 迁移设计规格](../superpowers/specs/2026-07-27-nas-docker-postgresql-migration-design.md) 与 [ADR-003](../decisions/ADR-003-nas-docker-postgresql.md)。
+
+Task 5 已加入独立的 Node Fetch HTTP 入口：严格读取端口、数据库连接、Cookie Secure、正文上限和优雅关闭时间；API 先于客户端静态资源处理，未知 `/api/*` 返回 JSON 404，客户端页面仅在受控路径回退 `index.html`，静态路径始终限制在 `dist/client` 根目录。前端由 Vite 输出 `dist/client`，Node 入口由独立 SSR 配置输出 `dist/server/index.js`。当前执行环境拒绝下载 Hono Node 适配器依赖，因此暂以 Node 原生 `http` 转换 Fetch Request/Response，保持路由契约不变；后续若批准新增依赖，可在此边界替换适配器而不改业务服务。
 
 ## 3. 核心数据流
 
