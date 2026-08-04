@@ -77,14 +77,11 @@ export class AuthRepository implements AuthRepositoryPort {
   }
 
   /**
-   * 清失败状态与条件 INSERT 位于同一个 D1 batch；INSERT 重新比较服务刚验证的哈希与盐，并拒绝仍在锁定期的账户。
-   * 因此密码恢复若先提交，旧凭据无法在随后创建会话；若会话先提交，恢复 batch 会撤销它。
+   * 条件 INSERT 先重新比较服务刚验证的哈希与盐并拒绝锁定账户，随后 DELETE 仅以该新会话 ID 为条件执行。
+   * 若密码恢复先提交，旧凭据 INSERT 为零行且绝不能清除新密码生命周期的失败计数；若会话先提交，恢复 batch 会撤销它。
    */
   public async establishSession(input: SessionEstablishmentWrite): Promise<SessionEstablishment> {
     const results = await this.database.batch([
-      this.database
-        .prepare("DELETE FROM login_attempts WHERE id = 1 AND (locked_until IS NULL OR locked_until <= ?)")
-        .bind(input.now),
       this.database
         .prepare(
           `INSERT INTO sessions (id, token_hash, expires_at, created_at)
@@ -107,8 +104,16 @@ export class AuthRepository implements AuthRepositoryPort {
           input.expectedCredential.passwordSalt,
           input.now,
         ),
+      this.database
+        .prepare(
+          `DELETE FROM login_attempts
+            WHERE id = 1
+              AND (locked_until IS NULL OR locked_until <= ?)
+              AND EXISTS (SELECT 1 FROM sessions WHERE id = ? AND token_hash = ?)`,
+        )
+        .bind(input.now, input.session.id, input.session.tokenHash),
     ]);
-    if (results[1]?.meta.changes === 1) return "created";
+    if (results[0]?.meta.changes === 1) return "created";
 
     const current = await this.getPasswordCredential();
     if (
@@ -177,15 +182,33 @@ export class AuthRepository implements AuthRepositoryPort {
 
   /**
    * D1 batch 原子完成密码更换、恢复消费、全会话撤销与失败状态清理。
-   * 条件 UPDATE 让并发第二次恢复返回安全无效分类；即使它重复执行撤销/清理，也不能生成会话或恢复恢复码。
+   * 后两条语句必须匹配本次刚写入的哈希、盐和消费时刻；条件 UPDATE 为零行的并发第二次恢复只能返回安全无效分类，不能撤销随后建立的新会话或清除新的失败计数。
    */
   public async resetPassword(input: PasswordResetWrite): Promise<void> {
     const results = await this.database.batch([
       this.database
         .prepare("UPDATE admin_credentials SET password_hash = ?, password_salt = ?, recovery_used_at = ? WHERE id = 1 AND recovery_used_at IS NULL")
         .bind(input.passwordHash, input.passwordSalt, input.recoveryUsedAt),
-      this.database.prepare("UPDATE sessions SET revoked_at = ? WHERE revoked_at IS NULL").bind(input.sessionRevokedAt),
-      this.database.prepare("DELETE FROM login_attempts WHERE id = 1"),
+      this.database
+        .prepare(
+          `UPDATE sessions SET revoked_at = ?
+            WHERE revoked_at IS NULL
+              AND EXISTS (
+                SELECT 1 FROM admin_credentials
+                 WHERE id = 1 AND password_hash = ? AND password_salt = ? AND recovery_used_at = ?
+              )`,
+        )
+        .bind(input.sessionRevokedAt, input.passwordHash, input.passwordSalt, input.recoveryUsedAt),
+      this.database
+        .prepare(
+          `DELETE FROM login_attempts
+            WHERE id = 1
+              AND EXISTS (
+                SELECT 1 FROM admin_credentials
+                 WHERE id = 1 AND password_hash = ? AND password_salt = ? AND recovery_used_at = ?
+              )`,
+        )
+        .bind(input.passwordHash, input.passwordSalt, input.recoveryUsedAt),
     ]);
     if (results[0]?.meta.changes !== 1) throw new AuthRecoveryAlreadyUsedError("恢复状态已被消费。");
   }

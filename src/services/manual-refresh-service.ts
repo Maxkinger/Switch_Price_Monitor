@@ -16,13 +16,6 @@ export interface ManualRefreshResult {
   stale: number;
 }
 
-/** 冷却中的显式领域错误由 HTTP 路由转换为 429，避免把正常的限流状态伪装成服务器故障。 */
-export class ManualRefreshCooldownError extends Error {
-  public constructor(public readonly nextAllowedAt: string) {
-    super("请在冷却结束后再次刷新。");
-  }
-}
-
 /**
  * 手动刷新服务先以仓储单语句记录最近请求时刻，再在同一 HTTP 请求内运行统一采集器。
  * 它不直接解析任天堂或第三方页面，因此手动与 Cron 路径仍复用完全相同的来源、汇率、健康检查和通知规则。
@@ -34,13 +27,12 @@ export class ManualRefreshService {
   ) {}
 
   /**
-   * 接受的请求由服务端当前时间盖章；浏览器提供的时间不可用于冷却，以免被篡改绕过频率限制。
-   * 冷却记录在采集前写入：即使官方商店暂时失败，也不能允许浏览器立刻重复请求而加剧来源限流；
-   * 失败会由路由转换为安全错误，采集器仍负责写入可恢复的健康状态与日志。
+   * 每个请求都由服务端 UTC 时间盖章并立即进入一次统一采集；当前产品规则没有 15 分钟冷却，浏览器也不能回填审计时间。
+   * 最近时刻先于采集写入，即使官方商店失败仍保留可追溯操作事实；若仓储违反“当前总接受”契约，作为内部故障交给路由脱敏，而不能伪装为过期的 429 限流。
    */
   public async refresh(now: string): Promise<ManualRefreshResult> {
     const request = await this.requests.request(now);
-    if (!request.accepted) throw new ManualRefreshCooldownError(request.nextAllowedAt);
+    if (!request.accepted) throw new Error("手动刷新请求未被接受。");
     const result = await this.runner.run(now);
     return { executedAt: now, ...result };
   }

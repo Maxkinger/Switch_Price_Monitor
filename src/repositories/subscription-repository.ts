@@ -35,8 +35,15 @@ export class SubscriptionRepository implements SubscriptionStore {
     const existing = await this.findByGameId(input.gameId);
     if (existing) return { status: "existing", subscriptionId: existing.id };
     if (!(await this.hasEnabledProductsForGame(input.gameId, input.regionalProductIds))) return { status: "product-mismatch" };
-    await this.create(input);
-    return { status: "created", subscriptionId: input.id };
+    try {
+      await this.create(input);
+      return { status: "created", subscriptionId: input.id };
+    } catch (error) {
+      // 两个 Worker 请求可能都在首次只读查重时看到空值；仅当失败后确实读到获胜订阅才转换为 existing，其它外键或存储故障必须继续向上脱敏而不能伪装为重复提交。
+      const concurrent = await this.findByGameId(input.gameId);
+      if (concurrent) return { status: "existing", subscriptionId: concurrent.id };
+      throw error;
+    }
   }
 
   /**

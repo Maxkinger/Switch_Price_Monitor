@@ -137,7 +137,7 @@ describe("PostgreSQL 订阅事务写入", () => {
     // 通知与目标价删除成功后故障；事务回滚必须恢复快照、日志、健康状态、关系、订阅、地区商品和游戏等全部专属事实。
     await seedDeletionGraph(database);
     const before = await deletionCounts(database);
-    const repository = new SubscriptionRepository(failOnTransactionQuery(database, 4));
+    const repository = new SubscriptionRepository(failOnTransactionQuery(database, 6));
 
     await expect(repository.deleteMany(["subscription-delete"])).rejects.toThrow("测试事务故障");
 
@@ -163,6 +163,35 @@ describe("PostgreSQL 订阅事务写入", () => {
       logs: 1,
       health: 1,
       notifications: 1,
+    });
+  });
+
+  it("locks regional products before deletion cleanup so concurrent FK children cannot leave orphans or block the delete", async () => {
+    // 删除事务停在已清理健康状态、即将删除商品之前；第二连接尝试取得 FK 所需 KEY SHARE 锁必须立刻失败，证明通知、日志和快照写不会插入到已清理阶段。
+    await seedDeletionGraph(database);
+    const paused = pauseBeforeRegionalProductDelete(database);
+    const repository = new SubscriptionRepository(paused.database);
+    const deletion = repository.deleteMany(["subscription-delete"]);
+    await paused.reached;
+
+    const keyShare = await database.query(
+      "SELECT id FROM regional_products WHERE id = $1 FOR KEY SHARE NOWAIT",
+      ["product-delete"],
+    ).then(() => "acquired", () => "blocked");
+    paused.release();
+
+    expect(keyShare).toBe("blocked");
+    await expect(deletion).resolves.toBe(true);
+    await expect(deletionCounts(database)).resolves.toEqual({
+      games: 0,
+      products: 0,
+      subscriptions: 0,
+      regions: 0,
+      targets: 0,
+      snapshots: 0,
+      logs: 0,
+      health: 0,
+      notifications: 0,
     });
   });
 
@@ -370,6 +399,45 @@ function observeTransactionStatements(database: AppDatabase): { database: AppDat
       transaction: (work) => database.transaction((transaction) => work({
         query: (sql, parameters) => {
           statements.push(sql);
+          return transaction.query(sql, parameters);
+        },
+      })),
+      withAdvisoryLock: (key, work) => database.withAdvisoryLock(key, work),
+      close: () => database.close(),
+    },
+  };
+}
+
+/**
+ * 在删除健康状态后暂停主事务，精确暴露“子表已删、地区商品尚未删”的旧竞争窗口。
+ * 第二连接使用 PostgreSQL FK 实际采用的 KEY SHARE NOWAIT 检查产品锁，不依赖 sleep 或不稳定的网络时序。
+ */
+function pauseBeforeRegionalProductDelete(database: AppDatabase): {
+  database: AppDatabase;
+  reached: Promise<void>;
+  release(): void;
+} {
+  let markReached!: () => void;
+  const reached = new Promise<void>((resolveReached) => {
+    markReached = resolveReached;
+  });
+  let release!: () => void;
+  const released = new Promise<void>((resolveReleased) => {
+    release = resolveReleased;
+  });
+  let paused = false;
+  return {
+    reached,
+    release,
+    database: {
+      query: (sql, parameters) => database.query(sql, parameters),
+      transaction: (work) => database.transaction((transaction) => work({
+        query: async (sql, parameters) => {
+          if (!paused && sql.includes("DELETE FROM regional_product_health")) {
+            paused = true;
+            markReached();
+            await released;
+          }
           return transaction.query(sql, parameters);
         },
       })),

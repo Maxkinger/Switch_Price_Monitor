@@ -1,4 +1,6 @@
 import type { AppSettings, InitialSettings, RegionCode, Theme } from "../shared/domain";
+import { validateSettings } from "../services/settings-service";
+import type { SettingsPatch, SettingsStore } from "./ports";
 
 /** D1 查询别名后的内部行模型，与对外 AppSettings 分离以避免泄漏数据库列命名。 */
 interface SettingsRow {
@@ -16,7 +18,7 @@ interface SettingsRow {
  * 单管理员全局设置的持久化边界。数据库约束保证仅有 id=1，
  * 因此仓储不会接受任意设置 ID，避免个人站点误演变为多租户数据模型。
  */
-export class SettingsRepository {
+export class SettingsRepository implements SettingsStore {
   public constructor(private readonly database: D1Database) {}
 
   public async saveInitial(settings: InitialSettings): Promise<void> {
@@ -75,10 +77,20 @@ export class SettingsRepository {
   }
 
   /**
-   * 完整替换单例设置的可公开字段，同时保留首次初始化时间。调用者必须先在服务层合并与校验局部更新，
-   * 仓储不接受任意列名或动态 SQL，避免将未来的 Telegram 等敏感列意外写入或暴露。
+   * Worker 过渡仓储也只接收局部补丁，并保留首次初始化时间与未提交字段。
+   * NAS PostgreSQL 使用行锁完成多进程并发保证；D1 兼容层维持相同的字段白名单和校验边界，避免 Task 5 前重新允许浏览器覆盖秘密配置。
    */
-  public async save(settings: AppSettings, updatedAt: string): Promise<void> {
+  public async save(patch: SettingsPatch, updatedAt: string): Promise<AppSettings | null> {
+    const current = await this.get();
+    if (!current) return null;
+    const settings: AppSettings = {
+      ...current,
+      ...patch,
+      enabledRegions: patch.enabledRegions ?? current.enabledRegions,
+      defaultSearchRegion: patch.defaultSearchRegion ?? current.defaultSearchRegion,
+      createdAt: current.createdAt,
+    };
+    validateSettings(settings);
     await this.database
       .prepare(
         `UPDATE settings
@@ -97,5 +109,6 @@ export class SettingsRepository {
         updatedAt,
       )
       .run();
+    return settings;
   }
 }

@@ -1,5 +1,5 @@
 import type { SessionReader } from "../services/auth-service";
-import { ManualRefreshCooldownError, type ManualRefreshService } from "../services/manual-refresh-service";
+import type { ManualRefreshService } from "../services/manual-refresh-service";
 import { requireAdmin } from "./auth-guard";
 
 /** 手动刷新路由只接收已装配服务；采集器和数据库仓储都不能由 HTTP 参数选择或替换。 */
@@ -10,8 +10,8 @@ export interface ManualRefreshRouteDependencies {
 }
 
 /**
- * 接收管理员发起的手动刷新请求。端点在取得原子冷却名额后等待统一采集器完成，
- * 因此 200 仅表示本次采集已经结束；来源、汇率和健康状态仍由服务端运行器统一控制。
+ * 接收管理员发起的无冷却手动刷新请求，并等待统一采集器完成。
+ * 因此 200 仅表示本次采集已经结束；来源、汇率和健康状态仍由服务端运行器统一控制，浏览器不能把请求体变成队列或频率策略。
  */
 export async function handleManualRefreshRoute(
   request: Request,
@@ -24,10 +24,7 @@ export async function handleManualRefreshRoute(
     const result = await dependencies.refresh.refresh((dependencies.now ?? defaultNow)());
     // 仅在统一采集器正常返回后才返回 completed；计数供界面提示，并由随后重新读取仪表盘展示持久化结果。
     return Response.json({ status: "completed", ...result });
-  } catch (error) {
-    if (error instanceof ManualRefreshCooldownError) {
-      return Response.json({ code: "REFRESH_COOLDOWN", error: error.message, nextAllowedAt: error.nextAllowedAt }, { status: 429 });
-    }
+  } catch {
     // 数据库或外部来源异常不回传表结构、商品链接和运行时堆栈，避免已登录浏览器脚本或日志采集器获得内部细节。
     return Response.json({ code: "INTERNAL_ERROR", error: "刷新暂时无法完成，请稍后重试。" }, { status: 500 });
   }

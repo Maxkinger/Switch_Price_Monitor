@@ -11,19 +11,24 @@ export class ManualRefreshRepository implements ManualRefreshStore {
   public constructor(private readonly database: D1Database) {}
 
   /**
-   * 临时验证期间无条件原子写入最近刷新时间。并发请求都可以进入采集是产品明确授权的后果；
-   * 仍使用单行 UPSERT 而非追加记录，避免为刷新频率收集不必要的浏览行为数据。恢复 15 分钟限流时必须另行确认并恢复条件 UPSERT。
+   * 临时验证期间每个请求都可进入采集，但最近刷新审计时间仍必须取最大 UTC 时刻，避免较早请求在较晚请求提交后令记录倒退。
+   * 单行 UPSERT 不追加管理员行为记录；若未来恢复限流，必须另行确认并恢复带阈值的条件写，而不能改变本次“无冷却、同步采集”规则。
    */
   public async request(now: string): Promise<ManualRefreshRequestResult> {
-    await this.database
+    const row = await this.database
       .prepare(
         `INSERT INTO manual_refresh_requests (id, requested_at)
          VALUES (1, ?)
-         ON CONFLICT(id) DO UPDATE SET requested_at = excluded.requested_at`,
+         ON CONFLICT(id) DO UPDATE SET requested_at = CASE
+           WHEN excluded.requested_at > manual_refresh_requests.requested_at THEN excluded.requested_at
+           ELSE manual_refresh_requests.requested_at
+         END
+         RETURNING requested_at AS requestedAt`,
       )
       .bind(now)
-      .run();
-    return { accepted: true, requestedAt: now, nextAllowedAt: now };
+      .first<{ requestedAt: string }>();
+    if (!row) throw new Error("最近刷新时间未能保存。");
+    return { accepted: true, requestedAt: row.requestedAt, nextAllowedAt: row.requestedAt };
   }
 
 }

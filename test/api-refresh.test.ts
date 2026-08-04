@@ -59,6 +59,16 @@ describe("manual refresh HTTP route", () => {
     expect(runner.run).toHaveBeenNthCalledWith(2, "2026-07-16T01:10:00.000Z");
   });
 
+  it("does not let a late older D1 refresh timestamp move the recent audit record backward", async () => {
+    // 无冷却不等于允许审计事实倒退：较早请求若在较晚请求后写入，单行记录仍必须保留最大 UTC 时刻，供管理员正确理解最近一次刷新。
+    const repository = new ManualRefreshRepository(env.DB);
+    await repository.request("2026-07-16T02:00:00.000Z");
+    await repository.request("2026-07-16T01:30:00.000Z");
+
+    await expect(env.DB.prepare("SELECT requested_at AS requestedAt FROM manual_refresh_requests WHERE id = 1").first<{ requestedAt: string }>())
+      .resolves.toEqual({ requestedAt: "2026-07-16T02:00:00.000Z" });
+  });
+
   it("returns a safe error when the immediate collection runner fails", async () => {
     // 来源或汇率异常不得把内部 URL、SQL 或堆栈回传到已登录浏览器；临时无冷却不改变认证和安全错误边界。
     const cookie = await initializeAndLogin();

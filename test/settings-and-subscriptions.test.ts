@@ -3,8 +3,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { SettingsRepository } from "../src/repositories/postgres/settings-repository";
 import { SubscriptionRepository } from "../src/repositories/postgres/subscription-repository";
+import type { SettingsStore } from "../src/repositories/ports";
 import { runMigrations } from "../src/server/database/migrations";
-import { SettingsValidationError } from "../src/services/settings-service";
+import { SettingsService, SettingsValidationError } from "../src/services/settings-service";
 import { SubscriptionService } from "../src/services/subscription-service";
 import { createTestDatabase, resetDisposableTestSchema } from "./support/postgres";
 
@@ -88,7 +89,6 @@ describe("settings and subscriptions repositories", () => {
       dailyReportTime: "08:30",
       taxState: "OR",
       priceHistoryRetention: "one-year",
-      createdAt: "2026-07-16T00:00:00.000Z",
     }, "2026-07-16T01:00:00.000Z");
 
     await expect(settings.get()).resolves.toEqual({
@@ -99,6 +99,30 @@ describe("settings and subscriptions repositories", () => {
       dailyReportTime: "08:30",
       taxState: "OR",
       priceHistoryRetention: "one-year",
+      createdAt: "2026-07-16T00:00:00.000Z",
+    });
+  });
+
+  it("keeps distinct concurrent settings patches without overwriting the other field", async () => {
+    // 第一个 PATCH 在读取后、写入前暂停，第二个 PATCH 先提交不同字段；安全实现必须在同一行锁事务内重新合并补丁，不能用第一个旧快照覆盖新时区。
+    await database.query(
+      `INSERT INTO settings (id, enabled_regions_json, default_search_region, created_at, updated_at)
+       VALUES (1, $1::jsonb, $2, $3, $3)`,
+      [JSON.stringify(["US", "JP"]), "US", "2026-07-16T00:00:00.000Z"],
+    );
+    const paused = pauseSettingsSave(settings);
+    const first = new SettingsService(paused.settings);
+    const second = new SettingsService(settings);
+
+    const firstPatch = first.update({ theme: "calm-dark" }, "2026-07-16T00:01:00.000Z");
+    await paused.reached;
+    await second.update({ timezone: "Asia/Tokyo" }, "2026-07-16T00:02:00.000Z");
+    paused.release();
+    await firstPatch;
+
+    await expect(settings.get()).resolves.toMatchObject({
+      theme: "calm-dark",
+      timezone: "Asia/Tokyo",
       createdAt: "2026-07-16T00:00:00.000Z",
     });
   });
@@ -190,3 +214,34 @@ describe("settings and subscriptions repositories", () => {
     });
   });
 });
+
+/**
+ * 暂停一次保存以稳定重现旧服务“读取—合并—全量覆盖”的丢失更新窗口。
+ * 包装器只延迟第一条业务写而不模拟数据库结果，因而修复后仍会通过真实 PostgreSQL 行锁验证补丁合并。
+ */
+function pauseSettingsSave(repository: SettingsStore): {
+  settings: SettingsStore;
+  reached: Promise<void>;
+  release(): void;
+} {
+  let markReached!: () => void;
+  const reached = new Promise<void>((resolveReached) => {
+    markReached = resolveReached;
+  });
+  let release!: () => void;
+  const released = new Promise<void>((resolveReleased) => {
+    release = resolveReleased;
+  });
+  return {
+    reached,
+    release,
+    settings: {
+      get: () => repository.get(),
+      save: async (settings, updatedAt) => {
+        markReached();
+        await released;
+        return repository.save(settings, updatedAt);
+      },
+    },
+  };
+}

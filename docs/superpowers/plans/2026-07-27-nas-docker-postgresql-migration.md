@@ -533,7 +533,7 @@ export interface AuthRepository {
 }
 ```
 
-`InitialSettings` is the existing domain type. `initialize()` writes administrator credentials and initial settings in one transaction; `resetPassword()` updates the password, consumes recovery state, revokes every session, and clears login attempts in one transaction. `recordFailedLogin()` uses one atomic PostgreSQL write so concurrent invalid passwords cannot overwrite each other's count. `establishSession()` locks and rechecks the credential version, checks lockout state, clears failed attempts, and inserts the token hash in one transaction. This extra operation is required because a password verified before reset must never create a live session after reset commits; the repository returns only the safe classifications above and never exposes a pg client or transaction executor to `AuthService`. All route handlers accept repository/service dependencies rather than `D1Database`.
+`InitialSettings` is the existing domain type. `initialize()` writes administrator credentials and initial settings in one transaction; `resetPassword()` updates the password, consumes recovery state, revokes every session, and clears login attempts in one transaction. `recordFailedLogin()` uses one atomic PostgreSQL write so concurrent invalid passwords cannot overwrite each other's count. `establishSession()` locks and rechecks the credential version, checks lockout state, clears failed attempts, and inserts the token hash in one transaction. This extra operation is required because a password verified before reset must never create a live session after reset commits; the repository returns only the safe classifications above and never exposes a pg client or transaction executor to `AuthService`. The transitional D1 implementation preserves the same ordering: failed conditional recovery writes cannot revoke later sessions or clear later failures, and failed old-credential session INSERTs cannot clear failures for the new credential. Settings writes accept only public patches; PostgreSQL locks `settings.id=1`, merges and validates the final object before updating, so different concurrent fields are retained. All route handlers accept repository/service dependencies rather than `D1Database`.
 
 - [ ] **Step 1: Write failing auth transaction tests**
 
@@ -545,6 +545,9 @@ Prove:
 - login lockout increments and clears correctly using PostgreSQL timestamps.
 - five concurrent invalid passwords do not lose increments and still lock exactly at the existing threshold;
 - an ordered race that pauses after old-password verification, commits reset, and then resumes session creation cannot leave a valid session.
+- a failed second D1 recovery write leaves sessions and failed-login state created after the first reset untouched;
+- a stale D1 credential session attempt cannot clear failures created under the replacement credential;
+- concurrent PostgreSQL theme/timezone patches preserve both fields and validate the final region/default relationship.
 
 Run the focused auth tests and verify they fail on missing PostgreSQL implementations.
 
@@ -576,6 +579,8 @@ await this.database.transaction(async (transaction) => {
 ```
 
 Do not emulate D1 `batch()` or issue independent pool queries inside a transaction.
+
+Permanent deletion must lock selected subscriptions, their games, and all affected `regional_products` before deleting any child table. The product `FOR UPDATE` lock conflicts with foreign-key child writes' `KEY SHARE`, so a notification/log/snapshot writer cannot enter after cleanup and leave a pending orphan or make `price_snapshots` `RESTRICT` abort the all-or-nothing delete.
 
 The manual-refresh UPSERT remains a single statement and uses the maximum stored/requested timestamp so an older concurrent request cannot move the most-recent audit time backward. External collection work runs after that statement and is never held inside a database transaction.
 

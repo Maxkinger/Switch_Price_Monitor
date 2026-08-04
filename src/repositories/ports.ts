@@ -20,9 +20,15 @@ export interface SettingsReader {
   get(): Promise<AppSettings | null>;
 }
 
-/** 公开设置服务只需在读取端口上增加完整替换；首次认证初始化写入仍属于 Task 4 的独立事务边界。 */
+/** 浏览器只能提交公开设置的局部补丁；createdAt 与未来秘密字段永远不能由 PATCH 覆盖。 */
+export type SettingsPatch = Partial<Omit<AppSettings, "createdAt">>;
+
+/**
+ * 公开设置写入必须接收局部补丁而非服务读出的完整快照。
+ * PostgreSQL 实现会在同一行锁事务内重读、合并、校验和写入，避免两个管理员请求修改不同字段时发生丢失更新或破坏默认区从属关系。
+ */
 export interface SettingsStore extends SettingsReader {
-  save(settings: AppSettings, updatedAt: string): Promise<void>;
+  save(patch: SettingsPatch, updatedAt: string): Promise<AppSettings | null>;
 }
 
 /** 首次管理员设置只保存派生后的秘密材料；明文密码和恢复码不得越过认证服务进入仓储。 */

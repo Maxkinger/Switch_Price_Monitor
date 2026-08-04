@@ -98,7 +98,7 @@ const worker: ExportedHandler<Env> = {
     });
     if (dashboardResponse) return dashboardResponse;
 
-    // 手动刷新只允许管理员在请求内立即执行一次采集；冷却状态限制频率，防止匿名访问或重复点击放大外部来源负载。
+    // 手动刷新只允许管理员在请求内立即执行一次采集；当前无冷却，但会话校验、统一来源链和单行最大 UTC 审计时间仍阻止匿名写入与时间倒退。
     const manualRefreshResponse = await handleManualRefreshRoute(request, {
       sessions: auth,
       refresh: new ManualRefreshService(new D1ManualRefreshRepository(env.DB), createLiveCollectionRunner(env)),

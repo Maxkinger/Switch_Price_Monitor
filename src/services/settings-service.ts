@@ -1,5 +1,5 @@
 import { initialRegionCodes, themes, type AppSettings, type RegionCode } from "../shared/domain";
-import type { SettingsStore } from "../repositories/ports";
+import type { SettingsPatch as SettingsPatchInput, SettingsStore } from "../repositories/ports";
 
 /** 设置记录异常缺失时使用明确错误，避免在已登录但未完成初始化的异常状态下返回空对象。 */
 export class SettingsNotInitializedError extends Error {}
@@ -8,7 +8,7 @@ export class SettingsNotInitializedError extends Error {}
 export class SettingsValidationError extends Error {}
 
 /** 浏览器可提交的公开设置字段；createdAt 和任何秘密配置始终由服务端控制。 */
-export type SettingsPatch = Partial<Omit<AppSettings, "createdAt">>;
+export type SettingsPatch = SettingsPatchInput;
 
 /**
  * 管理全局单例设置的合并与约束。更新只影响后续搜索、显示与调度，不回写既有订阅的监控地区，
@@ -23,17 +23,13 @@ export class SettingsService {
     return current;
   }
 
-  /** 把局部浏览器更新与当前值合并，并在写入前一次性验证彼此相关的地区与默认区。 */
+/**
+ * 将局部浏览器补丁交给仓储原子合并、校验并写入。
+ * 服务不能先读再全量覆盖：两个已认证请求若分别改主题和时区，后写旧快照会丢失前一请求；PostgreSQL 仓储必须在锁内保留另一字段并检查地区从属关系。
+ */
   public async update(patch: SettingsPatch, now: string): Promise<AppSettings> {
-    const current = await this.get();
-    const next: AppSettings = {
-      ...current,
-      ...patch,
-      enabledRegions: patch.enabledRegions ?? current.enabledRegions,
-      defaultSearchRegion: patch.defaultSearchRegion ?? current.defaultSearchRegion,
-    };
-    validateSettings(next);
-    await this.settings.save(next, now);
+    const next = await this.settings.save(patch, now);
+    if (!next) throw new SettingsNotInitializedError("尚未完成首次设置。");
     return next;
   }
 }

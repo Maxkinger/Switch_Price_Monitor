@@ -86,6 +86,64 @@ describe("AuthService", () => {
     });
   });
 
+  it("does not revoke a new session or clear a new lockout when a stale D1 recovery write loses the race", async () => {
+    // 先确定第一次恢复已消费恢复码，再人为建立新密码生命周期中的会话与失败计数；第二个旧恢复事务必须只返回已消费分类，绝不能撤销这些后来状态。
+    await initializeAdministrator(auth);
+    const repository = new AuthRepository(env.DB);
+    await repository.resetPassword({
+      passwordHash: "first-reset-password-hash",
+      passwordSalt: "first-reset-password-salt",
+      recoveryUsedAt: "2026-07-16T00:01:00.000Z",
+      sessionRevokedAt: "2026-07-16T00:01:00.000Z",
+    });
+    await repository.createSession({
+      id: "session-created-after-first-reset",
+      tokenHash: "session-hash-created-after-first-reset",
+      expiresAt: "2026-08-16T00:02:00.000Z",
+      createdAt: "2026-07-16T00:02:00.000Z",
+    });
+    await repository.saveLoginAttempt({ failedCount: 2, lockedUntil: null });
+
+    await expect(repository.resetPassword({
+      passwordHash: "stale-second-reset-password-hash",
+      passwordSalt: "stale-second-reset-password-salt",
+      recoveryUsedAt: "2026-07-16T00:03:00.000Z",
+      sessionRevokedAt: "2026-07-16T00:03:00.000Z",
+    })).rejects.toMatchObject({ message: "恢复状态已被消费。" });
+
+    await expect(repository.isSessionValid("session-hash-created-after-first-reset", "2026-07-16T00:04:00.000Z")).resolves.toBe(true);
+    await expect(repository.getLoginAttempt()).resolves.toEqual({ failedCount: 2, lockedUntil: null });
+  });
+
+  it("does not clear new-credential failures when an old verified D1 credential can no longer create a session", async () => {
+    // 旧密码 PBKDF2 完成后密码恢复可以先提交；随后旧凭据建立会话必须失败，并且不能删除恢复后新密码已产生的失败记录。
+    await initializeAdministrator(auth);
+    const repository = new AuthRepository(env.DB);
+    const oldCredential = await repository.getPasswordCredential();
+    if (!oldCredential) throw new Error("测试旧密码材料缺失。");
+    await repository.resetPassword({
+      passwordHash: "new-credential-password-hash",
+      passwordSalt: "new-credential-password-salt",
+      recoveryUsedAt: "2026-07-16T00:01:00.000Z",
+      sessionRevokedAt: "2026-07-16T00:01:00.000Z",
+    });
+    await repository.saveLoginAttempt({ failedCount: 1, lockedUntil: null });
+
+    await expect(repository.establishSession({
+      expectedCredential: oldCredential,
+      session: {
+        id: "session-from-stale-credential",
+        tokenHash: "session-hash-from-stale-credential",
+        expiresAt: "2026-08-16T00:02:00.000Z",
+        createdAt: "2026-07-16T00:02:00.000Z",
+      },
+      now: "2026-07-16T00:02:00.000Z",
+    })).resolves.toBe("credential-changed");
+
+    await expect(repository.getLoginAttempt()).resolves.toEqual({ failedCount: 1, lockedUntil: null });
+    await expect(repository.isSessionValid("session-hash-from-stale-credential", "2026-07-16T00:03:00.000Z")).resolves.toBe(false);
+  });
+
   it("revokes only the session identified by the logout cookie", async () => {
     // 退出登录只撤销当前浏览器令牌；同一管理员在另一受信设备上的会话不应被意外中断。
     await initializeAdministrator(auth);

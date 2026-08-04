@@ -16,7 +16,7 @@
 | 订阅管理 | 创建、读取、编辑、软停用、重新启用、永久删除、目标价和地区配置 |
 | 历史 | 按商品、地区、时间范围读取价格快照和汇率信息 |
 | 设置 | 已实现：地区、默认搜索区、主题、时区、日报时间、税务州、保留策略；延期：来源排序、第三方来源与 Telegram 测试 |
-| 操作 | 15 分钟冷却的手动刷新、导出 CSV |
+| 操作 | 无冷却的同步手动刷新、导出 CSV |
 | 诊断 | 采集日志、地区健康状态、通知发送记录 |
 
 ## 3. 响应模型约束
@@ -33,7 +33,7 @@
 | --- | --- | --- |
 | `GET /api/auth/status` | 公开 | 返回 `initialized` 与当前请求 Cookie 是否有效的 `authenticated` 布尔值，供首次访问页面选择初始化、登录或安全恢复已认证界面；不返回管理员、地区、密码、令牌或会话资料。 |
 | `POST /api/auth/initialize` | 仅尚未初始化 | 保存管理员密码哈希和已选地区；仅在响应中一次性返回恢复码。重复调用返回 `409`。 |
-| `POST /api/auth/login` | 公开 | 成功时写入 `HttpOnly`、`Secure`、`SameSite=Lax` 的会话 Cookie；密码错误返回 `401`，五次连续失败后的锁定返回 `429`。 |
+| `POST /api/auth/login` | 公开 | 成功时写入 `HttpOnly`、`SameSite=Strict` 的会话 Cookie；`Secure` 仅由可信部署配置显式提供，绝不从转发请求头推断。密码错误返回 `401`，五次连续失败后的锁定返回 `429`。 |
 | `POST /api/auth/recover` | 公开 | 用一次性恢复码重设密码，撤销全部会话，响应 `204` 且不回显任何秘密。无效或已使用恢复码返回 `401`。 |
 | `POST /api/auth/logout` | 可带会话 Cookie | 撤销当前会话并立即清除浏览器 Cookie；无 Cookie 时仍幂等返回 `204`。 |
 | `POST /api/products/preview-sources` | 已登录管理员 | 接受至少一个、每区最多一个的地区商品候选（仅五个受支持地区、HTTPS 链接、非空标题、可空发行商及受控商品类型），只返回逐区官方 ID 状态、第三方回退顺序和可监控提示，不创建游戏、地区商品或订阅。首版仅验证日区官方 ID；美、墨、巴、港会明确预告第三方回退。匿名请求返回 `401`，输入无效返回 `422`。 |
@@ -49,7 +49,7 @@
 | `PATCH /api/subscriptions/:id` | 已登录管理员 | 接受启用状态、完整目标价配置，或非空且去重的 `regionalProductIds` 地区范围；地区商品必须属于订阅的同一游戏且启用，替换地区不删除既有历史。 |
 | `GET /api/settings` | 已登录管理员 | 由 `/settings` 同源页面读取单例公开设置，仅返回 `enabledRegions`、`defaultSearchRegion`、`theme`、`timezone`、`dailyReportTime`、`taxState`、`priceHistoryRetention` 和服务端创建时间；不含 Telegram、第三方来源、认证或会话秘密字段。 |
 | `PATCH /api/settings` | 已登录管理员 | `/settings` 仅提交现有公开字段 `enabledRegions`、`defaultSearchRegion`、`theme`、`timezone`、`dailyReportTime`、`taxState`、`priceHistoryRetention`；默认搜索区必须属于启用地区，更新不会改写既有订阅。浏览器没有 Telegram、第三方来源或认证秘密字段的请求入口。 |
-| `POST /api/refresh` | 已登录管理员 | 通过 15 分钟原子冷却后，在当前请求内执行一次与六小时 Cron 相同的统一采集链并返回本轮 `attempted`、`collected`、`stale` 与执行时间；冷却内返回 `429 REFRESH_COOLDOWN` 及下一次允许时间。接口不再创建等待 Cron 消费的队列。 |
+| `POST /api/refresh` | 已登录管理员 | 当前无 15 分钟冷却：每个已认证请求都在当前请求内执行一次与六小时 Cron 相同的统一采集链，并返回本轮 `attempted`、`collected`、`stale` 与执行时间。最近刷新审计只保留最大 UTC 时刻；接口不创建等待 Cron 消费的队列。 |
 | `GET /api/dashboard` | 已登录管理员 | 返回按创建顺序排列的订阅概览，包括游戏名称、启用状态、已确认地区商品、各区最新快照及当地货币历史最低价，并提供仅由已完成汇率换算快照计算的全区人民币历史最低价；统计同时返回已验证的管理员 IANA `timezone`，浏览器据此格式化 UTC 的最近采集与下次日报时间，不依赖设备时区。最新快照保留原始来源标记，首次尚未订阅时稳定返回空数组。`POST /api/refresh` 成功后浏览器会重新读取此接口，不从完成统计自行拼接价格。 |
 | `GET /api/history?subscriptionId=&region=` | 已登录管理员 | 按采集时间升序返回指定订阅的不可变价格快照；可选 `region` 在服务端筛选地区，响应保留原始货币、人民币金额、来源与采集时间。 |
 | `GET /api/export?kind=subscriptions\|prices\|fetch-logs` | 已登录管理员 | 下载订阅配置、价格历史或采集日志 CSV；每种类型使用独立字段白名单，不包含认证、会话、恢复码或 Telegram 字段。 |

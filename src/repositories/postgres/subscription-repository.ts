@@ -26,6 +26,11 @@ interface SubscriptionDeletionTargetRow {
   gameId: string;
 }
 
+/** 永久删除先锁定每个地区商品；FK 子写入需要 KEY SHARE，与 FOR UPDATE 冲突，避免清理后再插入通知、日志或快照。 */
+interface RegionalProductDeletionTargetRow {
+  id: string;
+}
+
 /** 地区替换与存在性查询只需稳定逻辑游戏 ID，不读取价格、标题或任何通知事实。 */
 interface SubscriptionGameRow {
   gameId: string;
@@ -158,8 +163,8 @@ export class SubscriptionRepository implements SubscriptionStore {
   }
 
   /**
-   * 永久删除先在事务内按 ID 排序锁定全部目标并验证数量，再按外键和业务保留规则清理。
-   * 任一 ID 缺失时不会执行 DELETE；任一中途故障会恢复通知、目标、价格、日志、健康状态及所有主档，汇率/设置/认证永不在范围内。
+   * 永久删除先按稳定顺序锁订阅、游戏与地区商品，再按外键和业务保留规则清理。
+   * 游戏锁阻止删除期间新增地区商品，商品 FOR UPDATE 与 FK 子写的 KEY SHARE 冲突；因此通知、日志和快照不能在清理后插入并导致孤儿或 RESTRICT 回滚。
    */
   public async deleteMany(subscriptionIds: string[]): Promise<boolean> {
     if (subscriptionIds.length === 0) throw new Error("硬删除至少需要一个已验证订阅标识。");
@@ -176,27 +181,34 @@ export class SubscriptionRepository implements SubscriptionStore {
 
       const gameIds = targets.rows.map((target) => target.gameId);
       await transaction.query(
+        "SELECT id FROM games WHERE id = ANY($1::text[]) ORDER BY id ASC FOR UPDATE",
+        [gameIds],
+      );
+      const products = await transaction.query<RegionalProductDeletionTargetRow>(
+        "SELECT id FROM regional_products WHERE game_id = ANY($1::text[]) ORDER BY id ASC FOR UPDATE",
+        [gameIds],
+      );
+      const productIds = products.rows.map((product) => product.id);
+      await transaction.query(
         `DELETE FROM notification_events
           WHERE subscription_id = ANY($1::text[])
-             OR regional_product_id IN (
-               SELECT id FROM regional_products WHERE game_id = ANY($2::text[])
-             )`,
-        [subscriptionIds, gameIds],
+             OR regional_product_id = ANY($2::text[])`,
+        [subscriptionIds, productIds],
       );
       await transaction.query("DELETE FROM subscription_region_targets WHERE subscription_id = ANY($1::text[])", [subscriptionIds]);
       await transaction.query("DELETE FROM subscription_regions WHERE subscription_id = ANY($1::text[])", [subscriptionIds]);
       await transaction.query(
-        "DELETE FROM price_snapshots WHERE regional_product_id IN (SELECT id FROM regional_products WHERE game_id = ANY($1::text[]))",
-        [gameIds],
+        "DELETE FROM price_snapshots WHERE regional_product_id = ANY($1::text[])",
+        [productIds],
       );
       // fetch_logs 的外键是 SET NULL，但管理员明确永久删除时业务规则要求擦除这些专属诊断记录，不能留下无归属日志长期占用空间。
       await transaction.query(
-        "DELETE FROM fetch_logs WHERE regional_product_id IN (SELECT id FROM regional_products WHERE game_id = ANY($1::text[]))",
-        [gameIds],
+        "DELETE FROM fetch_logs WHERE regional_product_id = ANY($1::text[])",
+        [productIds],
       );
       await transaction.query(
-        "DELETE FROM regional_product_health WHERE regional_product_id IN (SELECT id FROM regional_products WHERE game_id = ANY($1::text[]))",
-        [gameIds],
+        "DELETE FROM regional_product_health WHERE regional_product_id = ANY($1::text[])",
+        [productIds],
       );
       await transaction.query("DELETE FROM subscriptions WHERE id = ANY($1::text[])", [subscriptionIds]);
       await transaction.query("DELETE FROM regional_products WHERE game_id = ANY($1::text[])", [gameIds]);
