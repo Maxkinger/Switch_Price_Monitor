@@ -5,10 +5,11 @@ import { SettingsRepository } from "../src/repositories/postgres/settings-reposi
 import { SubscriptionRepository } from "../src/repositories/postgres/subscription-repository";
 import { runMigrations } from "../src/server/database/migrations";
 import { SettingsValidationError } from "../src/services/settings-service";
+import { SubscriptionService } from "../src/services/subscription-service";
 import { createTestDatabase, resetDisposableTestSchema } from "./support/postgres";
 
 describe("settings and subscriptions repositories", () => {
-  // 两个仓储共享同一可丢弃 PostgreSQL：SettingsRepository 与 Task 3 的订阅只读查询都直接验证 PostgreSQL 语义；创建和更新等事务写入仍留在 Task 4，避免测试暗示读取仓储承担写入职责。
+  // 两个仓储共享同一可丢弃 PostgreSQL：Task 4 已在原 Task 3 读取实现上增加设置保存与订阅事务写入，测试同时约束读写 DTO 不泄漏驱动类型。
   const database = createTestDatabase();
   const settings = new SettingsRepository(database);
   const subscriptions = new SubscriptionRepository(database);
@@ -71,6 +72,37 @@ describe("settings and subscriptions repositories", () => {
     await expect(settings.get()).rejects.toBeInstanceOf(SettingsValidationError);
   });
 
+  it("updates only public settings fields while preserving the initialization timestamp", async () => {
+    // 公开设置保存必须使用固定列清单；createdAt 保留首次初始化事实，未来 Telegram 等秘密字段不能被 PATCH 过量赋值。
+    await database.query(
+      `INSERT INTO settings (id, enabled_regions_json, default_search_region, created_at, updated_at)
+       VALUES (1, $1::jsonb, $2, $3, $3)`,
+      [JSON.stringify(["US", "JP"]), "US", "2026-07-16T00:00:00.000Z"],
+    );
+
+    await settings.save({
+      enabledRegions: ["JP"],
+      defaultSearchRegion: "JP",
+      theme: "calm-dark",
+      timezone: "Asia/Tokyo",
+      dailyReportTime: "08:30",
+      taxState: "OR",
+      priceHistoryRetention: "one-year",
+      createdAt: "2026-07-16T00:00:00.000Z",
+    }, "2026-07-16T01:00:00.000Z");
+
+    await expect(settings.get()).resolves.toEqual({
+      enabledRegions: ["JP"],
+      defaultSearchRegion: "JP",
+      theme: "calm-dark",
+      timezone: "Asia/Tokyo",
+      dailyReportTime: "08:30",
+      taxState: "OR",
+      priceHistoryRetention: "one-year",
+      createdAt: "2026-07-16T00:00:00.000Z",
+    });
+  });
+
   it("reads one subscription with its selected regional products", async () => {
     // 先构造已验证地区商品和订阅关系，隔离本任务只迁移读取路径的范围，不提前实现 Task 4 的事务创建写入。
     await database.query(
@@ -114,6 +146,47 @@ describe("settings and subscriptions repositories", () => {
       enabled: false,
       createdAt: "2026-07-17T00:00:00.000Z",
       regionalProductIds: [],
+    });
+  });
+
+  it("creates or reopens one PostgreSQL subscription without replacing its confirmed regions", async () => {
+    // 两次请求模拟双击/重试；游戏行锁和事务归属校验必须只创建一条订阅，并保留首次确认的美日两区范围。
+    await database.query(
+      "INSERT INTO games (id, name_zh, name_en, normalized_name, product_type) VALUES ($1, $2, $3, $4, $5)",
+      ["game-create", "胡闹厨房 2", "Overcooked! 2", "create-game", "game"],
+    );
+    await database.query(
+      `INSERT INTO regional_products (id, game_id, region_code, currency, product_url, match_source)
+       VALUES ($1, $2, $3, $4, $5, $6), ($7, $2, $8, $9, $10, $6)`,
+      [
+        "product-create-us",
+        "game-create",
+        "US",
+        "USD",
+        "https://example.test/us/create",
+        "manual_selection",
+        "product-create-jp",
+        "JP",
+        "JPY",
+        "https://example.test/jp/create",
+      ],
+    );
+    const service = new SubscriptionService(subscriptions);
+
+    await expect(service.createOrOpen({
+      id: "subscription-create",
+      gameId: "game-create",
+      regionalProductIds: ["product-create-us", "product-create-jp"],
+    }, "2026-07-16T00:00:00.000Z")).resolves.toEqual({ subscriptionId: "subscription-create", created: true });
+    await expect(service.createOrOpen({
+      id: "subscription-unused",
+      gameId: "game-create",
+      regionalProductIds: ["product-create-us"],
+    }, "2026-07-16T00:01:00.000Z")).resolves.toEqual({ subscriptionId: "subscription-create", created: false });
+
+    await expect(subscriptions.findByGameId("game-create")).resolves.toMatchObject({
+      id: "subscription-create",
+      regionalProductIds: ["product-create-jp", "product-create-us"],
     });
   });
 });

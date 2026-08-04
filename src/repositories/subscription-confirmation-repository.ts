@@ -1,48 +1,20 @@
 import type { ProductType } from "../providers/types";
-import type { OfficialProductCandidate, RegionalProductMatchSource, RegionCode } from "../shared/domain";
+import type { RegionCode } from "../shared/domain";
+import type {
+  ExistingSubscriptionConfirmation,
+  ExistingSubscriptionRegionCompletion,
+  SubscriptionConfirmationStore,
+  ValidatedConfirmedRegion,
+  ValidatedSubscriptionConfirmation,
+} from "./ports";
 
-/** 已有订阅只返回确认服务决定幂等结果所需的两个标识，避免仓储把历史地区范围交给新建流程误写。 */
-export interface ExistingSubscriptionConfirmation {
-  normalizedName: string;
-  gameId: string;
-  subscriptionId: string;
-}
-
-/** 经官方页面和官方价格 ID 服务重新验证后的单区写入模型；浏览器原始候选不会直接进入此仓储。 */
-export interface ValidatedConfirmedRegion {
-  id: string;
-  regionCode: RegionCode;
-  currency: string;
-  officialPriceId: string | null;
-  productUrl: string;
-  matchSource: RegionalProductMatchSource;
-}
-
-/** 一条新订阅的完整原子写入数据，所有 ID 均由服务端生成以阻止浏览器覆盖或猜测业务主键。 */
-export interface ValidatedSubscriptionConfirmation {
-  game: {
-    id: string;
-    nameZh: string;
-    nameEn: string;
-    normalizedName: string;
-    publisher: string | null;
-    productType: ProductType;
-    coverUrl: string | null;
-  };
-  subscriptionId: string;
-  regions: ValidatedConfirmedRegion[];
-}
-
-/**
- * 已有订阅补全所需的受控锚点。该锚点只从订阅、游戏与已监控地区商品联表读取，
- * 浏览器既不能指定游戏归属，也不能把另一个订阅的商品 URL 伪装成当前补全的身份起点。
- */
-export interface ExistingSubscriptionRegionCompletion {
-  subscriptionId: string;
-  gameId: string;
-  anchor: OfficialProductCandidate;
-  existingRegionCodes: RegionCode[];
-}
+// 继续从旧入口导出平台中立模型，避免迁移中的测试和调用方被迫依赖 D1 实现路径；新代码应直接引用 ports。
+export type {
+  ExistingSubscriptionConfirmation,
+  ExistingSubscriptionRegionCompletion,
+  ValidatedConfirmedRegion,
+  ValidatedSubscriptionConfirmation,
+} from "./ports";
 
 /** D1 行别名只在仓储内部使用，避免 SQL 的蛇形命名泄漏到确认服务与 HTTP 响应。 */
 interface ExistingSubscriptionRow {
@@ -73,7 +45,7 @@ interface ExistingSubscriptionRegionRow {
  * 最终订阅确认的唯一持久化边界。它先只读查找既有规范化游戏身份，再把新游戏、地区商品、订阅及关联交给同一 D1 批次，
  * 防止其中一条 SQL 成功而另一条失败时留下会被采集器误用的半成品记录。
  */
-export class SubscriptionConfirmationRepository {
+export class SubscriptionConfirmationRepository implements SubscriptionConfirmationStore {
   public constructor(private readonly database: D1Database) {}
 
   /**

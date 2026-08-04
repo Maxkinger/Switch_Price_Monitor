@@ -1,15 +1,13 @@
-/** 临时无冷却阶段每次请求都会被接受；nextAllowedAt 等于本次时间，避免客户端显示不存在的倒计时。 */
-export interface ManualRefreshRequestResult {
-  accepted: boolean;
-  requestedAt: string;
-  nextAllowedAt: string;
-}
+import type { ManualRefreshRequestResult, ManualRefreshStore } from "./ports";
+
+// 保留旧入口的类型导出，过渡 Worker 与既有测试无需依赖具体数据库目录；新平台装配应直接引用 ports。
+export type { ManualRefreshRequestResult } from "./ports";
 
 /**
  * 临时无冷却手动刷新的 D1 边界。表只保留一条最近执行时间，服务每次请求后立即采集，
  * 因而不能保存 queued/running 任务状态，以免管理员误以为点击仍需等待 Cron 或积累队列。
  */
-export class ManualRefreshRepository {
+export class ManualRefreshRepository implements ManualRefreshStore {
   public constructor(private readonly database: D1Database) {}
 
   /**

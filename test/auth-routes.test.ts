@@ -1,6 +1,9 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { AuthRepository } from "../src/repositories/d1/auth-repository";
+import { handleAuthRoute, type AuthRouteDependencies } from "../src/routes/auth-routes";
+import { AuthService } from "../src/services/auth-service";
 import worker, { type Env } from "../src/worker";
 
 describe("authentication HTTP routes", () => {
@@ -21,6 +24,59 @@ describe("authentication HTTP routes", () => {
     expect(login.status).toBe(200);
     expect(login.headers.get("set-cookie")).toContain("HttpOnly");
     expect(login.headers.get("set-cookie")).toContain("Secure");
+    expect(login.headers.get("set-cookie")).toContain("SameSite=Strict");
+  });
+
+  it("uses explicit insecure-LAN cookie configuration and ignores forged forwarding headers", async () => {
+    // 局域网 HTTP 由可信启动配置明确关闭 Secure；客户端伪造 X-Forwarded-Proto=https 也不能改变 Cookie 属性。
+    const auth = new AuthService(new AuthRepository(env.DB));
+    await auth.initialize({
+      password: "correct-horse-battery-staple",
+      enabledRegions: ["US"],
+      defaultSearchRegion: "US",
+      now: "2026-07-16T00:00:00.000Z",
+    });
+
+    const login = await handleAuthRoute(new Request("http://nas.test/api/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-forwarded-proto": "https" },
+      body: JSON.stringify({ password: "correct-horse-battery-staple" }),
+    }), {
+      auth,
+      sessions: auth,
+      cookieSecure: false,
+      now: () => "2026-07-16T00:01:00.000Z",
+    });
+
+    const cookie = login?.headers.get("set-cookie") ?? "";
+    expect(cookie).toContain("HttpOnly");
+    expect(cookie).toContain("SameSite=Strict");
+    expect(cookie).not.toContain(" Secure;");
+  });
+
+  it("redacts unknown authentication storage failures", async () => {
+    // PostgreSQL URL、SQL 或驱动正文属于内部信息；未知异常只能返回固定 500，不能因已登录或初始化端点而回显。
+    const dependencies: AuthRouteDependencies = {
+      auth: {
+        isInitialized: async () => true,
+        initialize: async () => ({ recoveryCode: "unused" }),
+        login: async () => { throw new Error("postgres://secret@nas/internal SQL failure"); },
+        resetPassword: async () => undefined,
+        logout: async () => undefined,
+      },
+      sessions: { authenticate: async () => false },
+      cookieSecure: false,
+      now: () => "2026-07-16T00:01:00.000Z",
+    };
+
+    const response = await handleAuthRoute(new Request("http://nas.test/api/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ password: "correct-horse-battery-staple" }),
+    }), dependencies);
+
+    expect(response?.status).toBe(500);
+    await expect(response?.json()).resolves.toEqual({ code: "INTERNAL_ERROR", error: "认证暂时无法处理，请稍后重试。" });
   });
 
   it("reports setup and current-session state without exposing administrator data", async () => {

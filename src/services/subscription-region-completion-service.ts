@@ -1,9 +1,9 @@
 import type { ConfirmedRegionalProduct, OfficialProductCandidate, RegionCode } from "../shared/domain";
 import type { OfficialNintendoProductPageResolver } from "../providers/official-nintendo-product-page";
-import {
-  SubscriptionConfirmationRepository,
-  type ValidatedConfirmedRegion,
-} from "../repositories/subscription-confirmation-repository";
+import type {
+  SubscriptionConfirmationStore,
+  ValidatedConfirmedRegion,
+} from "../repositories/ports";
 import type { OfficialPriceIdResolution, OfficialPriceIdService } from "./official-price-id-service";
 import type { RegionResolution, OfficialProductDiscoveryService } from "./official-product-discovery-service";
 import type { EnabledRegionSettingsReader } from "./subscription-confirmation-service";
@@ -14,19 +14,19 @@ type OfficialPriceIdResolver = Pick<OfficialPriceIdService, "resolve">;
 /** 复用发现服务的安全跨区解析入口；地区范围仍由服务端设置决定，浏览器不能提供地区数组。 */
 type ConfiguredRegionResolver = Pick<OfficialProductDiscoveryService, "resolveRegions">;
 
-/** 订阅不存在时专用错误供路由稳定映射为 404，不泄露 D1 查询或官方页面解析细节。 */
+/** 订阅不存在时专用错误供路由稳定映射为 404，不泄露数据库查询或官方页面解析细节。 */
 export class SubscriptionRegionCompletionNotFoundError extends Error {}
 
 /** 可预期的官方身份、地区覆盖或请求错误；路由只返回安全中文摘要和 422。 */
 export class SubscriptionRegionCompletionError extends Error {}
 
-/** 浏览器提交的补全载荷不含游戏 ID 或锚点 URL；这两项必须从当前订阅的 D1 记录读取。 */
+/** 浏览器提交的补全载荷不含游戏 ID 或锚点 URL；这两项必须从当前订阅的持久化记录读取。 */
 export interface CompletionRegionsInput {
   regions: ConfirmedRegionalProduct[];
   skippedRegionCodes: RegionCode[];
 }
 
-/** 成功结果只暴露订阅与新增地区代码，避免将 D1 主键、官方响应正文或既有商品 URL 返回浏览器。 */
+/** 成功结果只暴露订阅与新增地区代码，避免将数据库主键、官方响应正文或既有商品 URL 返回浏览器。 */
 export interface CompletionRegionsResult {
   subscriptionId: string;
   addedRegionCodes: RegionCode[];
@@ -38,7 +38,7 @@ export interface CompletionRegionsResult {
  */
 export class SubscriptionRegionCompletionService {
   public constructor(
-    private readonly repository: SubscriptionConfirmationRepository,
+    private readonly repository: SubscriptionConfirmationStore,
     private readonly pages: OfficialNintendoProductPageResolver,
     private readonly officialPriceIds: OfficialPriceIdResolver,
     private readonly settings: EnabledRegionSettingsReader,
@@ -143,7 +143,7 @@ function hasSameLogicalIdentity(left: OfficialProductCandidate, right: OfficialP
 
 /**
  * 已有订阅补全沿用与新建确认相同的信任分级：自动解析只能在唯一严格身份下成立；
- * 管理员点击候选卡或粘贴链接后，可接受本地化标题/发行商，但前提仍是 Worker 已重验该区任天堂 URL 且类型相同。
+ * 管理员点击候选卡或粘贴链接后，可接受本地化标题/发行商，但前提仍是服务端已重验该区任天堂 URL 且类型相同。
  * 此函数不放宽地区、主机或路径校验，那些约束由 `resolveOfficialCandidate` 在网络请求前后负责。
  */
 function hasConfirmedRegionIdentity(

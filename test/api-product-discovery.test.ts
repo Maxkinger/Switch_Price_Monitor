@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import worker, { type Env } from "../src/worker";
 import { JapaneseUpgradeBatchLimitError } from "../src/worker/providers/japanese-upgrade-browser";
-import { handleProductRoute } from "../src/routes/product-routes";
+import { AuthRepository } from "../src/repositories/d1/auth-repository";
+import { handleProductRoute, type ProductRouteDependencies } from "../src/routes/product-routes";
+import { AuthService } from "../src/services/auth-service";
 import { SubscriptionPreviewService } from "../src/services/subscription-preview-service";
 
 /**
@@ -23,11 +25,11 @@ describe("product discovery HTTP routes", () => {
       resolveOfficialLink: async () => candidate(),
       resolveRegions: async () => [],
     };
-    const anonymous = await handleProductRoute(request("/api/products/search", { query: "Overcooked" }), env.DB, fixedPreview(), discovery);
+    const anonymous = await handleProductRoute(request("/api/products/search", { query: "Overcooked" }), productDependencies(discovery));
     expect(anonymous?.status).toBe(401);
 
     const cookie = await initializeAndLogin();
-    const response = await handleProductRoute(request("/api/products/search", { query: "Overcooked" }, cookie), env.DB, fixedPreview(), discovery);
+    const response = await handleProductRoute(request("/api/products/search", { query: "Overcooked" }, cookie), productDependencies(discovery));
     expect(response?.status).toBe(200);
     await expect(response?.json()).resolves.toEqual({ status: "available", candidates: [candidate()] });
   });
@@ -44,9 +46,7 @@ describe("product discovery HTTP routes", () => {
 
     const response = await handleProductRoute(
       request("/api/products/resolve-link", { regionCode: "HK", productUrl: hongKongCandidate().productUrl }, cookie),
-      env.DB,
-      fixedPreview(),
-      discovery,
+      productDependencies(discovery),
     );
 
     expect(response?.status).toBe(200);
@@ -67,9 +67,7 @@ describe("product discovery HTTP routes", () => {
 
     const response = await handleProductRoute(
       request("/api/products/resolve-link", { regionCode: "JP", productUrl: japaneseUpgradeCandidate().productUrl, anchor }, cookie),
-      env.DB,
-      fixedPreview(),
-      discovery,
+      productDependencies(discovery),
     );
 
     expect(response?.status).toBe(200);
@@ -85,9 +83,7 @@ describe("product discovery HTTP routes", () => {
 
     const response = await handleProductRoute(
       request("/api/products/resolve-link", { regionCode: "JP", productUrl: japaneseUpgradeCandidate().productUrl, anchor: { canonicalTitle: "伪造升级包" } }, cookie),
-      env.DB,
-      fixedPreview(),
-      discovery,
+      productDependencies(discovery),
     );
 
     expect(response?.status).toBe(422);
@@ -109,7 +105,7 @@ describe("product discovery HTTP routes", () => {
     };
     const cookie = await initializeAndLogin();
 
-    const response = await handleProductRoute(request("/api/products/resolve-regions", { candidates: [candidate()] }, cookie), env.DB, fixedPreview(), discovery);
+    const response = await handleProductRoute(request("/api/products/resolve-regions", { candidates: [candidate()] }, cookie), productDependencies(discovery));
 
     expect(response?.status).toBe(422);
     await expect(response?.json()).resolves.toEqual({ code: "VALIDATION_ERROR", error: "一次最多核验 3 个日区升级包，请分批处理。" });
@@ -131,9 +127,7 @@ describe("product discovery HTTP routes", () => {
 
     const response = await handleProductRoute(
       request("/api/products/resolve-regions", { candidates: [candidate()] }, cookie),
-      env.DB,
-      fixedPreview(),
-      discovery,
+      productDependencies(discovery),
     );
 
     expect(response?.status).toBe(200);
@@ -159,9 +153,7 @@ describe("product discovery HTTP routes", () => {
 
     const response = await handleProductRoute(
       request("/api/products/resolve-regions", { candidates: [candidate()], enabledRegions: ["HK"] }, cookie),
-      env.DB,
-      fixedPreview(),
-      discovery,
+      productDependencies(discovery),
     );
 
     expect(response?.status).toBe(422);
@@ -182,10 +174,7 @@ describe("product discovery HTTP routes", () => {
 
     const response = await handleProductRoute(
       request("/api/products/confirm-subscriptions", { subscriptions: [input] }, cookie),
-      env.DB,
-      fixedPreview(),
-      discovery,
-      { confirm },
+      productDependencies(discovery, { confirm }),
     );
 
     expect(response?.status).toBe(201);
@@ -207,10 +196,7 @@ describe("product discovery HTTP routes", () => {
 
     const response = await handleProductRoute(
       request("/api/products/confirm-subscriptions", { subscriptions: [confirmedSubscription()] }, cookie),
-      env.DB,
-      fixedPreview(),
-      discovery,
-      confirmation,
+      productDependencies(discovery, confirmation),
     );
 
     expect(response?.status).toBe(422);
@@ -221,6 +207,15 @@ describe("product discovery HTTP routes", () => {
 /** 发现测试不需要价格 ID 网络验证，固定预览让路由的旧端点依然可被隔离地构造。 */
 function fixedPreview(): SubscriptionPreviewService {
   return new SubscriptionPreviewService({ resolve: async () => ({ status: "official-id-unavailable", officialPriceId: null, reason: "unsupported-region" }) }, []);
+}
+
+/** 直接路由测试显式装配平台中立依赖；D1 仅藏在过渡认证仓储，商品路由无法读取连接或自行创建仓储。 */
+function productDependencies(
+  discovery: NonNullable<ProductRouteDependencies["discovery"]>,
+  confirmation?: ProductRouteDependencies["confirmation"],
+): ProductRouteDependencies {
+  const sessions = new AuthService(new AuthRepository(env.DB));
+  return { sessions, preview: fixedPreview(), discovery, confirmation };
 }
 
 /** 美区候选完整反映 API 应返回的公开字段，不携带任天堂响应正文、Cookie 或任意内部标识。 */

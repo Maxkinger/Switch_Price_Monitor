@@ -26,8 +26,18 @@ import { NotificationEventRepository } from "../repositories/notification-event-
 import { ProductHealthRepository } from "../repositories/product-health-repository";
 import { SettingsRepository } from "../repositories/settings-repository";
 import { SubscriptionConfirmationRepository } from "../repositories/subscription-confirmation-repository";
+import { AuthRepository as D1AuthRepository } from "../repositories/d1/auth-repository";
+import { ExportRepository as D1ExportRepository } from "../repositories/d1/export-repository";
+import { HistoryRepository as D1HistoryRepository } from "../repositories/d1/history-repository";
 import { DashboardRepository } from "../repositories/d1/dashboard-repository";
+import { ManualRefreshRepository as D1ManualRefreshRepository } from "../repositories/manual-refresh-repository";
+import { SubscriptionDetailRepository as D1SubscriptionDetailRepository } from "../repositories/subscription-detail-repository";
+import { SubscriptionRepository as D1SubscriptionRepository } from "../repositories/subscription-repository";
+import { AuthService } from "../services/auth-service";
 import { DashboardService } from "../services/dashboard-service";
+import { ExportService } from "../services/export-service";
+import { HistoryService } from "../services/history-service";
+import { ManualRefreshService } from "../services/manual-refresh-service";
 import { OfficialPriceIdService } from "../services/official-price-id-service";
 import { OfficialProductDiscoveryService } from "../services/official-product-discovery-service";
 import type { DailyReportSubscription } from "../services/report-service";
@@ -39,7 +49,10 @@ import { ProductHealthService } from "../services/product-health-service";
 import { runPendingNotificationDelivery, runScheduled, runSixHourCollection } from "../services/scheduler-service";
 import { defaultFallbackSources, SubscriptionPreviewService } from "../services/subscription-preview-service";
 import { SubscriptionConfirmationService } from "../services/subscription-confirmation-service";
+import { SubscriptionDetailService } from "../services/subscription-detail-service";
 import { SubscriptionRegionCompletionService } from "../services/subscription-region-completion-service";
+import { SubscriptionService } from "../services/subscription-service";
+import { SettingsService } from "../services/settings-service";
 import { JapaneseSubscriptionConfirmationService } from "../services/japanese-subscription-confirmation-service";
 import { createJapaneseUpgradeRelationService } from "../services/japanese-upgrade-relation-service";
 import { TelegramService } from "../services/telegram-service";
@@ -65,28 +78,45 @@ const worker: ExportedHandler<Env> = {
       return Response.json({ ok: true, service: "switch-price-monitor" });
     }
 
-    // 认证路由必须在静态资源前处理，避免密码请求被错误当作前端文件。
-    const authResponse = await handleAuthRoute(request, env.DB);
+    // 过渡 Worker 为每个请求装配同一个认证服务实例；路由和守卫只见平台中立接口，Task 5 可直接替换为 PostgreSQL 仓储。
+    const auth = new AuthService(new D1AuthRepository(env.DB));
+    // 认证路由必须在静态资源前处理，避免密码请求被错误当作前端文件；Cloudflare HTTPS 明确要求 Secure，不能从请求头推断。
+    const authResponse = await handleAuthRoute(request, { auth, sessions: auth, cookieSecure: true });
     if (authResponse) return authResponse;
 
     // 全局设置会影响后续商品搜索、主题与日报调度，必须由管理员会话保护并先于静态资源回退处理。
-    const settingsResponse = await handleSettingsRoute(request, env.DB);
+    const settingsResponse = await handleSettingsRoute(request, {
+      sessions: auth,
+      settings: new SettingsService(new SettingsRepository(env.DB)),
+    });
     if (settingsResponse) return settingsResponse;
 
     // 仪表盘聚合订阅和价格历史，属于管理员私有信息，必须在静态资源层之前完成会话校验。
-    const dashboardResponse = await handleDashboardRoute(request, env.DB);
+    const dashboardResponse = await handleDashboardRoute(request, {
+      sessions: auth,
+      dashboard: new DashboardService(new DashboardRepository(env.DB)),
+    });
     if (dashboardResponse) return dashboardResponse;
 
     // 手动刷新只允许管理员在请求内立即执行一次采集；冷却状态限制频率，防止匿名访问或重复点击放大外部来源负载。
-    const manualRefreshResponse = await handleManualRefreshRoute(request, env.DB, createLiveCollectionRunner(env));
+    const manualRefreshResponse = await handleManualRefreshRoute(request, {
+      sessions: auth,
+      refresh: new ManualRefreshService(new D1ManualRefreshRepository(env.DB), createLiveCollectionRunner(env)),
+    });
     if (manualRefreshResponse) return manualRefreshResponse;
 
     // 历史快照属于管理员私有价格轨迹，必须在静态资源回退前进行会话校验和查询参数验证。
-    const historyResponse = await handleHistoryRoute(request, env.DB);
+    const historyResponse = await handleHistoryRoute(request, {
+      sessions: auth,
+      history: new HistoryService(new D1HistoryRepository(env.DB)),
+    });
     if (historyResponse) return historyResponse;
 
     // 导出可包含长期价格轨迹，必须通过管理员会话并由白名单导出服务生成，不能交给静态层或任意 SQL。
-    const exportResponse = await handleExportRoute(request, env.DB);
+    const exportResponse = await handleExportRoute(request, {
+      sessions: auth,
+      exports: new ExportService(new D1ExportRepository(env.DB)),
+    });
     if (exportResponse) return exportResponse;
 
     // 商品发现与最终确认必须在会话守卫前由路由统一保护；每个请求构造无状态服务，避免在 Worker 实例间缓存候选 URL 或外部响应。
@@ -110,40 +140,45 @@ const worker: ExportedHandler<Env> = {
     const officialPriceIds = new OfficialPriceIdService(createNintendoPriceApiProvider());
     const productResponse = await handleProductRoute(
       request,
-      env.DB,
-      new SubscriptionPreviewService(officialPriceIds, defaultFallbackSources),
-      // 商品发现只在管理员会话通过后由路由触发；服务端构造可确保官网搜索配置、商品页请求和用户浏览器完全隔离。
-      officialDiscovery,
-      // 最终确认复用本区页面解析器、日区双官方接口确认器与持久化设置，
-      // 确保发现时与写入前使用同一地区安全范围，旧浏览器页面也不能绕过启用地区覆盖校验。
-      new SubscriptionConfirmationService(
-        new SubscriptionConfirmationRepository(env.DB),
-        officialPages,
-        officialPriceIds,
-        new SettingsRepository(env.DB),
-        // 普通日区商品不再解析可能返回排队外壳的 Store 页面；两项任天堂官方接口分别证明身份字段与在售价格状态。
-        new JapaneseSubscriptionConfirmationService(createOfficialNintendoSearch(), officialPriceIds),
-        // 所有日区升级包在查询既有订阅或写 D1 前，必须由与发现阶段相同的关系服务整批重新签发证据。
-        japaneseUpgradeRelations,
-        // 非日区 automatic 候选写入前复用同一请求内的官方发现实例，重新证明 URL 仍唯一，不能信任浏览器保存的旧状态。
-        officialDiscovery,
-      ),
+      {
+        sessions: auth,
+        preview: new SubscriptionPreviewService(officialPriceIds, defaultFallbackSources),
+        // 商品发现只在管理员会话通过后由路由触发；服务端构造可确保官网搜索配置、商品页请求和用户浏览器完全隔离。
+        discovery: officialDiscovery,
+        // 最终确认复用本区页面解析器、日区双官方接口确认器与持久化设置，确保旧浏览器页面无法绕过当前地区范围。
+        confirmation: new SubscriptionConfirmationService(
+          new SubscriptionConfirmationRepository(env.DB),
+          officialPages,
+          officialPriceIds,
+          new SettingsRepository(env.DB),
+          // 普通日区商品不再解析可能返回排队外壳的 Store 页面；两项任天堂官方接口分别证明身份字段与在售价格状态。
+          new JapaneseSubscriptionConfirmationService(createOfficialNintendoSearch(), officialPriceIds),
+          // 所有日区升级包在查询既有订阅或写入前，必须由与发现阶段相同的关系服务整批重新签发证据。
+          japaneseUpgradeRelations,
+          // 非日区 automatic 候选写入前复用同一请求内的官方发现实例，重新证明 URL 仍唯一，不能信任浏览器保存的旧状态。
+          officialDiscovery,
+        ),
+      },
     );
     if (productResponse) return productResponse;
 
     // 订阅写入会改变后续采集与通知范围，因此必须在静态资源回退之前进入带会话校验的管理 API。
     const subscriptionResponse = await handleSubscriptionRoute(
       request,
-      env.DB,
-      // 已有订阅补全复用同一官方页面、价格 ID、设置与跨区发现服务；这样新建和补全遵守相同的地区安全边界。
-      new SubscriptionRegionCompletionService(
-        new SubscriptionConfirmationRepository(env.DB),
-        officialPages,
-        officialPriceIds,
-        new SettingsRepository(env.DB),
-        // 已有订阅补全使用独立的无状态发现实例，但共享同一请求内的官方适配器；不会缓存或跨用户复用候选。
-        new OfficialProductDiscoveryService(new SettingsRepository(env.DB), officialSearch, officialPages, officialPages),
-      ),
+      {
+        sessions: auth,
+        subscriptions: new SubscriptionService(new D1SubscriptionRepository(env.DB)),
+        details: new SubscriptionDetailService(new D1SubscriptionDetailRepository(env.DB)),
+        // 已有订阅补全复用同一官方页面、价格 ID、设置与跨区发现服务；这样新建和补全遵守相同的地区安全边界。
+        completion: new SubscriptionRegionCompletionService(
+          new SubscriptionConfirmationRepository(env.DB),
+          officialPages,
+          officialPriceIds,
+          new SettingsRepository(env.DB),
+          // 已有订阅补全使用独立的无状态发现实例，但共享同一请求内的官方适配器；不会缓存或跨用户复用候选。
+          new OfficialProductDiscoveryService(new SettingsRepository(env.DB), officialSearch, officialPages, officialPages),
+        ),
+      },
     );
     if (subscriptionResponse) return subscriptionResponse;
 

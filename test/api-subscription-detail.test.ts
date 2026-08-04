@@ -3,8 +3,14 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import worker, { type Env } from "../src/worker";
 import { handleSubscriptionRoute } from "../src/routes/subscription-routes";
+import { AuthRepository } from "../src/repositories/d1/auth-repository";
+import { SubscriptionDetailRepository } from "../src/repositories/subscription-detail-repository";
+import { SubscriptionRepository } from "../src/repositories/subscription-repository";
+import { AuthService } from "../src/services/auth-service";
 import type { RegionResolution } from "../src/services/official-product-discovery-service";
+import { SubscriptionDetailService } from "../src/services/subscription-detail-service";
 import type { CompletionRegionsInput, CompletionRegionsResult } from "../src/services/subscription-region-completion-service";
+import { SubscriptionService } from "../src/services/subscription-service";
 
 /**
  * 订阅详情读取接口测试覆盖三项管理员可见的业务事实：详情仅对已登录会话开放、
@@ -162,7 +168,7 @@ async function call(path: string, body?: unknown, cookie?: string, method = "POS
 }
 
 /**
- * 直接调用订阅路由以替换真实任天堂网络依赖，同时保留真实会话守卫和 D1。该夹具验证路由仅传递受控补全载荷，
+ * 直接调用订阅路由以替换真实任天堂网络依赖，同时保留真实会话守卫和过渡 D1 仓储。该夹具验证路由仅传递受控补全载荷，
  * 而跨区范围的决定权仍在注入的 Worker 服务中，浏览器字段不得影响它。
  */
 async function callCompletionRoute(
@@ -180,7 +186,12 @@ async function callCompletionRoute(
       body: JSON.stringify(body),
       headers: { "content-type": "application/json", cookie },
     }),
-    env.DB,
-    completion,
+    {
+      // 路由只接收平台中立服务；D1 被限制在 Task 5 前的仓储适配器内，不能由补全请求选择或访问。
+      sessions: new AuthService(new AuthRepository(env.DB)),
+      subscriptions: new SubscriptionService(new SubscriptionRepository(env.DB)),
+      details: new SubscriptionDetailService(new SubscriptionDetailRepository(env.DB)),
+      completion,
+    },
   ))!;
 }

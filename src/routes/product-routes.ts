@@ -9,70 +9,77 @@ import {
 import type { ProductType } from "../providers/types";
 import type { OfficialPriceIdCandidate } from "../services/official-price-id-service";
 import { JapaneseUpgradeBatchLimitError } from "../worker/providers/japanese-upgrade-browser";
+import type { SessionReader } from "../services/auth-service";
 import { ProductDiscoveryError, type OfficialProductDiscoveryService } from "../services/official-product-discovery-service";
 import { SubscriptionConfirmationError, type SubscriptionConfirmationService } from "../services/subscription-confirmation-service";
-import { SubscriptionPreviewService } from "../services/subscription-preview-service";
+import type { SubscriptionPreviewService } from "../services/subscription-preview-service";
 import { requireAdmin } from "./auth-guard";
+
+/** 商品路由的每项能力都由入口显式装配；数据库、Browser、官方适配器或凭据不能从 Request 取得。 */
+export interface ProductRouteDependencies {
+  sessions: SessionReader;
+  preview: Pick<SubscriptionPreviewService, "create">;
+  discovery?: Pick<OfficialProductDiscoveryService, "searchDefaultRegion" | "resolveOfficialLink" | "resolveRegions">;
+  confirmation?: Pick<SubscriptionConfirmationService, "confirm">;
+  now?: () => string;
+}
 
 /**
  * 管理员商品发现、来源预览与最终确认的统一入口。搜索、链接解析、跨区匹配和来源预览保持只读；
- * 只有最终确认端点会交给服务层执行一个已完整验证的 D1 原子批次，避免向导中途取消时留下半成品映射。
+ * 只有最终确认端点会交给服务层执行一个已完整验证的数据库事务，避免向导中途取消时留下半成品映射。
  */
 export async function handleProductRoute(
   request: Request,
-  database: D1Database,
-  preview: SubscriptionPreviewService,
-  discovery?: Pick<OfficialProductDiscoveryService, "searchDefaultRegion" | "resolveOfficialLink" | "resolveRegions">,
-  confirmation?: Pick<SubscriptionConfirmationService, "confirm">,
+  dependencies: ProductRouteDependencies,
 ): Promise<Response | null> {
   const path = new URL(request.url).pathname;
   // 精确白名单避免商品路由截获静态资源或未来端点；发现服务未注入时保留旧预览路由的可测试性。
   const isPreview = request.method === "POST" && path === "/api/products/preview-sources";
-  const isSearch = request.method === "POST" && path === "/api/products/search" && discovery !== undefined;
-  const isResolveLink = request.method === "POST" && path === "/api/products/resolve-link" && discovery !== undefined;
-  const isResolveRegions = request.method === "POST" && path === "/api/products/resolve-regions" && discovery !== undefined;
-  const isConfirmSubscriptions = request.method === "POST" && path === "/api/products/confirm-subscriptions" && confirmation !== undefined;
+  const isSearch = request.method === "POST" && path === "/api/products/search" && dependencies.discovery !== undefined;
+  const isResolveLink = request.method === "POST" && path === "/api/products/resolve-link" && dependencies.discovery !== undefined;
+  const isResolveRegions = request.method === "POST" && path === "/api/products/resolve-regions" && dependencies.discovery !== undefined;
+  const isConfirmSubscriptions = request.method === "POST" && path === "/api/products/confirm-subscriptions" && dependencies.confirmation !== undefined;
   if (!isPreview && !isSearch && !isResolveLink && !isResolveRegions && !isConfirmSubscriptions) return null;
 
   // 必须先验证管理员会话才解析请求体或访问官方接口，避免匿名调用借预览端点放大任天堂请求负载。
-  if (!(await requireAdmin(request, database))) {
+  if (!(await requireAdmin(request, dependencies.sessions))) {
     return Response.json({ code: "UNAUTHORIZED", error: "请先登录。" }, { status: 401 });
   }
 
   try {
-    if (isSearch && discovery) {
-      // 查询长度在 Worker 边界限制为 1..100，避免匿名以外的管理员也能把超长文本原样转发给官网公开搜索服务。
+    if (isSearch && dependencies.discovery) {
+      // 查询长度在 HTTP 边界限制为 1..100，避免已登录管理员也能把超长文本原样转发给官网公开搜索服务。
       const query = readSearchQuery(await request.json<unknown>());
-      return Response.json(await discovery.searchDefaultRegion(query));
+      return Response.json(await dependencies.discovery.searchDefaultRegion(query));
     }
-    if (isResolveLink && discovery) {
+    if (isResolveLink && dependencies.discovery) {
       // 链接与可选完整锚点均交给服务端验证；锚点只用于日区升级包关系证明，浏览器不得以任意标题或币种伪造商品身份。
       const { regionCode, productUrl, anchor } = readOfficialLinkRequest(await request.json<unknown>());
       // 未提供锚点的既有普通商品调用保持双参数契约；仅在完整锚点实际存在时扩展到日区升级包关系核验，避免旧注入服务收到多余 undefined 参数。
       const candidate = anchor === undefined
-        ? await discovery.resolveOfficialLink(regionCode, productUrl)
-        : await discovery.resolveOfficialLink(regionCode, productUrl, anchor);
+        ? await dependencies.discovery.resolveOfficialLink(regionCode, productUrl)
+        : await dependencies.discovery.resolveOfficialLink(regionCode, productUrl, anchor);
       return Response.json({ candidate });
     }
-    if (isResolveRegions && discovery) {
+    if (isResolveRegions && dependencies.discovery) {
       // 只收窄已选默认区候选；启用地区由发现服务从持久化设置读取，浏览器不能借请求体扩大或缩小官方检索范围。
       const { candidates } = readRegionResolutionRequest(await request.json<unknown>());
-      const regions = await discovery.resolveRegions(candidates);
+      const regions = await dependencies.discovery.resolveRegions(candidates);
       // 服务提供日区 Browser Run 的脱敏原因时优先显示；其他人工链接状态沿用既有通用提示，维持客户端 DTO 的稳定非空消息约束。
       return Response.json({ regions: regions.map((region) => region.status === "needs-manual-link"
         ? { ...region, message: region.message ?? "请粘贴该区任天堂官方商品链接" }
         : region) });
     }
-    if (isConfirmSubscriptions && confirmation) {
+    if (isConfirmSubscriptions && dependencies.confirmation) {
       // 仅把运行时收窄后的完整候选交给确认服务；服务会再次请求每个官方链接，路由绝不直接拼写游戏或订阅 SQL。
       const subscriptions = readSubscriptionConfirmationRequest(await request.json<unknown>());
-      const results = await confirmation.confirm(subscriptions, new Date().toISOString());
+      const results = await dependencies.confirmation.confirm(subscriptions, (dependencies.now ?? defaultNow)());
       // 批量中含任一新建项才使用 201；全部为既有订阅时返回 200，前端可安全跳转既有编辑页而非误报失败。
       return Response.json({ subscriptions: results }, { status: results.some((result) => result.status === "created") ? 201 : 200 });
     }
     const candidates = readConfirmationCandidates(await request.json<unknown>());
-    // 服务只产生瞬时 DTO；即使官方验证失败，异常也不会把用户 URL、外部响应或秘密写入 D1。
-    return Response.json({ regions: await preview.create(candidates) });
+    // 服务只产生瞬时 DTO；即使官方验证失败，异常也不会把用户 URL、外部响应或秘密写入数据库。
+    return Response.json({ regions: await dependencies.preview.create(candidates) });
   } catch (error) {
     // 表单问题可以安全反馈给管理员；其他错误统一隐藏网络、解析和数据库内部细节。
     const isValidationError = error instanceof ProductPreviewRequestError
@@ -82,12 +89,17 @@ export async function handleProductRoute(
     return Response.json(
       {
         code: isValidationError ? "VALIDATION_ERROR" : "INTERNAL_ERROR",
-        // 领域错误均是服务端预设中文文案，可安全提示管理员；网络、页面解析与 D1 错误永远不回显给浏览器。
+        // 领域错误均是服务端预设中文文案，可安全提示管理员；网络、页面解析与数据库错误永远不回显给浏览器。
         error: isValidationError ? error.message : "官方商品信息暂时无法获取，请稍后重试。",
       },
       { status: isValidationError ? 422 : 500 },
     );
   }
+}
+
+/** 最终确认审计时间只来自服务端 UTC 时钟，浏览器候选中的时间字段即使出现也会在输入白名单外被忽略。 */
+function defaultNow(): string {
+  return new Date().toISOString();
 }
 
 /** 名称搜索只接受去除首尾空白后的有限长度文本，地区始终由服务端设置决定，浏览器不能附带地区覆盖字段。 */
@@ -209,7 +221,7 @@ function readConfirmedRegionalProduct(value: unknown): ConfirmedRegionalProduct 
 }
 
 /**
- * 每个字段均在 Worker 边界完成基础验证：URL 只接受 HTTPS，发行商允许 null，其他身份字段不能留空。
+ * 每个字段均在 HTTP 路由边界完成基础验证：URL 只接受 HTTPS，发行商允许 null，其他身份字段不能留空。
  * 来源预览仍由 OfficialPriceIdService 按地区验证官方价格 ID；跨区发现会在服务层额外校验任天堂主机与路径，
  * 因而此基础收窄不能被误当成官方链接认证。
  */

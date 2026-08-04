@@ -8,6 +8,7 @@ import { defineConfig } from "vitest/config";
 const postgresReadTestFiles = [
   "test/collection-repository.test.ts",
   "test/exchange-rate-repository.test.ts",
+  "test/manual-refresh-repository.test.ts",
   "test/notification-event-repository.test.ts",
   "test/price-repository.test.ts",
   "test/product-health-service.test.ts",

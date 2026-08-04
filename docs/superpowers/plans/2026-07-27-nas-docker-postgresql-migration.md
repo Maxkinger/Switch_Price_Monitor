@@ -442,12 +442,20 @@ git push
 - Create: `src/repositories/postgres/auth-repository.ts`
 - Create: `src/repositories/postgres/manual-refresh-repository.ts`
 - Create: `src/repositories/postgres/subscription-confirmation-repository.ts`
+- Create: `src/repositories/d1/auth-repository.ts`（仅用于 Task 5 前保持 Worker 回归可运行，生产 NAS 不装配）
+- Modify: `src/repositories/ports.ts`
+- Modify: `src/repositories/postgres/settings-repository.ts`
+- Modify: `src/repositories/postgres/subscription-repository.ts`
+- Modify: `src/repositories/subscription-repository.ts`
+- Modify: `src/repositories/subscription-confirmation-repository.ts`
 - Modify: `src/services/auth-service.ts`
 - Modify: `src/services/subscription-service.ts`
 - Modify: `src/services/subscription-confirmation-service.ts`
 - Modify: `src/services/subscription-region-completion-service.ts`
 - Modify: `src/routes/auth-guard.ts`
 - Modify: `src/routes/*.ts`
+- Modify: `src/worker/index.ts`（过渡装配，不开始 Node HTTP）
+- Modify: `vitest.config.mts`
 - Modify: authentication, subscription, deletion, confirmation, completion, and refresh tests
 
 **Interfaces:**
@@ -494,12 +502,28 @@ export interface PasswordResetWrite {
   sessionRevokedAt: string;
 }
 
+export interface FailedLoginWrite {
+  now: string;
+  lockedUntil: string;
+  maximumFailedLogins: number;
+}
+
+export interface SessionEstablishmentWrite {
+  expectedCredential: PasswordCredential;
+  session: StoredSession;
+  now: string;
+}
+
+export type SessionEstablishment = "created" | "credential-changed" | "locked";
+
 export interface AuthRepository {
   isInitialized(): Promise<boolean>;
   initialize(input: HashedAdminSetup): Promise<void>;
   getLoginAttempt(): Promise<LoginAttemptRecord | null>;
   getPasswordCredential(): Promise<PasswordCredential | null>;
   createSession(session: StoredSession): Promise<void>;
+  establishSession(input: SessionEstablishmentWrite): Promise<SessionEstablishment>;
+  recordFailedLogin(input: FailedLoginWrite): Promise<LoginAttemptRecord>;
   getRecoveryCredential(): Promise<RecoveryCredential | null>;
   resetPassword(input: PasswordResetWrite): Promise<void>;
   revokeSession(tokenHash: string, now: string): Promise<void>;
@@ -509,7 +533,7 @@ export interface AuthRepository {
 }
 ```
 
-`InitialSettings` is the existing domain type. `initialize()` writes administrator credentials and initial settings in one transaction; `resetPassword()` updates the password, consumes recovery state, revokes every session, and clears login attempts in one transaction. All route handlers accept repository/service dependencies rather than `D1Database`.
+`InitialSettings` is the existing domain type. `initialize()` writes administrator credentials and initial settings in one transaction; `resetPassword()` updates the password, consumes recovery state, revokes every session, and clears login attempts in one transaction. `recordFailedLogin()` uses one atomic PostgreSQL write so concurrent invalid passwords cannot overwrite each other's count. `establishSession()` locks and rechecks the credential version, checks lockout state, clears failed attempts, and inserts the token hash in one transaction. This extra operation is required because a password verified before reset must never create a live session after reset commits; the repository returns only the safe classifications above and never exposes a pg client or transaction executor to `AuthService`. All route handlers accept repository/service dependencies rather than `D1Database`.
 
 - [ ] **Step 1: Write failing auth transaction tests**
 
@@ -519,12 +543,14 @@ Prove:
 - password reset changes the password hash, consumes recovery state, and revokes every session atomically;
 - a forced failure before commit changes none of those rows;
 - login lockout increments and clears correctly using PostgreSQL timestamps.
+- five concurrent invalid passwords do not lose increments and still lock exactly at the existing threshold;
+- an ordered race that pauses after old-password verification, commits reset, and then resumes session creation cannot leave a valid session.
 
 Run the focused auth tests and verify they fail on missing PostgreSQL implementations.
 
 - [ ] **Step 2: Implement the auth repository and preserve Web Crypto behavior**
 
-Keep password derivation parameters, hash formats, Cookie token hashing, lockout thresholds, and safe error messages unchanged. Move SQL into the repository; the service keeps security rules.
+Keep password derivation parameters, hash formats, Cookie token hashing, lockout thresholds, and safe error messages unchanged. Move SQL into the repository; the service keeps security rules. Use row locking or equivalent conditional writes for session establishment and an atomic UPSERT for failed-login increments; do not recreate either flow as service-level read/modify/write queries.
 
 - [ ] **Step 3: Write failing batch confirmation and deletion transaction tests**
 
@@ -550,6 +576,8 @@ await this.database.transaction(async (transaction) => {
 ```
 
 Do not emulate D1 `batch()` or issue independent pool queries inside a transaction.
+
+The manual-refresh UPSERT remains a single statement and uses the maximum stored/requested timestamp so an older concurrent request cannot move the most-recent audit time backward. External collection work runs after that statement and is never held inside a database transaction.
 
 - [ ] **Step 5: Replace route database parameters with service dependencies**
 

@@ -1,6 +1,13 @@
-import { ManualRefreshRepository } from "../repositories/manual-refresh-repository";
-import { ManualRefreshCooldownError, ManualRefreshService, type ImmediateRefreshRunner } from "../services/manual-refresh-service";
+import type { SessionReader } from "../services/auth-service";
+import { ManualRefreshCooldownError, type ManualRefreshService } from "../services/manual-refresh-service";
 import { requireAdmin } from "./auth-guard";
+
+/** 手动刷新路由只接收已装配服务；采集器和数据库仓储都不能由 HTTP 参数选择或替换。 */
+export interface ManualRefreshRouteDependencies {
+  sessions: SessionReader;
+  refresh: Pick<ManualRefreshService, "refresh">;
+  now?: () => string;
+}
 
 /**
  * 接收管理员发起的手动刷新请求。端点在取得原子冷却名额后等待统一采集器完成，
@@ -8,21 +15,25 @@ import { requireAdmin } from "./auth-guard";
  */
 export async function handleManualRefreshRoute(
   request: Request,
-  database: D1Database,
-  runner: ImmediateRefreshRunner,
+  dependencies: ManualRefreshRouteDependencies,
 ): Promise<Response | null> {
   if (request.method !== "POST" || new URL(request.url).pathname !== "/api/refresh") return null;
-  if (!(await requireAdmin(request, database))) return Response.json({ code: "UNAUTHORIZED", error: "请先登录。" }, { status: 401 });
+  if (!(await requireAdmin(request, dependencies.sessions))) return Response.json({ code: "UNAUTHORIZED", error: "请先登录。" }, { status: 401 });
 
   try {
-    const result = await new ManualRefreshService(new ManualRefreshRepository(database), runner).refresh(new Date().toISOString());
+    const result = await dependencies.refresh.refresh((dependencies.now ?? defaultNow)());
     // 仅在统一采集器正常返回后才返回 completed；计数供界面提示，并由随后重新读取仪表盘展示持久化结果。
     return Response.json({ status: "completed", ...result });
   } catch (error) {
     if (error instanceof ManualRefreshCooldownError) {
       return Response.json({ code: "REFRESH_COOLDOWN", error: error.message, nextAllowedAt: error.nextAllowedAt }, { status: 429 });
     }
-    // D1 或外部来源异常不回传表结构、商品链接和运行时堆栈，避免已登录浏览器脚本或日志采集器获得内部细节。
+    // 数据库或外部来源异常不回传表结构、商品链接和运行时堆栈，避免已登录浏览器脚本或日志采集器获得内部细节。
     return Response.json({ code: "INTERNAL_ERROR", error: "刷新暂时无法完成，请稍后重试。" }, { status: 500 });
   }
+}
+
+/** 最近刷新时刻只取服务端 UTC 时钟，浏览器不能回填时间绕过未来可能恢复的频率限制。 */
+function defaultNow(): string {
+  return new Date().toISOString();
 }

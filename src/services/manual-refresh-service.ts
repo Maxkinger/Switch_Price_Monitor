@@ -1,4 +1,4 @@
-import { ManualRefreshRepository } from "../repositories/manual-refresh-repository";
+import type { ManualRefreshStore } from "../repositories/ports";
 
 /**
  * 立即采集端口与 LiveCollectionRunner 的聚合结果对齐，避免刷新服务了解商品、汇率、价格来源或通知细节。
@@ -24,12 +24,12 @@ export class ManualRefreshCooldownError extends Error {
 }
 
 /**
- * 手动刷新服务先以 D1 原子记录取得十五分钟冷却名额，再在同一 HTTP 请求内运行统一采集器。
+ * 手动刷新服务先以仓储单语句记录最近请求时刻，再在同一 HTTP 请求内运行统一采集器。
  * 它不直接解析任天堂或第三方页面，因此手动与 Cron 路径仍复用完全相同的来源、汇率、健康检查和通知规则。
  */
 export class ManualRefreshService {
   public constructor(
-    private readonly requests: ManualRefreshRepository,
+    private readonly requests: ManualRefreshStore,
     private readonly runner: ImmediateRefreshRunner,
   ) {}
 

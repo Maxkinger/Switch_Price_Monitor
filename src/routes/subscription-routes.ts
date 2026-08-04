@@ -1,8 +1,7 @@
 import { initialRegionCodes, regionalProductMatchSources, type ConfirmedRegionalProduct, type RegionCode } from "../shared/domain";
 import type { ProductType } from "../providers/types";
-import { SubscriptionRepository } from "../repositories/subscription-repository";
-import { SubscriptionDetailRepository } from "../repositories/subscription-detail-repository";
-import { SubscriptionDetailService } from "../services/subscription-detail-service";
+import type { SessionReader } from "../services/auth-service";
+import type { SubscriptionDetailService } from "../services/subscription-detail-service";
 import {
   SubscriptionRegionCompletionError,
   SubscriptionRegionCompletionNotFoundError,
@@ -16,14 +15,22 @@ import {
 } from "../services/subscription-service";
 import { requireAdmin } from "./auth-guard";
 
+/** 订阅路由只编排会话、服务与受控 JSON；所有 SQL、事务和官方外部适配器都由依赖装配层提供。 */
+export interface SubscriptionRouteDependencies {
+  sessions: SessionReader;
+  subscriptions: Pick<SubscriptionService, "createOrOpen" | "setEnabled" | "setTargets" | "replaceRegionalProducts" | "deleteMany">;
+  details: Pick<SubscriptionDetailService, "get">;
+  completion?: Pick<SubscriptionRegionCompletionService, "resolveExisting" | "completeExisting">;
+  now?: () => string;
+}
+
 /**
  * 管理订阅读取、编辑与已有地区补全入口。所有写入均在会话守卫之后执行，防止第三方仅凭公开商品 ID 改变采集和通知范围。
- * 已有地区补全只把受控 JSON 交给服务；游戏归属、跨区范围和任天堂官方复核均保持在 Worker 内，不由浏览器决定。
+ * 已有地区补全只把受控 JSON 交给服务；游戏归属、跨区范围和任天堂官方复核均保持在服务端，不由浏览器决定。
  */
 export async function handleSubscriptionRoute(
   request: Request,
-  database: D1Database,
-  completion?: Pick<SubscriptionRegionCompletionService, "resolveExisting" | "completeExisting">,
+  dependencies: SubscriptionRouteDependencies,
 ): Promise<Response | null> {
   const path = new URL(request.url).pathname;
   const action = readSubscriptionAction(request.method, path);
@@ -31,53 +38,53 @@ export async function handleSubscriptionRoute(
   if (!action) return null;
 
   // 认证失败统一使用固定响应，既不泄露会话是否过期，也不给匿名调用者数据库错误细节。
-  if (!(await requireAdmin(request, database))) {
+  if (!(await requireAdmin(request, dependencies.sessions))) {
     return Response.json({ code: "UNAUTHORIZED", error: "请先登录。" }, { status: 401 });
   }
 
   try {
     if (action.kind === "read") {
       // 详情只经受保护服务返回脱敏读取模型，不能把路由层的数据库行、会话或来源原始响应直接序列化给浏览器。
-      const detail = await new SubscriptionDetailService(new SubscriptionDetailRepository(database)).get(action.subscriptionId);
+      const detail = await dependencies.details.get(action.subscriptionId);
       return Response.json(detail);
     }
 
     if (action.kind === "resolve-regions") {
-      if (!completion) throw new SubscriptionRequestError("订阅地区补全暂不可用。");
+      if (!dependencies.completion) throw new SubscriptionRequestError("订阅地区补全暂不可用。");
       // 请求体被有意忽略：补全范围由服务内的保存设置和订阅锚点决定，浏览器不能以地区数组扩大或缩小它。
-      return Response.json(await completion.resolveExisting(action.subscriptionId));
+      return Response.json(await dependencies.completion.resolveExisting(action.subscriptionId));
     }
 
     if (action.kind === "complete-regions") {
-      if (!completion) throw new SubscriptionRequestError("订阅地区补全暂不可用。");
+      if (!dependencies.completion) throw new SubscriptionRequestError("订阅地区补全暂不可用。");
       const input = readCompletionRegionsInput(await request.json<unknown>());
-      return Response.json(await completion.completeExisting(action.subscriptionId, input, new Date().toISOString()));
+      return Response.json(await dependencies.completion.completeExisting(action.subscriptionId, input, (dependencies.now ?? defaultNow)()));
     }
 
-    const service = new SubscriptionService(new SubscriptionRepository(database));
+    const service = dependencies.subscriptions;
     if (action.kind === "create") {
       const input = readCreateSubscriptionInput(await request.json<unknown>());
-      const result = await service.createOrOpen(input, new Date().toISOString());
+      const result = await service.createOrOpen(input, (dependencies.now ?? defaultNow)());
       // 只有真正插入时返回 201；重复提交返回 200 让前端按幂等成功处理，而不是误提示“创建失败”。
       return Response.json(result, { status: result.created ? 201 : 200 });
     }
 
     if (action.kind === "disable") {
-      await service.setEnabled(action.subscriptionId, false, new Date().toISOString());
+      await service.setEnabled(action.subscriptionId, false, (dependencies.now ?? defaultNow)());
       // 停用成功不回传旧配置，防止前端把过期详情误当作仍可采集的状态；读取接口会提供最新显示模型。
       return new Response(null, { status: 204 });
     }
 
     if (action.kind === "bulk-delete") {
-      // 只接受已收窄且去重的订阅 ID；服务层会在 D1 写入前再次确认所有目标存在，避免浏览器过期选择导致部分删除。
+      // 只接受已收窄且去重的订阅 ID；仓储事务会在首条 DELETE 前锁定并确认所有目标存在，避免浏览器过期选择导致部分删除。
       const subscriptionIds = readBulkDeleteSubscriptionIds(await request.json<unknown>());
       return Response.json({ deletedSubscriptionIds: await service.deleteMany(subscriptionIds) });
     }
 
     const update = readSubscriptionUpdate(await request.json<unknown>());
-    if (update.kind === "enabled") { await service.setEnabled(action.subscriptionId, update.enabled, new Date().toISOString()); return Response.json({ subscriptionId: action.subscriptionId, enabled: update.enabled }); }
-    if (update.kind === "regions") { await service.replaceRegionalProducts(action.subscriptionId, update.regionalProductIds, new Date().toISOString()); return Response.json({ subscriptionId: action.subscriptionId, regionalProductIds: update.regionalProductIds }); }
-    await service.setTargets(action.subscriptionId, update.globalTargetCnyFen, update.regionTargets, new Date().toISOString());
+    if (update.kind === "enabled") { await service.setEnabled(action.subscriptionId, update.enabled, (dependencies.now ?? defaultNow)()); return Response.json({ subscriptionId: action.subscriptionId, enabled: update.enabled }); }
+    if (update.kind === "regions") { await service.replaceRegionalProducts(action.subscriptionId, update.regionalProductIds, (dependencies.now ?? defaultNow)()); return Response.json({ subscriptionId: action.subscriptionId, regionalProductIds: update.regionalProductIds }); }
+    await service.setTargets(action.subscriptionId, update.globalTargetCnyFen, update.regionTargets, (dependencies.now ?? defaultNow)());
     return Response.json({ subscriptionId: action.subscriptionId, globalTargetCnyFen: update.globalTargetCnyFen, regionTargets: update.regionTargets });
   } catch (error) {
     // 可预期的表单或商品归属错误使用 422；数据库故障则使用通用 500，任何路径都不回显 JSON、SQL 或堆栈。
@@ -91,6 +98,11 @@ export async function handleSubscriptionRoute(
       { status: isNotFound ? 404 : isValidationError ? 422 : 500 },
     );
   }
+}
+
+/** 订阅创建、编辑、补全和审计更新时间一律使用服务端 UTC 时间，浏览器不能回填时间影响保留与通知顺序。 */
+function defaultNow(): string {
+  return new Date().toISOString();
 }
 
 /** 路由专属参数错误避免复用认证错误语义，让日志与前端能够区分登录和订阅表单问题。 */
@@ -160,7 +172,7 @@ function readCreateSubscriptionInput(value: unknown): { id: string; gameId: stri
 }
 
 /**
- * 补全请求不接受游戏 ID、现有商品 ID 或自定义地区范围；这些身份与范围均由服务从 D1/设置读取。
+ * 补全请求不接受游戏 ID、现有商品 ID 或自定义地区范围；这些身份与范围均由服务从数据库与设置读取。
  * 新候选只做严格 JSON 和受控枚举收窄，服务仍会重新解析每个任天堂官方链接后才可能进入原子写入。
  */
 function readCompletionRegionsInput(value: unknown): CompletionRegionsInput {
@@ -220,7 +232,7 @@ function readNullableMinorPrice(value: unknown, message: string): number | null 
   return value;
 }
 
-/** 仅允许 HTTPS URL 进入下一层官方白名单验证，拒绝脚本、本地和明文链接作为 Worker 外部请求目标。 */
+/** 仅允许 HTTPS URL 进入下一层官方白名单验证，拒绝脚本、本地和明文链接作为服务端外部请求目标。 */
 function readHttpsUrl(value: unknown): string {
   if (typeof value !== "string" || value.trim().length === 0) throw new SubscriptionRequestError("商品链接无效。");
   try {
@@ -263,7 +275,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** 标识符保留原值供 D1 外键查询，但拒绝空白字符串，避免前端无选择时形成难诊断的关系错误。 */
+/** 标识符保留原值供参数化外键查询，但拒绝空白字符串，避免前端无选择时形成难诊断的关系错误。 */
 function readNonEmptyString(value: unknown, message: string): string {
   if (typeof value !== "string" || value.trim().length === 0) throw new SubscriptionRequestError(message);
   return value;

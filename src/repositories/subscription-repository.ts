@@ -1,4 +1,9 @@
 import type { SubscriptionInput, SubscriptionRecord } from "../shared/domain";
+import type {
+  AtomicRegionalProductReplacementResult,
+  AtomicSubscriptionCreationResult,
+  SubscriptionStore,
+} from "./ports";
 
 /** 联表聚合后的 D1 行模型；GROUP_CONCAT 为空时表示订阅尚未关联任何已验证地区商品。 */
 interface SubscriptionRow {
@@ -19,8 +24,20 @@ interface SubscriptionDeletionTarget {
  * 订阅及其地区商品关联的仓储。订阅与价格历史分离，关闭订阅只更新 enabled，
  * 后续功能不得通过删除订阅清掉用户已经积累的历史价格。
  */
-export class SubscriptionRepository {
+export class SubscriptionRepository implements SubscriptionStore {
   public constructor(private readonly database: D1Database) {}
+
+  /**
+   * Task 5 前的 Worker 兼容路径复用 D1 单写者与原子 batch；服务只看平台中立结果，不再持有 D1 类型。
+   * PostgreSQL 生产实现会在同一事务中锁定游戏行，进一步闭合多进程并发查重竞态。
+   */
+  public async createOrOpenAtomically(input: SubscriptionInput): Promise<AtomicSubscriptionCreationResult> {
+    const existing = await this.findByGameId(input.gameId);
+    if (existing) return { status: "existing", subscriptionId: existing.id };
+    if (!(await this.hasEnabledProductsForGame(input.gameId, input.regionalProductIds))) return { status: "product-mismatch" };
+    await this.create(input);
+    return { status: "created", subscriptionId: input.id };
+  }
 
   /**
    * 确认所有地区商品同时属于指定游戏且仍启用。关系表的外键只能保证商品存在，
@@ -40,23 +57,20 @@ export class SubscriptionRepository {
   }
 
   public async create(input: SubscriptionInput): Promise<void> {
-    // 先创建主订阅再写关系表，保证每个地区商品都可追溯到同一个用户确认的订阅配置。
-    await this.database
-      .prepare(
-        `INSERT INTO subscriptions (id, game_id, enabled, created_at, updated_at)
-         VALUES (?, ?, 1, ?, ?)`,
-      )
-      .bind(input.id, input.gameId, input.createdAt, input.createdAt)
-      .run();
-
-    // 批量写入减少 Worker 与 D1 的往返；外键会拒绝不存在的地区商品，避免形成无效监控项。
-    await this.database.batch(
-      input.regionalProductIds.map((regionalProductId) =>
+    // 主订阅与全部关系进入同一个 D1 batch；任一外键失败会撤销主记录，不能留下会占用 game_id 唯一约束的空订阅。
+    await this.database.batch([
+      this.database
+        .prepare(
+          `INSERT INTO subscriptions (id, game_id, enabled, created_at, updated_at)
+           VALUES (?, ?, 1, ?, ?)`,
+        )
+        .bind(input.id, input.gameId, input.createdAt, input.createdAt),
+      ...input.regionalProductIds.map((regionalProductId) =>
         this.database
           .prepare("INSERT INTO subscription_regions (subscription_id, regional_product_id) VALUES (?, ?)")
           .bind(input.id, regionalProductId),
       ),
-    );
+    ]);
   }
 
   /**
@@ -73,9 +87,10 @@ export class SubscriptionRepository {
 
   /** 替换目标价配置并把所有地区状态重置为未命中，防止旧阈值的已通知状态抑制新阈值提醒。 */
   public async setTargets(id: string, globalTargetCnyFen: number | null, regionTargets: Array<{ regionCode: string; targetAmountMinor: number }>, updatedAt: string): Promise<boolean> {
-    const updated = await this.database.prepare("UPDATE subscriptions SET global_target_cny_fen = ?, updated_at = ? WHERE id = ?").bind(globalTargetCnyFen, updatedAt, id).run();
-    if (updated.meta.changes !== 1) return false;
+    // 先做只读存在性判断，随后把主订阅更新与目标替换放入同一 batch；过渡 D1 单写者避免检查与批次之间出现部分配置。
+    if (!(await this.database.prepare("SELECT id FROM subscriptions WHERE id = ?").bind(id).first())) return false;
     await this.database.batch([
+      this.database.prepare("UPDATE subscriptions SET global_target_cny_fen = ?, updated_at = ? WHERE id = ?").bind(globalTargetCnyFen, updatedAt, id),
       this.database.prepare("DELETE FROM subscription_region_targets WHERE subscription_id = ?").bind(id),
       ...regionTargets.map((target) => this.database.prepare("INSERT INTO subscription_region_targets (subscription_id, region_code, target_amount_minor, target_state) VALUES (?, ?, ?, 'unmet')").bind(id, target.regionCode, target.targetAmountMinor)),
     ]);
@@ -95,6 +110,15 @@ export class SubscriptionRepository {
       ...regionalProductIds.map((productId) => this.database.prepare("INSERT INTO subscription_regions (subscription_id, regional_product_id) VALUES (?, ?)").bind(id, productId)),
       this.database.prepare("UPDATE subscriptions SET updated_at = ? WHERE id = ?").bind(updatedAt, id),
     ]);
+  }
+
+  /** Worker 过渡适配器把存在性、归属校验和 D1 batch 组合成平台中立结果；PostgreSQL 实现使用行锁事务。 */
+  public async replaceRegionalProductsAtomically(id: string, regionalProductIds: string[], updatedAt: string): Promise<AtomicRegionalProductReplacementResult> {
+    const gameId = await this.gameIdForSubscription(id);
+    if (!gameId) return "not-found";
+    if (!(await this.hasEnabledProductsForGame(gameId, regionalProductIds))) return "product-mismatch";
+    await this.replaceRegionalProducts(id, regionalProductIds, updatedAt);
+    return "updated";
   }
 
   /**

@@ -1,7 +1,7 @@
 import type { SqlExecutor } from "../../server/database/types";
 import type { AppSettings, RegionCode, Theme } from "../../shared/domain";
 import { SettingsValidationError, validateSettings } from "../../services/settings-service";
-import type { SettingsReader } from "../ports";
+import type { SettingsStore } from "../ports";
 
 /** PostgreSQL JSONB 与 TIMESTAMPTZ 解码后的内部行模型；未知 JSONB 必须在返回领域 DTO 前完成运行时校验。 */
 interface SettingsRow {
@@ -19,7 +19,7 @@ interface SettingsRow {
  * PostgreSQL 单管理员设置读取仓储。
  * 只选择公开设置列并使用稳定别名，未来即使同表新增 Telegram 或其他秘密配置，也不会因宽泛查询进入服务或 API。
  */
-export class SettingsRepository implements SettingsReader {
+export class SettingsRepository implements SettingsStore {
   public constructor(private readonly database: SqlExecutor) {}
 
   public async get(): Promise<AppSettings | null> {
@@ -58,6 +58,35 @@ export class SettingsRepository implements SettingsReader {
     // PostgreSQL 类型只能证明 JSONB/文本的存储形态；地区从属、枚举和时区等业务关系继续复用服务层唯一校验规则。
     validateSettings(settings);
     return settings;
+  }
+
+  /**
+   * 完整替换单例公开设置并保留首次 created_at。
+   * JSONB 只保存已由 SettingsService 校验的地区数组；固定列清单确保未来 Telegram 或其他秘密字段不会被浏览器补丁过量赋值。
+   */
+  public async save(settings: AppSettings, updatedAt: string): Promise<void> {
+    await this.database.query(
+      `UPDATE settings
+          SET enabled_regions_json = $1::jsonb,
+              default_search_region = $2,
+              theme = $3,
+              timezone = $4,
+              daily_report_time = $5,
+              tax_state = $6,
+              price_history_retention = $7,
+              updated_at = $8
+        WHERE id = 1`,
+      [
+        JSON.stringify(settings.enabledRegions),
+        settings.defaultSearchRegion,
+        settings.theme,
+        settings.timezone,
+        settings.dailyReportTime,
+        settings.taxState,
+        settings.priceHistoryRetention,
+        updatedAt,
+      ],
+    );
   }
 }
 
