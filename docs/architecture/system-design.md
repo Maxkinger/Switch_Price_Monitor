@@ -57,6 +57,8 @@ Task 5 已加入独立的 Node Fetch HTTP 入口：严格读取端口、数据�
 
 Task 6 以 Node 计时器替代 Cloudflare Cron：分钟任务和六小时任务使用两个固定 PostgreSQL advisory lock 键，锁竞争立即跳过而不排队。分钟任务同时处理待发送即时通知和按 IANA 时区判断的日报；六小时任务执行保留清理及统一采集。进程退出时先停止新调度触发、再停止 HTTP、等待已开始的 HTTP/调度工作至配置的优雅期限，最后关闭数据库连接池；失败日志只记录任务类别与 UTC 时刻，不能序列化数据库或 Telegram 错误对象。
 
+Task 7 将日区升级关系核验替换为本地 Playwright Chromium：浏览器只由 Node 依赖装配创建，始终 `headless`，每个根商品使用全新上下文，单项 30 秒、最多三个串行项且不自动重试。页面、上下文和浏览器按顺序关闭；启动失败、超时或关闭异常只转换为脱敏业务状态。Cloudflare Browser Binding、CDP 会话和调试端口均不再存在，离线 smoke test 仅访问本机 `127.0.0.1` 临时夹具。
+
 ## 3. 核心数据流
 
 ### 3.1 新建订阅

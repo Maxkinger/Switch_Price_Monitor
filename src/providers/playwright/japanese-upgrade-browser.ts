@@ -1,6 +1,5 @@
-import { launch, type BrowserWorker } from "@cloudflare/playwright";
-
-import type { JapaneseUpgradeRootCandidate } from "../../providers/official-japanese-upgrade-root";
+import type { JapaneseUpgradeRootCandidate } from "../official-japanese-upgrade-root";
+import type { BrowserContextLike, BrowserLauncher, BrowserLike, BrowserPageLike } from "./browser-launcher";
 
 /** 单项 Browser Run 关系核验只返回已脱敏的业务分类，绝不向上层暴露页面正文、会话标识或底层异常。 */
 export type JapaneseUpgradeBrowserResult =
@@ -15,46 +14,15 @@ export interface JapaneseUpgradeBrowserBatch {
 /** 超过已批准的三项深度核验上限时使用的受控错误；路由层可据此返回明确的 422，而不会部分处理输入。 */
 export class JapaneseUpgradeBatchLimitError extends Error {}
 
-/** 页面适配面刻意缩小到本任务所需操作，测试因此无需模拟真实浏览器、HTML、Cookie 或任意 Playwright API。 */
-interface BrowserPageLike {
-  goto(url: string, options: { waitUntil: "domcontentloaded"; timeout: number }): Promise<unknown>;
-  locator(selector: string): {
-    all(): Promise<Array<{
-      isVisible(): Promise<boolean>;
-      innerText(): Promise<string>;
-      getAttribute(name: "href"): Promise<string | null>;
-    }>>;
-  };
-  close(): Promise<void>;
-}
-
-/** 每项必须新建无痕上下文；不暴露复用、存储或会话管理接口以防后续调用绕开隔离要求。 */
-interface BrowserContextLike {
-  newPage(): Promise<BrowserPageLike>;
-  close(): Promise<void>;
-}
-
-/** 请求级浏览器只负责创建上下文与最终关闭，禁止 keep_alive、连接复用和会话 ID 读取。 */
-interface BrowserLike {
-  newContext(): Promise<BrowserContextLike>;
-  close(): Promise<void>;
-}
-
-/** 可注入的启动函数只用于窄测试替身；生产实现固定使用 Cloudflare Binding 启动一次浏览器。 */
-type BrowserLauncher = (binding: Fetcher) => Promise<BrowserLike>;
-
 /** 单项导航加页面关系提取的统一上限；没有重试，避免 Browser Run 额度或排队限制被单请求放大。 */
 const itemTimeoutMs = 30_000;
 
 /**
  * 创建日区升级路径的请求级 Browser Run 适配器。
- * Binding 在公共 Env 契约中保持 Fetcher；Cloudflare Playwright 的公开类型要求 BrowserWorker，故只在此受控边界作窄转换，
- * 不把 BrowserWorker 或 Browser Run 细节泄漏给路由、服务、D1、Cron 或前端层。
+ * 本地启动器只交付窄 BrowserLike；关系适配器不接触 Playwright 调试 API、数据库、Telegram 或浏览器配置，
+ * 从而让后续代理配置只能在启动器边界映射为 Chromium 选项，不能进入业务提取逻辑。
  */
-export function createJapaneseUpgradeBrowserBatch(
-  binding: Fetcher,
-  launchBrowser: BrowserLauncher = async (browserBinding) => launch(browserBinding as unknown as BrowserWorker),
-): JapaneseUpgradeBrowserBatch {
+export function createJapaneseUpgradeBrowserBatch(launcher: BrowserLauncher): JapaneseUpgradeBrowserBatch {
   return {
     async resolve(roots, signal) {
       if (roots.length > 3) {
@@ -73,7 +41,7 @@ export function createJapaneseUpgradeBrowserBatch(
 
       let browser: BrowserLike | undefined;
       try {
-        browser = await launchBrowser(binding);
+        browser = await launcher.launch();
         // 串行处理可避免同一请求内并发上下文争抢 Browser Run 配额；已交付页面的关闭屏障未确认前绝不进入下一个根。
         for (let index = 0; index < validRoots.length; index += 1) {
           const root = validRoots[index];
@@ -331,7 +299,7 @@ class ItemLifecycle {
 }
 
 /**
- * 关闭远端浏览器资源时吞掉异常正文并只返回是否已确认完成；清理不是本项业务结果的证据来源。
+ * 关闭本地 Chromium 资源时吞掉异常正文并只返回是否已确认完成；清理不是本项业务结果的证据来源。
  * 参数只要求 close 能力，以复用同一规则处理 page、context 和 browser，且不会记录任何会话或异常细节。
  */
 async function closeSafely(resource: { close(): Promise<void> } | undefined): Promise<boolean> {

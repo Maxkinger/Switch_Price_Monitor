@@ -2,16 +2,16 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("production Worker pins the verified Browser Run stack", async () => {
-  // 此配置测试只读取受版本控制的清单与 Wrangler 文件，不启动远程浏览器、不会部署，也不会请求任天堂站点。
-  // 固定已通过可行性验证的 CDP 依赖组合，防止未来宽松版本范围在安装时静默升级而绕过生产验证边界。
+test("Node runtime pins local Playwright without a Worker browser binding", async () => {
+  // 此配置测试只读取受版本控制的清单与 Wrangler 文件，不启动浏览器、不会部署，也不会请求任天堂站点。
+  // 固定本地 Playwright 版本并拒绝 Worker Browser Binding，防止安装时悄悄恢复远端 CDP 会话或调试控制面。
   const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
   const wrangler = JSON.parse(stripJsonComments(await readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8")));
 
-  assert.equal(manifest.devDependencies["@cloudflare/playwright"], "1.3.0");
+  assert.equal(manifest.devDependencies.playwright, "^1.62.1");
   assert.equal(manifest.devDependencies.wrangler, "4.112.0");
   assert.equal(manifest.devDependencies["@cloudflare/workers-types"], "5.20260714.1");
-  assert.equal(wrangler.browser.binding, "BROWSER");
+  assert.equal(wrangler.browser, undefined);
   assert.deepEqual(wrangler.compatibility_flags, ["nodejs_compat"]);
   assert.equal(wrangler.compatibility_date, "2026-07-16");
 });

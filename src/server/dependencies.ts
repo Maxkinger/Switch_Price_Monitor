@@ -29,6 +29,7 @@ import { RetentionRepository } from "../repositories/postgres/retention-reposito
 import { SettingsRepository } from "../repositories/postgres/settings-repository";
 import { SubscriptionDetailRepository } from "../repositories/postgres/subscription-detail-repository";
 import { SubscriptionRepository } from "../repositories/postgres/subscription-repository";
+import { SubscriptionConfirmationRepository } from "../repositories/postgres/subscription-confirmation-repository";
 import { AuthService } from "../services/auth-service";
 import { DashboardService } from "../services/dashboard-service";
 import { ExportService } from "../services/export-service";
@@ -51,6 +52,17 @@ import { createFrankfurterExchangeRateProvider } from "../providers/frankfurter-
 import { runPendingNotificationDelivery, runScheduled, runSixHourCollection } from "../services/scheduler-service";
 import { TelegramService } from "../services/telegram-service";
 import type { SchedulerDependencies } from "./scheduler";
+import { createOfficialNintendoProductPageResolver } from "../providers/official-nintendo-product-page";
+import { createOfficialNintendoSearch } from "../providers/official-nintendo-search";
+import { createOfficialJapaneseUpgradeRootSearch } from "../providers/official-japanese-upgrade-root";
+import { createNintendoOfficialPriceQuoteResolver } from "../providers/official-nintendo-price-api";
+import { createJapaneseUpgradeRelationService } from "../services/japanese-upgrade-relation-service";
+import { createLocalBrowserLauncher } from "../providers/playwright/browser-launcher";
+import { createJapaneseUpgradeBrowserBatch } from "../providers/playwright/japanese-upgrade-browser";
+import { OfficialProductDiscoveryService } from "../services/official-product-discovery-service";
+import { SubscriptionConfirmationService } from "../services/subscription-confirmation-service";
+import { JapaneseSubscriptionConfirmationService } from "../services/japanese-subscription-confirmation-service";
+import { SubscriptionRegionCompletionService } from "../services/subscription-region-completion-service";
 
 /** Node 装配所需的公开部署开关；Telegram 成对校验已在 config 层完成，路由不会读取环境对象。 */
 export interface ServerDependencyOptions {
@@ -68,6 +80,30 @@ export function createPostgresServerDependencies(database: AppDatabase, options:
   const settings = new SettingsService(new SettingsRepository(database));
   const collection = createLiveCollectionRunner(database);
   const preview = new SubscriptionPreviewService(new OfficialPriceIdService(createNintendoPriceApiProvider()), defaultFallbackSources);
+  const officialPages = createOfficialNintendoProductPageResolver();
+  const officialSearch = createOfficialNintendoSearch();
+  // Chromium 只在关系服务实际处理经认证的日区升级根时启动；其他价格采集、调度与 Telegram 路径不会取得启动器引用。
+  const japaneseUpgradeRelations = createJapaneseUpgradeRelationService(
+    createOfficialJapaneseUpgradeRootSearch(),
+    createJapaneseUpgradeBrowserBatch(createLocalBrowserLauncher({ headless: true })),
+    createNintendoOfficialPriceQuoteResolver(),
+  );
+  const officialDiscovery = new OfficialProductDiscoveryService(
+    new SettingsRepository(database),
+    officialSearch,
+    officialPages,
+    officialPages,
+    japaneseUpgradeRelations,
+  );
+  const confirmation = new SubscriptionConfirmationService(
+    new SubscriptionConfirmationRepository(database),
+    officialPages,
+    new OfficialPriceIdService(createNintendoPriceApiProvider()),
+    new SettingsRepository(database),
+    new JapaneseSubscriptionConfirmationService(officialSearch, new OfficialPriceIdService(createNintendoPriceApiProvider())),
+    japaneseUpgradeRelations,
+    officialDiscovery,
+  );
   return {
     async dispatchApi(request) {
       const authResponse = await handleAuthRoute(request, { auth, sessions: auth, cookieSecure: options.cookieSecure });
@@ -82,12 +118,19 @@ export function createPostgresServerDependencies(database: AppDatabase, options:
       if (historyResponse) return historyResponse;
       const exportResponse = await handleExportRoute(request, { sessions: auth, exports: new ExportService(new ExportRepository(database)) });
       if (exportResponse) return exportResponse;
-      const productResponse = await handleProductRoute(request, { sessions: auth, preview });
+      const productResponse = await handleProductRoute(request, { sessions: auth, preview, discovery: officialDiscovery, confirmation });
       if (productResponse) return productResponse;
       const subscriptionResponse = await handleSubscriptionRoute(request, {
         sessions: auth,
         subscriptions: new SubscriptionService(new SubscriptionRepository(database)),
         details: new SubscriptionDetailService(new SubscriptionDetailRepository(database)),
+        completion: new SubscriptionRegionCompletionService(
+          new SubscriptionConfirmationRepository(database),
+          officialPages,
+          new OfficialPriceIdService(createNintendoPriceApiProvider()),
+          new SettingsRepository(database),
+          officialDiscovery,
+        ),
       });
       return subscriptionResponse;
     },

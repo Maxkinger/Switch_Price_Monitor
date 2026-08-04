@@ -37,7 +37,7 @@ export default defineConfig({
           // Worker 项目排除 PostgreSQL 文件；这些文件依赖 Node 的文件系统、加密和 TCP 能力，不能装载进 Miniflare。
           include: ["test/**/*.test.ts"],
           // Node HTTP 运行时测试必须使用真实 fs、TCP 与 Node Request 适配器；若落入 Worker 项目会把运行时不兼容误报成业务失败。
-          exclude: ["test/postgres-*.test.ts", "test/server-*.test.ts", ...postgresReadTestFiles],
+          exclude: ["test/postgres-*.test.ts", "test/server-*.test.ts", "test/playwright-*.test.ts", ...postgresReadTestFiles],
           setupFiles: ["./test/apply-migrations.ts"],
         },
       },
@@ -55,7 +55,8 @@ export default defineConfig({
           name: "server",
           environment: "node",
           // 服务器测试不加载 D1 迁移或 PostgreSQL destructive fixture；每项仅使用临时静态目录与显式注入的 API 依赖，绝不读取真实环境秘密。
-          include: ["test/server-*.test.ts"],
+          // 本地 Chromium 启动器依赖 Node 子进程与浏览器缓存，必须与 HTTP 服务器测试同属 Node 项目，不能装入 Miniflare。
+          include: ["test/server-*.test.ts", "test/playwright-*.test.ts"],
         },
       },
     ],

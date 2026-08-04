@@ -2,7 +2,7 @@ import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import worker, { type Env } from "../src/worker";
-import { JapaneseUpgradeBatchLimitError } from "../src/worker/providers/japanese-upgrade-browser";
+import { JapaneseUpgradeBatchLimitError } from "../src/providers/playwright/japanese-upgrade-browser";
 import { AuthRepository } from "../src/repositories/d1/auth-repository";
 import { handleProductRoute, type ProductRouteDependencies } from "../src/routes/product-routes";
 import { AuthService } from "../src/services/auth-service";
@@ -252,11 +252,10 @@ async function initializeAndLogin(): Promise<string> {
   return login.headers.get("set-cookie") ?? "";
 }
 
-/** 静态资源与 Browser Binding 桩件若被调用会失败，确保旧发现 API 测试不意外进入前端回退或消耗受控浏览器会话。 */
+/** 静态资源桩件若被调用会失败，确保旧发现 API 测试不意外进入前端回退；本地 Chromium 仅由 Node 运行时装配。 */
 function workerEnv(): Env {
   return {
     DB: env.DB,
     ASSETS: { fetch: async () => new Response("unexpected asset request", { status: 500 }) } as unknown as Fetcher,
-    BROWSER: { fetch: async () => new Response("unexpected browser binding request", { status: 500 }) } as unknown as Fetcher,
   };
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { OfficialProductCandidate } from "../src/shared/domain";
-import { JapaneseUpgradeBatchLimitError } from "../src/worker/providers/japanese-upgrade-browser";
+import { JapaneseUpgradeBatchLimitError } from "../src/providers/playwright/japanese-upgrade-browser";
 import type { JapaneseUpgradeRootCandidate } from "../src/providers/official-japanese-upgrade-root";
 import {
   createJapaneseUpgradeRelationService,

@@ -866,6 +866,8 @@ git push
 
 ### Task 7: Replace Browser Binding with Local Playwright Chromium
 
+> 2026-08-04 实施记录：本地 Playwright Chromium 启动器、平台中立升级关系批处理器、Node 商品发现/确认/补全装配、离线 Chromium smoke test 与 Worker Binding 移除已完成。浏览器仅启动无头本地 Chromium，未配置远端端点、CDP、持久化上下文或调试端口。
+
 **Files:**
 - Move/replace: `src/worker/providers/japanese-upgrade-browser.ts` → `src/providers/playwright/japanese-upgrade-browser.ts`
 - Create: `src/providers/playwright/browser-launcher.ts`
@@ -917,11 +919,11 @@ export function createJapaneseUpgradeBrowserBatch(
 ): JapaneseUpgradeBrowserBatch;
 ```
 
-- [ ] **Step 1: Preserve the current lifecycle regression baseline**
+- [x] **Step 1: Preserve the current lifecycle regression baseline**
 
 Run the Japanese browser and relation tests before changing the adapter. Record counts for success, timeout, abort, late resource delivery, close rejection, invalid URL, multiple matches, and batch-limit cases.
 
-- [ ] **Step 2: Write failing local-launcher tests**
+- [x] **Step 2: Write failing local-launcher tests**
 
 Use an injected Playwright module to prove:
 
@@ -931,11 +933,11 @@ Use an injected Playwright module to prove:
 - no remote endpoint, CDP session, persistent context, or debugging port;
 - launch failure maps to `browser-unavailable` without error text leakage.
 
-- [ ] **Step 3: Replace Cloudflare launch with local Playwright**
+- [x] **Step 3: Replace Cloudflare launch with local Playwright**
 
 Keep the existing narrow `BrowserLike`, `BrowserContextLike`, and `BrowserPageLike` interfaces. Only `browser-launcher.ts` imports Playwright. The relation adapter never receives database or Telegram dependencies.
 
-- [ ] **Step 4: Add a real Chromium smoke test**
+- [x] **Step 4: Add a real Chromium smoke test**
 
 The smoke test launches the installed browser, navigates to a local fixture server, extracts one allowed link, and closes the page/context/browser. It must not call Nintendo or require internet access.
 
@@ -948,7 +950,7 @@ npx vitest run test/playwright-browser-launcher.test.ts test/japanese-upgrade-br
 
 Expected: all pass with no leaked Chromium process after completion.
 
-- [ ] **Step 5: Remove Cloudflare Playwright package usage**
+- [x] **Step 5: Remove Cloudflare Playwright package usage**
 
 Remove `@cloudflare/playwright` from dependencies only after all tests import the local adapter. Verify:
 
@@ -958,11 +960,13 @@ rg -n '@cloudflare/playwright|BrowserWorker|BROWSER' src test package.json
 
 Expected: no production match.
 
-- [ ] **Step 6: Run the browser and product-flow gate**
+- [x] **Step 6: Run the browser and product-flow gate**
 
 Run all browser, official discovery, Japanese confirmation, product preview, subscription confirmation, type, and build tests.
 
 - [ ] **Step 7: Request commit confirmation, then commit and push**
+
+实际结果：迁移前 Browser/关系基线为 2 文件/47 测试；本地启动器与离线 Chromium smoke 为 2 文件/3 测试；商品/关系聚焦门禁为 5 文件/74 测试；完整 Node server 6 文件/18 测试、Worker 53 文件/293 测试、PostgreSQL 16 文件/76 测试、DOM 4 文件/16 测试通过。Node 配置测试、`npx tsc --noEmit`、`npm run build`、`git diff --check` 与 Cloudflare Browser Binding 扫描通过。
 
 After explicit approval:
 

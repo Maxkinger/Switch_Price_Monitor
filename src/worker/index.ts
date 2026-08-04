@@ -12,7 +12,7 @@ import { handleSettingsRoute } from "../routes/settings-routes";
 import { handleSubscriptionRoute } from "../routes/subscription-routes";
 import { createNintendoOfficialPriceQuoteResolver, createNintendoPriceApiProvider } from "../providers/official-nintendo-price-api";
 import { createOfficialJapaneseUpgradeRootSearch } from "../providers/official-japanese-upgrade-root";
-import { createJapaneseUpgradeBrowserBatch } from "./providers/japanese-upgrade-browser";
+import { createJapaneseUpgradeBrowserBatch } from "../providers/playwright/japanese-upgrade-browser";
 import { createOfficialProviderRegistry } from "../providers/official-provider-registry";
 import { ProviderChain } from "../providers/provider-chain";
 import { createFrankfurterExchangeRateProvider } from "../providers/frankfurter-exchange-rate";
@@ -60,8 +60,6 @@ import { TelegramService } from "../services/telegram-service";
 export interface Env {
   /** 静态资源绑定仅服务前端文件；所有敏感业务操作必须走下方 Worker API。 */
   ASSETS: Fetcher;
-  /** Browser Binding 只服务日区升级关系；不得传入价格采集、Cron、通知或前端响应，避免扩大浏览器会话的使用范围。 */
-  BROWSER: Fetcher;
   /** D1 是价格历史与管理员配置的唯一持久化入口，前端绝不能直接访问。 */
   DB: D1Database;
   /** Telegram 凭据仅由 Cloudflare Secret 在运行时注入；可选字段使未配置部署安全跳过日报。 */
@@ -125,7 +123,8 @@ const worker: ExportedHandler<Env> = {
     // 每个进入商品路由分发阶段的请求只构造一个无状态关系服务；只有认证后的相关端点才会实际启动 Browser，不进入采集、Cron、通知或 D1 层。
     const japaneseUpgradeRelations = createJapaneseUpgradeRelationService(
       createOfficialJapaneseUpgradeRootSearch(),
-      createJapaneseUpgradeBrowserBatch(env.BROWSER),
+      // Cloudflare 过渡入口不再持有 Browser Binding；本地 Node 运行时在 Task 7 以 Playwright 注入真实启动器，Worker 请求安全降级到人工链接。
+      createJapaneseUpgradeBrowserBatch(unavailableWorkerBrowserLauncher),
       createNintendoOfficialPriceQuoteResolver(),
     );
     // 同一个官方解析器同时提供详情复核与港区一层关系能力；发现服务仍通过两个窄接口消费，避免把递归展开权限泄漏给普通详情调用方。
@@ -238,5 +237,12 @@ function createLiveCollectionRunner(env: Env): LiveCollectionRunner {
     events: new NotificationEventRepository(env.DB),
   });
 }
+
+/** Worker 过渡期禁止启动本地 Chromium；统一抛出无细节错误后由批处理器映射为 browser-unavailable，不能把运行时差异泄漏给前端。 */
+const unavailableWorkerBrowserLauncher = {
+  async launch(): Promise<never> {
+    throw new Error("本地浏览器仅由 Node 运行时提供。");
+  },
+};
 
 export default worker;
