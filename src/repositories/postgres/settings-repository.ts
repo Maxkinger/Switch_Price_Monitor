@@ -35,6 +35,16 @@ export class SettingsRepository implements SettingsStore {
   }
 
   /**
+   * 出站网络层只取得已经通过仓储读取校验的代理快照。
+   * 设置尚未初始化时拒绝启动外部连接，避免部署异常让默认草稿被误当作管理员已确认的代理配置。
+   */
+  public async readProxySettings(): Promise<ProxySettings> {
+    const settings = await this.get();
+    if (!settings) throw new SettingsValidationError("尚未完成首次设置。");
+    return { ...settings.proxy };
+  }
+
+  /**
    * 在单管理员设置行的 FOR UPDATE 锁内合并局部补丁、验证关联约束并写入。
    * 锁会让并发主题/时区 PATCH 串行化，后一请求总是基于前一请求已提交字段；默认搜索区与启用地区也只会以同一版本参加校验，不能留下不可达搜索区。
    */

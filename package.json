@@ -16,9 +16,13 @@
     "test:dom": "vitest --config vitest.dom.config.mts"
   },
   "dependencies": {
+    "http-proxy-agent": "^7.0.2",
+    "https-proxy-agent": "^7.0.6",
+    "node-fetch": "^3.3.2",
     "pg": "^8.22.0",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "socks-proxy-agent": "^8.0.5"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.17.1",

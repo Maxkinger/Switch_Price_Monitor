@@ -4,7 +4,7 @@
 
 **Goal:** 在 NAS Node.js 运行时的设置页提供无认证 HTTP、HTTPS、SOCKS5 代理，使全部外部 HTTP 与 Playwright 请求优先走代理，并在安全边界内直连回退。
 
-**执行状态（2026-08-04）：** Task 1 的代码与测试已完成并通过本地质量门禁，等待管理员确认后与文档一同提交、推送；Task 2 尚未开始。
+**执行状态（2026-08-05）：** Task 1 与 Task 2 的代码和测试已完成并通过本地质量门禁，等待管理员确认后与文档一同提交、推送；Task 2 已用回环 HTTP/SOCKS5 夹具验证真实成功路径，HTTPS 代理的真实 TLS 证书链保留给容器/NAS 验收，Task 3 尚未开始。
 
 **Architecture:** 在 PostgreSQL 设置单例中保存代理开关、协议、主机与端口，由集中式 `OutboundNetworkService` 为任天堂、汇率、第三方来源与 Telegram 提供统一 Fetch 风格传输；Playwright 使用同一配置快照创建浏览器代理。设置 API 继续原子保存完整公开设置，并增加固定目标的 HTTP/浏览器连接测试；当前 Cloudflare Worker 不实现代理兼容层。
 

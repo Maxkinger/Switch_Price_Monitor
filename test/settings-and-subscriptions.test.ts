@@ -131,6 +131,22 @@ describe("settings and subscriptions repositories", () => {
     });
   });
 
+  it("仅读取已经校验的代理快照供出站网络层使用", async () => {
+    // 出站层不应取得完整设置、认证或未来秘密字段；仓储只返回迁移后已验证的无认证代理端点。
+    await database.query(
+      `INSERT INTO settings (id, enabled_regions_json, default_search_region, proxy_enabled, proxy_protocol, proxy_host, proxy_port, created_at, updated_at)
+       VALUES (1, $1::jsonb, $2, TRUE, 'socks5', '::1', 10_801, $3, $3)`,
+      [JSON.stringify(["US"]), "US", "2026-07-16T00:00:00.000Z"],
+    );
+
+    await expect(settings.readProxySettings()).resolves.toEqual({
+      enabled: true,
+      protocol: "socks5",
+      host: "::1",
+      port: 10_801,
+    });
+  });
+
   it("keeps distinct concurrent settings patches without overwriting the other field", async () => {
     // 第一个 PATCH 在读取后、写入前暂停，第二个 PATCH 先提交不同字段；安全实现必须在同一行锁事务内重新合并补丁，不能用第一个旧快照覆盖新时区。
     await database.query(
