@@ -38,6 +38,7 @@ postgres：PostgreSQL 17，不映射宿主 5432
 - `src/repositories/postgres/`：参数化 SQL、显式事务、行模型转换与 PostgreSQL 锁。
 - `src/providers/`：任天堂、汇率与 Telegram 外部边界；第三方价格源未经 ADR-002 准入时不得发请求。
 - `src/providers/playwright/`：日区升级包关系发现；每批一个本地无头 Chromium，最多三个商品串行使用隔离上下文，单项 30 秒且不自动重试。
+- `src/server/network/`：Node 专用统一出站层；只从 PostgreSQL 设置读取无认证代理草稿，集中实现 HTTP/HTTPS/SOCKS5、一次直连回退与安全错误类别，业务提供方不得自行拼接代理 URL。
 - `migrations/postgres/`：按文件名排序、带 SHA-256 账本的不可变迁移。
 
 ## 4. 核心数据流
@@ -61,6 +62,7 @@ postgres：PostgreSQL 17，不映射宿主 5432
 
 - Node 进程按 UTC 对齐每分钟检查日报和待投递事件，使用与六小时采集不同的 PostgreSQL advisory lock。
 - Telegram 只在 `TELEGRAM_BOT_TOKEN` 与 `TELEGRAM_CHAT_ID` 成对存在时装配。设置页不接收、不保存也不回显这两项秘密。
+- 出站请求只在 NAS Node 运行时使用代理：幂等读取先代理、代理传输失败才直连一次；Telegram 通过 HEAD 预检决定真实 POST 的出口，避免重复通知；Playwright 必须完整关闭代理浏览器树后才允许一次直连启动。
 - 事件先以唯一业务键在 PostgreSQL 中预留，投递成功后从 `pending` 原子更新为 `delivered`；失败保留待重试状态，普通日志只记录脱敏类别。
 
 ## 5. 认证与秘密边界

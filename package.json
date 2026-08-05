@@ -46,17 +46,21 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:dom": "vitest --config vitest.dom.config.mts",
-    "test:docker-config": "node --test test/docker-config.test.mjs test/platform-removal.test.mjs",
+    "test:docker-config": "node --test test/docker-config.test.mjs test/platform-removal.test.mjs test/proxy-container-contract.test.mjs",
     "test:github-actions": "node --test test/github-actions-release.test.mjs",
     "test:workflow-comments": "node --test --test-name-pattern=\"工作流中文注释与安全边界保持一致\" test/github-actions-release.test.mjs"
   },
   "dependencies": {
     "@hono/node-server": "2.0.12",
     "hono": "4.12.32",
+    "http-proxy-agent": "7.0.2",
+    "https-proxy-agent": "7.0.6",
+    "node-fetch": "3.3.2",
     "pg": "^8.22.0",
     "playwright": "1.62.0",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "socks-proxy-agent": "8.0.5"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",

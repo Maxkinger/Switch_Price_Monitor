@@ -1,4 +1,5 @@
 import { initialRegionCodes, themes, type AppSettings, type RegionCode } from "../../shared/domain";
+import { defaultProxySettings, normalizeProxyHost, type ProxySettings, validateProxySettings } from "../../shared/proxy-settings";
 import type { SettingsStore } from "../ports";
 import type { SqlExecutor } from "../../server/database/types";
 
@@ -11,6 +12,10 @@ interface SettingsRow {
   dailyReportTime: string;
   taxState: string;
   priceHistoryRetention: string;
+  proxyEnabled: boolean;
+  proxyProtocol: string;
+  proxyHost: string;
+  proxyPort: number;
   createdAt: Date;
 }
 
@@ -31,6 +36,10 @@ export class PostgresSettingsRepository implements SettingsStore {
               daily_report_time AS "dailyReportTime",
               tax_state AS "taxState",
               price_history_retention AS "priceHistoryRetention",
+              proxy_enabled AS "proxyEnabled",
+              proxy_protocol AS "proxyProtocol",
+              proxy_host AS "proxyHost",
+              proxy_port AS "proxyPort",
               created_at AS "createdAt"
          FROM settings
         WHERE id = 1`,
@@ -46,6 +55,9 @@ export class PostgresSettingsRepository implements SettingsStore {
     if (!["forever", "one-year", "two-years"].includes(row.priceHistoryRetention)) {
       throw new Error("设置中的历史保留策略无效");
     }
+    const proxy = readProxySettings(row);
+    const proxyError = validateProxySettings(proxy);
+    if (proxyError) throw new Error(proxyError);
 
     return {
       enabledRegions,
@@ -55,15 +67,25 @@ export class PostgresSettingsRepository implements SettingsStore {
       dailyReportTime: row.dailyReportTime,
       taxState: row.taxState,
       priceHistoryRetention: row.priceHistoryRetention as AppSettings["priceHistoryRetention"],
+      proxy,
       createdAt: row.createdAt.toISOString(),
     };
   }
 
   /**
    * 完整替换单管理员公开设置，但保留 created_at 和固定 id=1。
-   * JSONB 参数由 pg 发送字符串并显式转 jsonb；所有值均绑定参数，不能借地区、时区或主题拼接 SQL。
+   * JSONB 参数由 pg 发送字符串并显式转 jsonb；所有值均绑定参数，不能借地区、时区、主题或代理主机拼接 SQL。
    */
   public async save(settings: AppSettings, updatedAt: string): Promise<void> {
+    const proxy = settings.proxy;
+    const normalizedProxyHost = proxy === undefined ? null : normalizeProxyHost(proxy.host);
+    if (proxy === undefined || normalizedProxyHost === null) {
+      // PostgreSQL 迁移后完整设置必须携带无认证代理草稿，不能在更新其他偏好时把数据库默认或旧端点静默清空。
+      throw new Error("代理设置无效。");
+    }
+    const normalizedProxy: ProxySettings = { ...proxy, host: normalizedProxyHost };
+    const proxyError = validateProxySettings(normalizedProxy);
+    if (proxyError) throw new Error(proxyError);
     await this.database.query(
       `UPDATE settings
           SET enabled_regions_json = $1::jsonb,
@@ -73,7 +95,11 @@ export class PostgresSettingsRepository implements SettingsStore {
               daily_report_time = $5,
               tax_state = $6,
               price_history_retention = $7,
-              updated_at = $8
+              proxy_enabled = $8,
+              proxy_protocol = $9,
+              proxy_host = $10,
+              proxy_port = $11,
+              updated_at = $12
         WHERE id = 1`,
       [
         JSON.stringify(settings.enabledRegions),
@@ -83,11 +109,38 @@ export class PostgresSettingsRepository implements SettingsStore {
         settings.dailyReportTime,
         settings.taxState,
         settings.priceHistoryRetention,
+        normalizedProxy.enabled,
+        normalizedProxy.protocol,
+        normalizedProxy.host,
+        normalizedProxy.port,
         updatedAt,
       ],
     );
   }
 
+}
+
+/**
+ * PostgreSQL 真实迁移完成后四列必须同时存在。内存 SQL 替身或升级前的只读诊断若完全没有投影这四列，
+ * 只能安全映射为默认关闭草稿；任一列单独缺失仍是数据损坏，绝不能借默认值拼出可能被启用的混合端点。
+ */
+function readProxySettings(row: SettingsRow): ProxySettings {
+  const missingColumns = [row.proxyEnabled, row.proxyProtocol, row.proxyHost, row.proxyPort]
+    .filter((value) => value === undefined).length;
+  if (missingColumns === 4) return { ...defaultProxySettings };
+  if (missingColumns !== 0) throw new Error("代理设置无效。");
+
+  const normalizedProxyHost = normalizeProxyHost(row.proxyHost);
+  const proxy: ProxySettings = {
+    enabled: row.proxyEnabled,
+    protocol: row.proxyProtocol as ProxySettings["protocol"],
+    // 手工数据库修复也必须满足统一主机格式，不能把完整 URL、认证信息或路径交给出站连接器。
+    host: normalizedProxyHost ?? row.proxyHost,
+    port: row.proxyPort,
+  };
+  const proxyError = validateProxySettings(proxy);
+  if (proxyError) throw new Error(proxyError);
+  return proxy;
 }
 
 /**

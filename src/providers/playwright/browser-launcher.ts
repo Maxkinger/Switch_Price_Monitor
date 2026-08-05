@@ -1,49 +1,87 @@
 import { chromium } from "playwright";
 
-import type {
-  BrowserLauncher,
-  BrowserLike,
-} from "./japanese-upgrade-browser";
+import { classifyProxyError } from "../../server/network/proxy-errors";
+import { validateProxySettings, type ProxySettings } from "../../shared/proxy-settings";
+import { BrowserProxyTransportError } from "./browser-errors";
+export { BrowserProxyTransportError, isBrowserProxyTransportError } from "./browser-errors";
 
-/**
- * launcher 只需要 Playwright 的本地 Chromium 启动面。
- * 不暴露 connect、connectOverCDP、launchPersistentContext 或 browser server，避免调用方恢复远程端点、持久目录和跨请求会话。
- */
+/** 页面能力仅暴露日区升级关系提取所需的导航、定位与关闭操作，禁止业务层读取 Cookie、存储或 CDP 调试会话。 */
+export interface BrowserPageLike {
+  goto(url: string, options: { waitUntil: "domcontentloaded"; timeout: number }): Promise<unknown>;
+  locator(selector: string): {
+    all(): Promise<Array<{
+      isVisible(): Promise<boolean>;
+      innerText(): Promise<string>;
+      getAttribute(name: "href"): Promise<string | null>;
+    }>>;
+  };
+  close(): Promise<void>;
+}
+
+/** 每个升级根都必须创建新上下文；接口不提供持久化配置，避免商品间共享会话、缓存或本地存储。 */
+export interface BrowserContextLike {
+  newPage(): Promise<BrowserPageLike>;
+  close(): Promise<void>;
+}
+
+/** 浏览器只允许新建隔离上下文并在批次末尾关闭，调试端口、远端连接和 persistent context 均不在此边界出现。 */
+export interface BrowserLike {
+  newContext(): Promise<BrowserContextLike>;
+  close(): Promise<void>;
+}
+
+/** Chromium 启动参数只暴露代理草稿；业务层不能注入 executablePath 以外的调试、持久化或远端连接选项。 */
+export interface BrowserLaunchOptions {
+  proxy?: ProxySettings;
+}
+
+/** 本地启动器以窄对象提供浏览器，便于关系适配器与测试都不依赖完整 Playwright API。 */
+export interface BrowserLauncher {
+  launch(options?: BrowserLaunchOptions): Promise<BrowserLike>;
+}
+
+/** Playwright 注入面只包含 Chromium 本地 launch；没有 connect、connectOverCDP 或任何远端端点能力。 */
 export interface LocalPlaywrightModule {
   chromium: {
-    launch(options: {
-      headless: true;
-      executablePath?: string;
-    }): Promise<BrowserLike>;
+    launch(options: { headless: true; executablePath?: string; proxy?: { server: string } }): Promise<BrowserLike>;
   };
 }
 
-/** 生产配置只允许无头模式和可选本地可执行文件；不接受调试端口、用户数据目录、代理或远程 endpoint。 */
-export interface LocalBrowserLaunchOptions {
-  executablePath?: string;
-  headless: true;
+/** 代理配置只在启动器边界转换为 Playwright server；不接收完整 URL、用户名、密码或未知字段。 */
+export function toPlaywrightProxy(settings: ProxySettings | undefined): { server: string } | undefined {
+  if (settings === undefined || !settings.enabled) return undefined;
+  if (validateProxySettings(settings) !== null) throw new BrowserProxyTransportError("unknown-transport");
+  const host = settings.host.includes(":") ? `[${settings.host}]` : settings.host;
+  return { server: `${settings.protocol}://${host}:${settings.port}` };
 }
 
 /**
- * 创建每批按需启动的本地 Chromium launcher。
- * 第二参数仅用于把最窄 Playwright 模块注入单元测试；生产装配省略它并固定调用本模块静态导入的 `chromium.launch`。
+ * 创建本地 Chromium 启动器。始终无头、只允许可选本地 executablePath，
+ * 不开放调试端口、CDP、持久化上下文或远端浏览器地址，确保 NAS 上的网页关系核验没有外部控制面。
  */
 export function createLocalBrowserLauncher(
-  options: LocalBrowserLaunchOptions,
-  playwrightModule: LocalPlaywrightModule = { chromium },
+  options: { executablePath?: string; headless: true },
+  playwright: LocalPlaywrightModule = { chromium },
 ): BrowserLauncher {
+  // 空白路径不是有效的本地 Chromium 配置；先裁剪仅用于判空，非空可信路径仍原样传给 Playwright，避免误改 NAS 挂载路径。
   const executablePath = options.executablePath?.trim();
-  const launchOptions = executablePath === undefined || executablePath === ""
-    ? { headless: true as const }
-    : {
-        headless: true as const,
-        // 保留可信配置的原始非空路径，不展开环境变量、不解析相对位置，也不写入日志或错误响应。
-        executablePath: options.executablePath as string,
-      };
   return {
-    async launch(): Promise<BrowserLike> {
-      // 这里是源码唯一允许触达 Playwright 的位置；异常原样交给关系 adapter 映射为固定业务失败，禁止在此记录正文。
-      return await playwrightModule.chromium.launch(launchOptions);
+    async launch(launchOptions = {}) {
+      const proxy = toPlaywrightProxy(launchOptions.proxy);
+      try {
+        return await playwright.chromium.launch({
+          headless: true,
+          ...(executablePath ? { executablePath } : {}),
+          ...(proxy ? { proxy } : {}),
+        });
+      } catch (error) {
+        // 只有代理模式把启动失败归为可回退传输错误；关闭代理时保留普通启动失败的安全降级语义。
+        if (proxy) {
+          const classified = classifyProxyError(error);
+          throw new BrowserProxyTransportError(classified.category, error);
+        }
+        throw error;
+      }
     },
   };
 }

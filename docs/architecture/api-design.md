@@ -20,7 +20,8 @@
 | `POST /api/auth/login` | 公开 | 验证密码与失败锁定；成功设置会话 Cookie。无效凭据 `401`，锁定 `429`。 |
 | `POST /api/auth/recover` | 公开 | 一次性恢复码重设密码并撤销会话；成功 `204`，不回显秘密。 |
 | `POST /api/auth/logout` | 可无 Cookie | 幂等撤销当前会话并清除 Cookie，返回 `204`。 |
-| `GET/PATCH /api/settings` | 已登录 | 只读写公开偏好：地区、默认区、主题、时区、日报、税务州和保留策略；没有 Telegram 或认证秘密字段。 |
+| `GET/PATCH /api/settings` | 已登录 | 只读写公开偏好：地区、默认区、主题、时区、日报、税务州和保留策略；Node 运行时另包含完整无认证 `proxy: { enabled, protocol, host, port }`。代理对象严格拒绝认证、完整 URL 或未知字段。 |
+| `POST /api/settings/proxy/test` | 已登录 | 仅接受完整无认证代理草稿；服务端固定测试普通 HTTPS 与 Playwright HTTPS 目标，不保存草稿，返回代理成功、直连回退成功或双失败三态。并发测试返回 `409 PROXY_TEST_BUSY`。 |
 | `POST /api/products/search` | 已登录 | 名称只在服务端保存的默认区搜索官方候选，不允许浏览器覆盖默认区。 |
 | `POST /api/products/resolve-link` | 已登录 | 按地区官方主机和路径白名单解析单个 HTTPS 链接。 |
 | `POST /api/products/resolve-regions` | 已登录 | 按已保存启用地区解析跨区候选；必要时用本地 Playwright 处理最多三个日区升级包。只读，不创建订阅。 |

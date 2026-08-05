@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 
 import type { AppSettings, RegionCode, Theme } from "../shared/domain";
+import type { ProxyConnectionTestResult } from "../services/proxy-connection-test-service";
 import { SettingsApiError } from "./settings-api-client";
 import {
   createSettingsForm,
@@ -38,6 +39,7 @@ const retentionChoices: ReadonlyArray<{ value: AppSettings["priceHistoryRetentio
 interface SettingsPageApi {
   getSettings(): Promise<AppSettings>;
   saveSettings(patch: ReturnType<typeof toPublicSettingsPatch>): Promise<AppSettings>;
+  testProxy(settings: SettingsFormState["proxy"]): Promise<ProxyConnectionTestResult>;
 }
 
 /**
@@ -48,6 +50,8 @@ export function SettingsPage({ api, onUnauthorized }: { api: SettingsPageApi; on
   const [draft, setDraft] = useState<SettingsFormState | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isTestingProxy, setIsTestingProxy] = useState(false);
+  const [proxyTestResult, setProxyTestResult] = useState<ProxyConnectionTestResult | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -82,6 +86,21 @@ export function SettingsPage({ api, onUnauthorized }: { api: SettingsPageApi; on
       }
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  /** 测试只使用当前浏览器草稿且绝不保存；401 仍要立即清空受保护页面状态。 */
+  async function handleProxyTest(): Promise<void> {
+    if (!draft) return;
+    setIsTestingProxy(true);
+    setProxyTestResult(null);
+    try {
+      setProxyTestResult(await api.testProxy(draft.proxy));
+    } catch (error) {
+      if (error instanceof SettingsApiError && error.status === 401) onUnauthorized();
+      else setNotice(error instanceof SettingsApiError ? error.message : "代理连接测试未完成，请稍后重试。");
+    } finally {
+      setIsTestingProxy(false);
     }
   }
 
@@ -128,6 +147,40 @@ export function SettingsPage({ api, onUnauthorized }: { api: SettingsPageApi; on
         </fieldset>
 
         <fieldset className="settings-card">
+          <legend>网络代理</legend>
+          <p>支持无认证 HTTP、HTTPS 和 SOCKS5。代理失败后会自动尝试直连，直连回退可能暴露 NAS 出口地址。</p>
+          <label className="settings-choice">
+            <input
+              type="checkbox"
+              checked={draft.proxy.enabled}
+              onChange={(event) => setDraft((current) => current ? { ...current, proxy: { ...current.proxy, enabled: event.target.checked } } : current)}
+            />
+            启用网络代理
+          </label>
+          <div className="settings-grid">
+            <label className="settings-field">协议
+              <select value={draft.proxy.protocol} onChange={(event) => setDraft((current) => current ? { ...current, proxy: { ...current.proxy, protocol: event.target.value as SettingsFormState["proxy"]["protocol"] } } : current)}>
+                <option value="http">HTTP</option>
+                <option value="https">HTTPS</option>
+                <option value="socks5">SOCKS5</option>
+              </select>
+            </label>
+            <label className="settings-field">主机
+              <input value={draft.proxy.host} onChange={(event) => setDraft((current) => current ? { ...current, proxy: { ...current.proxy, host: event.target.value } } : current)} placeholder="127.0.0.1" />
+            </label>
+            <label className="settings-field">端口
+              <input type="number" min={1} max={65535} value={draft.proxy.port} onChange={(event) => setDraft((current) => current ? { ...current, proxy: { ...current.proxy, port: Number(event.target.value) } } : current)} />
+            </label>
+          </div>
+          <p className="settings-help">测试仅使用当前草稿，不会保存或启用代理配置。</p>
+          <button type="button" className="secondary-button" disabled={isTestingProxy} onClick={() => void handleProxyTest()}>{isTestingProxy ? "测试中…" : "测试连接"}</button>
+          {proxyTestResult ? <div className="proxy-test-result" role="status">
+            <p>普通 HTTPS：{renderProxyTestStatus(proxyTestResult.http)}</p>
+            <p>浏览器 HTTPS：{renderProxyTestStatus(proxyTestResult.browser)}</p>
+          </div> : null}
+        </fieldset>
+
+        <fieldset className="settings-card">
           <legend>展示与日报</legend>
           <div className="settings-grid">
             <label className="settings-field">视觉主题
@@ -171,4 +224,9 @@ export function SettingsPage({ api, onUnauthorized }: { api: SettingsPageApi; on
       </form>
     </section>
   );
+}
+
+/** 将服务端三态映射为固定中文文案；页面不能回显代理主机、完整 URL、响应正文或底层异常。 */
+function renderProxyTestStatus(status: ProxyConnectionTestResult["http"]): string {
+  return status === "proxy-success" ? "代理连接成功" : status === "direct-fallback-success" ? "代理失败，直连成功" : "代理与直连均失败";
 }

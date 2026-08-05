@@ -118,6 +118,13 @@ jobs:
         # 真实启动、导航和清理必须在发布前通过，避免只靠浏览器 mock。
         run: npx vitest run test/playwright-browser-launcher.test.ts
 
+      - name: 验证本地代理传输
+        id: proxy_transport
+        # 发布门禁仅启动 127.0.0.1 回环 HTTP/SOCKS5 夹具，验证 Agent 创建、转发与回退边界，绝不接触任天堂、Telegram、NAS 或任何开发者局域网代理。
+        run: |
+          npx vitest run test/proxy-agent-factory.test.ts test/outbound-network.test.ts
+          npx vitest run test/proxy-smoke.test.ts
+
       - name: TypeScript 严格检查
         id: typecheck
         run: npx tsc --noEmit

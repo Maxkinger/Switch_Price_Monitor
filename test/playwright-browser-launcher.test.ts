@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createLocalBrowserLauncher } from "../src/providers/playwright/browser-launcher";
+import { BrowserProxyTransportError, createLocalBrowserLauncher } from "../src/providers/playwright/browser-launcher";
 import type {
   BrowserContextLike,
   BrowserLike,
@@ -58,6 +58,40 @@ describe("local Playwright browser launcher", () => {
     await launcher.launch();
 
     expect(launch).toHaveBeenCalledWith({ headless: true });
+  });
+
+  it.each([
+    ["http", "http://127.0.0.1:7890"],
+    ["https", "https://127.0.0.1:7890"],
+    ["socks5", "socks5://127.0.0.1:7890"],
+  ] as const)("maps %s proxy settings without credentials", async (protocol, server) => {
+    // Chromium 只接收由四个无认证字段构造出的 server；未知对象中的 username/password 也不得通过展开进入启动参数。
+    const browser = { newContext: vi.fn(), close: vi.fn() };
+    const launch = vi.fn().mockResolvedValue(browser);
+    const launcher = createLocalBrowserLauncher({ headless: true }, { chromium: { launch } });
+
+    await expect(launcher.launch({ proxy: { enabled: true, protocol, host: "127.0.0.1", port: 7890 } })).resolves.toBe(browser);
+    expect(launch).toHaveBeenCalledWith({ headless: true, proxy: { server } });
+    expect(JSON.stringify(launch.mock.calls)).not.toMatch(/username|password/i);
+  });
+
+  it("omits disabled proxy and normalizes IPv6 without exposing credentials", async () => {
+    // 关闭代理时必须完全不传 proxy，避免 Chromium 误把关闭状态草稿当作真实出口；IPv6 只在 server URL 中加方括号。
+    const launch = vi.fn().mockResolvedValue({ newContext: vi.fn(), close: vi.fn() });
+    const launcher = createLocalBrowserLauncher({ headless: true }, { chromium: { launch } });
+    await launcher.launch({ proxy: { enabled: false, protocol: "http", host: "::1", port: 7890 } });
+    expect(launch).toHaveBeenLastCalledWith({ headless: true });
+
+    await launcher.launch({ proxy: { enabled: true, protocol: "http", host: "::1", port: 7890 } });
+    expect(launch).toHaveBeenLastCalledWith({ headless: true, proxy: { server: "http://[::1]:7890" } });
+  });
+
+  it("maps proxy launch transport failures to a safe browser error", async () => {
+    // 代理启动失败只向上层暴露固定类别，底层 Playwright 错误可能含代理地址或本机路径，不能进入业务结果或页面。
+    const launch = vi.fn().mockRejectedValue(new Error("proxy connection refused"));
+    const launcher = createLocalBrowserLauncher({ headless: true }, { chromium: { launch } });
+    await expect(launcher.launch({ proxy: { enabled: true, protocol: "http", host: "127.0.0.1", port: 7890 } }))
+      .rejects.toBeInstanceOf(BrowserProxyTransportError);
   });
 
   it("launches real local Chromium against a loopback fixture and closes every owned resource", async () => {

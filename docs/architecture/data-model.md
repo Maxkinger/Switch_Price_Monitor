@@ -15,7 +15,7 @@
 | 实体 | 职责与关键约束 |
 | --- | --- |
 | `schema_migrations` | 记录迁移文件名和 SHA-256；已应用文件不得改写，恢复时必须与应用镜像 manifest 完全一致。 |
-| `settings` | 单管理员全局偏好：启用地区、默认搜索区、主题、时区、日报时间、税务州和价格历史保留策略；默认区必须属于启用地区。 |
+| `settings` | 单管理员全局偏好：启用地区、默认搜索区、主题、时区、日报时间、税务州、价格历史保留策略，以及默认关闭的 `proxy_enabled`、`proxy_protocol`、`proxy_host`、`proxy_port`；默认区必须属于启用地区。 |
 | `admin_credentials` | 单一管理员密码哈希、恢复码校验值和初始化状态；不保存明文。 |
 | `sessions` | 会话令牌摘要、过期与撤销状态；原始令牌只存在于 Cookie。 |
 | `login_attempts` | 登录失败计数与锁定时间；并发更新使用单条原子 upsert，成功登录清除状态。 |
@@ -50,6 +50,7 @@ subscriptions / regional_products ── * notification_events
 ## 4. 敏感数据与导出
 
 - Telegram Bot Token 与 Chat ID 仅由成对环境变量注入，不存入 `settings`，设置 API 和页面都没有秘密字段。
+- 代理字段只保存无认证协议、主机与端口；不保存用户名、密码、完整 URL、密钥或密文。测试连接草稿永不写入数据库。
 - 密码、恢复码与会话仅保存不可逆验证材料或摘要；数据库 bootstrap 密码不进入 app 容器。
 - CSV 只允许订阅、价格历史和采集日志白名单字段，排除认证、会话、恢复码、Telegram 和数据库凭据。
 - 普通日志不得输出连接串、SQL 参数、第三方响应正文、Cookie、浏览器页面内容或异常堆栈中的秘密。

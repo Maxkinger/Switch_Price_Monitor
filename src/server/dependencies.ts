@@ -58,11 +58,15 @@ import { SubscriptionDetailService } from "../services/subscription-detail-servi
 import { SubscriptionRegionCompletionService } from "../services/subscription-region-completion-service";
 import { SubscriptionService } from "../services/subscription-service";
 import { defaultFallbackSources, SubscriptionPreviewService } from "../services/subscription-preview-service";
-import { TelegramService } from "../services/telegram-service";
+import { ProxyTelegramService } from "../services/proxy-telegram-service";
+import { ProxyConnectionTestService } from "../services/proxy-connection-test-service";
+import { defaultProxySettings } from "../shared/proxy-settings";
 import type { AppDatabase } from "./database/types";
 import type { ServerDependencies } from "./app";
 import type { ServerConfig } from "./config";
 import type { SchedulerDependencies } from "./scheduler";
+import { createOutboundNetwork } from "./network/outbound-network";
+import { createProxyBrowserConnectionProbe } from "./network/proxy-browser-probe";
 
 /** 单个 API handler 只消费标准同源 Request；null 表示本模块未匹配，不能被当成空成功响应。 */
 export type ApiRouteHandler = (request: Request) => Promise<Response | null>;
@@ -113,6 +117,30 @@ export function createServerDependencies(
   const auth = new AuthService(new PostgresAuthRepository(database));
   const settingsRepository = new PostgresSettingsRepository(database);
   const settings = new SettingsService(settingsRepository);
+  /**
+   * 所有 Node 外部访问都从此处取得最新代理草稿。未初始化或旧数据缺少字段时安全使用关闭默认值，
+   * 绝不从环境变量读取代理地址，避免 Compose 环境覆盖 PostgreSQL 中管理员保存的唯一真值。
+   */
+  const outboundNetwork = createOutboundNetwork({
+    settings: {
+      async readProxySettings() {
+        try {
+          return { ...((await settingsRepository.get())?.proxy ?? defaultProxySettings) };
+        } catch {
+          // 代理配置读取仅决定出口，不能阻止已获资格的通知投递或采集完成；与已确认的代理失败回退边界一致，读取失败时安全退回直连且不记录数据库错误。
+          return { ...defaultProxySettings };
+        }
+      },
+    },
+  });
+  /**
+   * 将原生 Fetch 适配为统一出站层。每个外部 HTTP 请求都先读取不可变代理快照并遵循一次直连回退，
+   * 因而提供方、汇率与官方页面解析器不会自行读取设置或构造代理连接。
+   */
+  const outboundFetch: typeof fetch = async (input, init) => {
+    const session = await outboundNetwork.snapshot();
+    return session.fetch(input, init);
+  };
   const dashboardRepository = new PostgresDashboardRepository(database);
   const dashboard = new DashboardService(dashboardRepository);
   const history = new HistoryService(new PostgresHistoryRepository(database));
@@ -121,25 +149,29 @@ export function createServerDependencies(
    * 同一个无状态 LiveCollectionRunner 同时交给手动刷新与六小时调度。
    * 两条入口仍由 HTTP 认证和 advisory lock 分别控制，绝不共享手动刷新时间记录或形成待执行队列。
    */
-  const liveCollection = createLiveCollectionRunner(database);
+  const liveCollection = createLiveCollectionRunner(database, outboundFetch);
   const refresh = new ManualRefreshService(
     new PostgresManualRefreshRepository(database),
     liveCollection,
   );
 
-  const officialPages = createOfficialNintendoProductPageResolver();
-  const officialSearch = createOfficialNintendoSearch();
-  const officialPriceIds = new OfficialPriceIdService(createNintendoPriceApiProvider());
+  const officialPages = createOfficialNintendoProductPageResolver(outboundFetch);
+  const officialSearch = createOfficialNintendoSearch(outboundFetch);
+  const officialPriceIds = new OfficialPriceIdService(createNintendoPriceApiProvider(outboundFetch));
   /**
    * Node 商品发现与保存前确认共享同一套本地关系依赖：每次实际批处理只启动一个 Chromium，
    * 最多三个根使用全新上下文串行核验。浏览器 launcher 不接收数据库、Telegram、HTTP 或调度器对象。
    */
   const japaneseUpgradeRelations = createJapaneseUpgradeRelationService(
-    createOfficialJapaneseUpgradeRootSearch(),
+    createOfficialJapaneseUpgradeRootSearch(outboundFetch),
     createJapaneseUpgradeBrowserBatch(
       createLocalBrowserLauncher({ headless: true }),
+      {
+        // 浏览器批处理仅在启动前读取一次代理；保存新设置不会改变已创建 Chromium 的出口。
+        readProxySettings: async () => ({ ...((await settingsRepository.get())?.proxy ?? defaultProxySettings) }),
+      },
     ),
-    createNintendoOfficialPriceQuoteResolver(),
+    createNintendoOfficialPriceQuoteResolver(outboundFetch),
   );
   const discovery = new OfficialProductDiscoveryService(
     settingsRepository,
@@ -176,7 +208,15 @@ export function createServerDependencies(
         // Cookie Secure 只由启动配置决定；任何 Forwarded 请求头都不会参与此值。
         cookieSecure: config.cookieSecure,
       }),
-      (request) => handleSettingsRoute(request, auth, settings),
+      (request) => handleSettingsRoute(request, {
+        sessions: auth,
+        settings,
+        proxySupported: true,
+        proxyTest: new ProxyConnectionTestService(
+          outboundNetwork,
+          createProxyBrowserConnectionProbe(createLocalBrowserLauncher({ headless: true })),
+        ),
+      }),
       (request) => handleDashboardRoute(request, auth, dashboard),
       (request) => handleManualRefreshRoute(request, auth, refresh),
       (request) => handleHistoryRoute(request, auth, history),
@@ -200,11 +240,11 @@ export function createServerDependencies(
   const notificationEvents = new PostgresNotificationEventRepository(database);
   const telegram = config.telegramBotToken === undefined
     ? undefined
-    : new TelegramService({
+    : new ProxyTelegramService({
       botToken: config.telegramBotToken,
       // 成对检查后 chat id 必然存在；不使用空字符串回退，避免把配置错误发送到外部 API。
       chatId: config.telegramChatId as string,
-    });
+    }, outboundNetwork);
   const scheduler: SchedulerDependencies = {
     database,
     async runMinute(scheduledAt): Promise<void> {
@@ -255,14 +295,14 @@ export function createServerDependencies(
  * 手动刷新继续复用真实 PostgreSQL 价格、汇率、健康与通知事件写入。
  * 仓储只接收领域 DTO 与参数化 SQL，外部页面、错误正文和秘密不会写入普通运行日志。
  */
-function createLiveCollectionRunner(database: AppDatabase): LiveCollectionRunner {
+function createLiveCollectionRunner(database: AppDatabase, fetcher: typeof fetch): LiveCollectionRunner {
   const prices = new PostgresPriceRepository(database);
   const rates = new PostgresExchangeRateRepository(database);
   const notifications = new PostgresNotificationEventRepository(database);
   return new LiveCollectionRunner({
     products: new PostgresCollectionRepository(database),
-    rates: new DailyCnyRateService(createFrankfurterExchangeRateProvider(), rates),
-    officialProviders: createOfficialProviderRegistry(),
+    rates: new DailyCnyRateService(createFrankfurterExchangeRateProvider(fetcher), rates),
+    officialProviders: createOfficialProviderRegistry(fetcher),
     collection: new CollectionService(new ProviderChain(), prices),
     health: new ProductHealthService(
       new PostgresProductHealthRepository(database),

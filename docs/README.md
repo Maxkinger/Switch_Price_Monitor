@@ -50,6 +50,8 @@
 | [NAS Docker 与 PostgreSQL 迁移实施计划](superpowers/plans/2026-07-27-nas-docker-postgresql-migration.md) | 保留原始步骤历史；顶部摘要记录本轮实际状态 |
 | [PostgreSQL 登录竞态设计](superpowers/specs/2026-07-30-postgres-login-attempt-upsert-race-design.md) | 已实现并通过真实 PostgreSQL 回归 |
 | [GitHub Actions 双角色设计](superpowers/specs/2026-08-01-github-actions-postgres-dual-role-design.md) | 已实现；历史远程 CI 通过 |
+| [网络代理设置设计规格](superpowers/specs/2026-08-01-network-proxy-settings-design.md) | 已确认并整合到最新 Node/PostgreSQL `main` |
+| [网络代理设置实施计划](superpowers/plans/2026-08-01-network-proxy-settings.md) | 代码与回环代理门禁已完成；真实 PostgreSQL 回归受受守卫端口占用暂缓，NAS 真机代理验收仍待单独授权 |
 
 `docs/superpowers/specs/` 与 `docs/superpowers/plans/` 中其余文件保存早期功能设计、实施步骤和 Cloudflare 生产证据。它们不会被改写成当前运行合同；遇到冲突时，以本页“当前结论”、ADR-003、当前架构/部署文档和实际仓库配置为准。
 

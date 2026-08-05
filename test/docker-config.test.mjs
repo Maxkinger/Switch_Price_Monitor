@@ -346,11 +346,11 @@ contractTest(".env.example 提供固定版本和全部安全占位而不携带�
 contractTest("package 脚本让 Docker 与平台移除静态门禁共享 CI 入口", () => {
   const packageJson = JSON.parse(readAsset("package.json"));
 
-  // CI 已固定调用 test:docker-config；把平台移除合同并入同一 Node test 命令，才能保证普通 push
-  // 与标签发布都在镜像构建前阻止旧运行时回流，而不必复制两份工作流步骤或执行顺序断言。
+  // CI 已固定调用 test:docker-config；把平台移除与代理容器合同并入同一 Node test 命令，才能保证普通 push
+  // 与标签发布都在镜像构建前阻止旧运行时回流、特权网络或代理环境变量，而不必复制两份工作流步骤或执行顺序断言。
   assert.equal(
     packageJson.scripts["test:docker-config"],
-    "node --test test/docker-config.test.mjs test/platform-removal.test.mjs",
+    "node --test test/docker-config.test.mjs test/platform-removal.test.mjs test/proxy-container-contract.test.mjs",
   );
   assert.ok(
     Object.keys(packageJson.codexMetadata.dockerRuntimeConfigurationRationaleZh)

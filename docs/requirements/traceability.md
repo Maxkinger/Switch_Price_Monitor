@@ -17,6 +17,7 @@
 | FR-009 | 连续失败与恢复通知 | PostgreSQL 健康状态、唯一事件和分钟投递已实现；真实来源失败/恢复与 Telegram 待验收 | [数据模型](../architecture/data-model.md)、[系统设计](../architecture/system-design.md) |
 | FR-010 | 永久删除与全局加载 | PostgreSQL 显式事务实现并由回滚测试覆盖；历史 Worker/D1 生产删除只作为历史证据 | [API](../architecture/api-design.md)、[质量](../quality/quality-and-acceptance.md) |
 | FR-011 | 页面发布版本 | 页面读取已提交的 `package.json`；自动补丁部署已移除。标签发布严格 `vX.Y.Z`，但发布前仍须人工审查 package/lockfile 与标签一致 | [PRD](PRD.md)、[Docker Hub 发布](../deployment/docker-hub-release.md) |
+| FR-012 | NAS Node 无认证网络代理与安全回退 | 实现整合中：PostgreSQL 四字段、统一 HTTP/SOCKS5 出站层、幂等直连回退、Telegram 非幂等预检、Playwright 清理后回退、设置 API/UI 与固定连接测试；NAS 真机临时代理验收必须另行授权 | [PRD](PRD.md)、[网络代理设计](../superpowers/specs/2026-08-01-network-proxy-settings-design.md)、[网络代理计划](../superpowers/plans/2026-08-01-network-proxy-settings.md) |
 | NFR-001 | Node、PostgreSQL、Compose、本地调试与多架构 | 仓库实现完成；本地 69/420、DOM 16、Chromium 4、Docker/平台 19/19、tsc/build 通过；M1/arm64 生产镜像/Compose 运行时、认证持久性、端口隔离和镜像内 Chromium 已验收，业务 fake/fixture 由自动化分层证明 | [ADR-003](../decisions/ADR-003-nas-docker-postgresql.md)、[迁移规格](../superpowers/specs/2026-07-27-nas-docker-postgresql-migration-design.md) |
 | NFR-002 | GitHub Actions 与公开 Docker Hub | 普通/标签工作流已实现；run `30686052256` 仅证明平台移除前提交；Secrets、`v0.1.0` 与公开镜像待完成 | [Docker Hub 发布](../deployment/docker-hub-release.md)、[质量](../quality/quality-and-acceptance.md) |
 | NFR-003 | NAS 备份、恢复与回滚 | 脚本与本地隔离合同已实现；DS423+ 独立空库恢复和版本回滚演练待执行 | [备份恢复](../deployment/postgres-backup-restore.md)、[群晖部署](../deployment/synology-ds423-plus.md) |

@@ -36,6 +36,9 @@ export default defineConfig({
             "test/server-*.test.ts",
             "test/playwright-*.test.ts",
             "test/japanese-upgrade-browser.test.ts",
+            // 代理 Agent、回环夹具和 Chromium 探测依赖 Node TCP；不能落进普通核心项目伪造 Worker 兼容层。
+            "test/proxy-*.test.ts",
+            "test/outbound-network.test.ts",
           ],
         },
       },
@@ -67,6 +70,8 @@ export default defineConfig({
             "test/server-*.test.ts",
             "test/playwright-*.test.ts",
             "test/japanese-upgrade-browser.test.ts",
+            "test/proxy-*.test.ts",
+            "test/outbound-network.test.ts",
           ],
           // 生命周期用例共享本机监听资源或 Chromium 进程；串行文件可使关停断言稳定且不掩盖资源泄漏。
           fileParallelism: false,
