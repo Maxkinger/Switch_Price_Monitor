@@ -50,7 +50,8 @@ import { DailyCnyRateService } from "../services/daily-cny-rate-service";
 import { LiveCollectionRunner } from "../services/live-collection-runner";
 import { createFrankfurterExchangeRateProvider } from "../providers/frankfurter-exchange-rate";
 import { runPendingNotificationDelivery, runScheduled, runSixHourCollection } from "../services/scheduler-service";
-import { TelegramService } from "../services/telegram-service";
+import { ProxyTelegramService } from "../services/proxy-telegram-service";
+import { createOutboundNetwork } from "./network/outbound-network";
 import type { SchedulerDependencies } from "./scheduler";
 import { createOfficialNintendoProductPageResolver } from "../providers/official-nintendo-product-page";
 import { createOfficialNintendoSearch } from "../providers/official-nintendo-search";
@@ -63,6 +64,10 @@ import { OfficialProductDiscoveryService } from "../services/official-product-di
 import { SubscriptionConfirmationService } from "../services/subscription-confirmation-service";
 import { JapaneseSubscriptionConfirmationService } from "../services/japanese-subscription-confirmation-service";
 import { SubscriptionRegionCompletionService } from "../services/subscription-region-completion-service";
+import { ProxyConnectionTestService } from "../services/proxy-connection-test-service";
+import { createProxyBrowserConnectionProbe } from "./network/proxy-browser-probe";
+import { defaultProxySettings } from "../shared/proxy-settings";
+import type { OutboundNetwork, OutboundNetworkSession } from "./network/outbound-network";
 
 /** Node 装配所需的公开部署开关；Telegram 成对校验已在 config 层完成，路由不会读取环境对象。 */
 export interface ServerDependencyOptions {
@@ -77,60 +82,55 @@ export interface ServerDependencyOptions {
  */
 export function createPostgresServerDependencies(database: AppDatabase, options: ServerDependencyOptions): ServerDependencies {
   const auth = new AuthService(new AuthRepository(database));
-  const settings = new SettingsService(new SettingsRepository(database));
-  const collection = createLiveCollectionRunner(database);
-  const preview = new SubscriptionPreviewService(new OfficialPriceIdService(createNintendoPriceApiProvider()), defaultFallbackSources);
-  const officialPages = createOfficialNintendoProductPageResolver();
-  const officialSearch = createOfficialNintendoSearch();
-  // Chromium 只在关系服务实际处理经认证的日区升级根时启动；其他价格采集、调度与 Telegram 路径不会取得启动器引用。
-  const japaneseUpgradeRelations = createJapaneseUpgradeRelationService(
-    createOfficialJapaneseUpgradeRootSearch(),
-    createJapaneseUpgradeBrowserBatch(createLocalBrowserLauncher({ headless: true })),
-    createNintendoOfficialPriceQuoteResolver(),
-  );
-  const officialDiscovery = new OfficialProductDiscoveryService(
-    new SettingsRepository(database),
-    officialSearch,
-    officialPages,
-    officialPages,
-    japaneseUpgradeRelations,
-  );
-  const confirmation = new SubscriptionConfirmationService(
-    new SubscriptionConfirmationRepository(database),
-    officialPages,
-    new OfficialPriceIdService(createNintendoPriceApiProvider()),
-    new SettingsRepository(database),
-    new JapaneseSubscriptionConfirmationService(officialSearch, new OfficialPriceIdService(createNintendoPriceApiProvider())),
-    japaneseUpgradeRelations,
-    officialDiscovery,
-  );
+  const settingsRepository = new SettingsRepository(database);
+  const settings = new SettingsService(settingsRepository);
+  const outboundNetwork = createOutboundNetwork({ settings: settingsRepository });
+  // 手动刷新也属于一次完整业务操作；只有在请求开始时读取代理快照，才不会继续沿用进程启动时的全局 fetch。
+  const manualRefresh = {
+    refresh: async (now: string) => {
+      const session = await outboundNetwork.snapshot();
+      return new ManualRefreshService(
+        new ManualRefreshRepository(database),
+        createLiveCollectionRunner(database, session.fetch.bind(session)),
+      ).refresh(now);
+    },
+  };
+  // 商品发现、来源预览和确认均在具体业务操作开始时创建代理快照；进程启动时不固定全局 fetch 或浏览器出口。
+  const productServices = createProxyAwareProductServices(outboundNetwork, database, settingsRepository);
   return {
     async dispatchApi(request) {
       const authResponse = await handleAuthRoute(request, { auth, sessions: auth, cookieSecure: options.cookieSecure });
       if (authResponse) return authResponse;
-      const settingsResponse = await handleSettingsRoute(request, { sessions: auth, settings });
+      const settingsResponse = await handleSettingsRoute(request, {
+        sessions: auth,
+        settings,
+        proxySupported: true,
+        proxyTest: new ProxyConnectionTestService(
+          outboundNetwork,
+          createProxyBrowserConnectionProbe(createLocalBrowserLauncher({ headless: true })),
+        ),
+      });
       if (settingsResponse) return settingsResponse;
       const dashboardResponse = await handleDashboardRoute(request, { sessions: auth, dashboard: new DashboardService(new DashboardRepository(database)) });
       if (dashboardResponse) return dashboardResponse;
-      const refreshResponse = await handleManualRefreshRoute(request, { sessions: auth, refresh: new ManualRefreshService(new ManualRefreshRepository(database), collection) });
+      const refreshResponse = await handleManualRefreshRoute(request, { sessions: auth, refresh: manualRefresh });
       if (refreshResponse) return refreshResponse;
       const historyResponse = await handleHistoryRoute(request, { sessions: auth, history: new HistoryService(new HistoryRepository(database)) });
       if (historyResponse) return historyResponse;
       const exportResponse = await handleExportRoute(request, { sessions: auth, exports: new ExportService(new ExportRepository(database)) });
       if (exportResponse) return exportResponse;
-      const productResponse = await handleProductRoute(request, { sessions: auth, preview, discovery: officialDiscovery, confirmation });
+      const productResponse = await handleProductRoute(request, {
+        sessions: auth,
+        preview: productServices.preview,
+        discovery: productServices.discovery,
+        confirmation: productServices.confirmation,
+      });
       if (productResponse) return productResponse;
       const subscriptionResponse = await handleSubscriptionRoute(request, {
         sessions: auth,
         subscriptions: new SubscriptionService(new SubscriptionRepository(database)),
         details: new SubscriptionDetailService(new SubscriptionDetailRepository(database)),
-        completion: new SubscriptionRegionCompletionService(
-          new SubscriptionConfirmationRepository(database),
-          officialPages,
-          new OfficialPriceIdService(createNintendoPriceApiProvider()),
-          new SettingsRepository(database),
-          officialDiscovery,
-        ),
+        completion: productServices.completion,
       });
       return subscriptionResponse;
     },
@@ -144,8 +144,10 @@ export function createPostgresServerDependencies(database: AppDatabase, options:
 export function createPostgresSchedulerDependencies(database: AppDatabase, options: ServerDependencyOptions): SchedulerDependencies {
   const settings = new SettingsRepository(database);
   const events = new NotificationEventRepository(database);
+  // Node 调度器只创建统一出站网络实例；每次 Telegram 逻辑投递再由适配器获取一次不可变代理快照。
+  const outboundNetwork = createOutboundNetwork({ settings });
   const telegram = options.telegramBotToken && options.telegramChatId
-    ? new TelegramService({ botToken: options.telegramBotToken, chatId: options.telegramChatId })
+    ? new ProxyTelegramService({ botToken: options.telegramBotToken, chatId: options.telegramChatId }, outboundNetwork)
     : undefined;
   return {
     database,
@@ -157,10 +159,12 @@ export function createPostgresSchedulerDependencies(database: AppDatabase, optio
       ]);
     },
     async runSixHour(scheduledAt) {
+      // 一轮六小时采集只读取一次代理设置；该会话同时服务汇率和所有官方价格 Provider，轮次内不会切换出口。
+      const session = await outboundNetwork.snapshot();
       await runSixHourCollection(scheduledAt, {
         settings,
         retention: new RetentionService(new RetentionRepository(database)),
-        collection: createLiveCollectionRunner(database),
+        collection: createLiveCollectionRunner(database, session.fetch.bind(session)),
       });
     },
     recordSafeFailure({ task, scheduledAt }) {
@@ -171,15 +175,84 @@ export function createPostgresSchedulerDependencies(database: AppDatabase, optio
 }
 
 /** 统一构造手动刷新与六小时任务共用的采集器，保证价格来源、汇率、健康状态和即时降价事件规则一致。 */
-function createLiveCollectionRunner(database: AppDatabase): LiveCollectionRunner {
+function createLiveCollectionRunner(database: AppDatabase, fetcher: typeof fetch = fetch): LiveCollectionRunner {
   const prices = new PriceRepository(database);
   return new LiveCollectionRunner({
     products: new CollectionRepository(database),
-    rates: new DailyCnyRateService(createFrankfurterExchangeRateProvider(), new ExchangeRateRepository(database)),
-    officialProviders: createOfficialProviderRegistry(),
+    rates: new DailyCnyRateService(createFrankfurterExchangeRateProvider(fetcher), new ExchangeRateRepository(database)),
+    officialProviders: createOfficialProviderRegistry(fetcher),
     collection: new CollectionService(new ProviderChain(), prices),
     health: new ProductHealthService(new ProductHealthRepository(database), new NotificationEventRepository(database)),
     previousOfficial: prices,
     events: new NotificationEventRepository(database),
   });
+}
+
+/**
+ * Node 商品业务的统一代理装配。
+ * 每次搜索、链接确认、来源预览或地区补全都只调用一次 snapshot；同一次操作内部的搜索、详情、价格 API、日区根搜索和 Browser
+ * 共享同一不可变代理端点，设置 PATCH 只能影响下一次操作。Worker/D1 不会调用该工厂，因此不会获得伪代理兼容层。
+ */
+function createProxyAwareProductServices(
+  outbound: OutboundNetwork,
+  database: AppDatabase,
+  settingsRepository: SettingsRepository,
+) {
+  const makeRuntime = (session: OutboundNetworkSession) => {
+    const fetcher = session.fetch.bind(session);
+    const pages = createOfficialNintendoProductPageResolver(fetcher);
+    const search = createOfficialNintendoSearch(fetcher);
+    const officialPriceIds = new OfficialPriceIdService(createNintendoPriceApiProvider(fetcher));
+    const relations = createJapaneseUpgradeRelationService(
+      createOfficialJapaneseUpgradeRootSearch(fetcher),
+      createJapaneseUpgradeBrowserBatch(createLocalBrowserLauncher({ headless: true }), {
+        // Browser 复用本次 HTTP 操作的同一快照；测试替身没有该字段时显式使用关闭代理的安全默认值。
+        readProxySettings: async () => ({ ...(session.proxySettings ?? defaultProxySettings) }),
+      }),
+      createNintendoOfficialPriceQuoteResolver(fetcher),
+    );
+    const discovery = new OfficialProductDiscoveryService(settingsRepository, search, pages, pages, relations);
+    const preview = new SubscriptionPreviewService(officialPriceIds, defaultFallbackSources);
+    const confirmation = new SubscriptionConfirmationService(
+      new SubscriptionConfirmationRepository(database),
+      pages,
+      officialPriceIds,
+      settingsRepository,
+      new JapaneseSubscriptionConfirmationService(search, officialPriceIds),
+      relations,
+      discovery,
+    );
+    const completion = new SubscriptionRegionCompletionService(
+      new SubscriptionConfirmationRepository(database),
+      pages,
+      officialPriceIds,
+      settingsRepository,
+      discovery,
+    );
+    return { preview, discovery, confirmation, completion };
+  };
+
+  const withRuntime = async <T>(operation: (runtime: ReturnType<typeof makeRuntime>) => Promise<T>): Promise<T> => {
+    // snapshot 失败只向 HTTP 路由交给既有统一错误处理；这里不把设置、代理地址或底层数据库错误写入日志。
+    const runtime = makeRuntime(await outbound.snapshot());
+    return operation(runtime);
+  };
+
+  return {
+    preview: {
+      create: (candidates: Parameters<SubscriptionPreviewService["create"]>[0]) => withRuntime((runtime) => runtime.preview.create(candidates)),
+    },
+    discovery: {
+      searchDefaultRegion: (query: Parameters<OfficialProductDiscoveryService["searchDefaultRegion"]>[0]) => withRuntime((runtime) => runtime.discovery.searchDefaultRegion(query)),
+      resolveOfficialLink: (...args: Parameters<OfficialProductDiscoveryService["resolveOfficialLink"]>) => withRuntime((runtime) => runtime.discovery.resolveOfficialLink(...args)),
+      resolveRegions: (candidates: Parameters<OfficialProductDiscoveryService["resolveRegions"]>[0]) => withRuntime((runtime) => runtime.discovery.resolveRegions(candidates)),
+    },
+    confirmation: {
+      confirm: (...args: Parameters<SubscriptionConfirmationService["confirm"]>) => withRuntime((runtime) => runtime.confirmation.confirm(...args)),
+    },
+    completion: {
+      resolveExisting: (subscriptionId: Parameters<SubscriptionRegionCompletionService["resolveExisting"]>[0]) => withRuntime((runtime) => runtime.completion.resolveExisting(subscriptionId)),
+      completeExisting: (...args: Parameters<SubscriptionRegionCompletionService["completeExisting"]>) => withRuntime((runtime) => runtime.completion.completeExisting(...args)),
+    },
+  };
 }

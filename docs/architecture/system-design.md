@@ -59,6 +59,8 @@ Task 6 以 Node 计时器替代 Cloudflare Cron：分钟任务和六小时任务
 
 Task 7 将日区升级关系核验替换为本地 Playwright Chromium：浏览器只由 Node 依赖装配创建，始终 `headless`，每个根商品使用全新上下文，单项 30 秒、最多三个串行项且不自动重试。页面、上下文和浏览器按顺序关闭；启动失败、超时或关闭异常只转换为脱敏业务状态。Cloudflare Browser Binding、CDP 会话和调试端口均不再存在，离线 smoke test 仅访问本机 `127.0.0.1` 临时夹具。
 
+网络代理实现只进入 NAS Node/PostgreSQL 运行时：`OutboundNetworkSession` 在搜索、来源预览、商品确认、地区补全、手动刷新、六小时采集和 Telegram 操作开始时绑定一次代理快照。幂等请求最多直连回退一次，Telegram 先做 HEAD 预检；本地 Chromium 使用同一快照映射无认证 `proxy.server`，代理失败时关闭完整资源树后才直连。Cloudflare Worker/D1 不导入 Node 代理模块，也不接受代理字段。
+
 ## 3. 核心数据流
 
 ### 3.1 新建订阅

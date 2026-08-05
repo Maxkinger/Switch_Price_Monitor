@@ -22,6 +22,8 @@ export interface ProxySettingsReader {
  * fetch 是无副作用读取边界；send 是非幂等投递边界，必须通过 HEAD 预检控制直连回退。
  */
 export interface OutboundNetworkSession {
+  /** 仅供同一业务操作的 Playwright 启动器复用快照；属性不进入公开 API 或日志。 */
+  readonly proxySettings?: Readonly<ProxySettings>;
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
   send(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 }
@@ -51,6 +53,7 @@ export function createOutboundNetwork(dependencies: OutboundNetworkDependencies)
     async snapshot(): Promise<OutboundNetworkSession> {
       const settings = freezeProxySettings(await dependencies.settings.readProxySettings());
       return {
+        proxySettings: settings,
         fetch: async (input, init) => (await requestIdempotent(settings, input, init, directFetch, requestProxy)).response,
         send: async (input, init) => sendNonIdempotent(settings, input, init, directFetch, requestProxy),
       };

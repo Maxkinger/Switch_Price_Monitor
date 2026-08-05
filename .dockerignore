@@ -1,0 +1,13 @@
+# 构建上下文不得包含本地依赖、构建缓存、环境文件、Git 历史或测试数据库数据，避免敏感内容进入镜像层。
+node_modules
+dist
+.git
+.wrangler
+.superpowers
+.worktrees
+.env
+.env.*
+!.env.example
+test
+docs
+*.log

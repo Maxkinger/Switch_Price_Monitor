@@ -47,8 +47,9 @@
 | `DELETE /api/subscriptions` | 已登录管理员 | 接受 `{ subscriptionIds: string[] }`，数组必须非空、无空白值且无重复。浏览器只能在共享确认弹窗的明确“永久删除”后发送选择的 ID，且不上传价格、游戏或外部链接。服务端先验证全部目标存在，再在单个 D1 批次删除订阅专属的目标价、地区关联、通知事件、健康状态、价格快照、采集日志、地区商品、订阅与游戏；成功返回原输入顺序的 `deletedSubscriptionIds`。仪表盘随后重新读取概览，详情页清空局部草稿并返回首页。任一目标不存在返回 `404` 且零删除，输入无效返回 `422`；全局汇率、设置、认证和未选订阅不受影响。 |
 | `POST /api/subscriptions/:id/disable` | 已登录管理员 | 软停用订阅并返回 `204`；不删除地区配置、价格历史或目标价状态，后续采集器据此停止创建新记录和通知。不存在的订阅返回 `404`。 |
 | `PATCH /api/subscriptions/:id` | 已登录管理员 | 接受启用状态、完整目标价配置，或非空且去重的 `regionalProductIds` 地区范围；地区商品必须属于订阅的同一游戏且启用，替换地区不删除既有历史。 |
-| `GET /api/settings` | 已登录管理员 | 由 `/settings` 同源页面读取单例公开设置，仅返回 `enabledRegions`、`defaultSearchRegion`、`theme`、`timezone`、`dailyReportTime`、`taxState`、`priceHistoryRetention` 和服务端创建时间；不含 Telegram、第三方来源、认证或会话秘密字段。 |
-| `PATCH /api/settings` | 已登录管理员 | `/settings` 仅提交现有公开字段 `enabledRegions`、`defaultSearchRegion`、`theme`、`timezone`、`dailyReportTime`、`taxState`、`priceHistoryRetention`；默认搜索区必须属于启用地区，更新不会改写既有订阅。浏览器没有 Telegram、第三方来源或认证秘密字段的请求入口。 |
+| `GET /api/settings` | 已登录管理员 | 由 `/settings` 同源页面读取单例公开设置；NAS Node 额外返回默认关闭的 `proxy: { enabled, protocol, host, port }`，Worker/D1 不返回代理对象。不含 Telegram、第三方来源、认证或会话秘密字段。 |
+| `PATCH /api/settings` | 已登录管理员（代理字段仅 NAS Node） | `/settings` 提交现有公开字段和可选完整 `proxy` 四字段对象；默认搜索区必须属于启用地区，代理协议/主机/端口严格校验，更新不会改写既有订阅。Worker/D1 提交代理字段返回 `422`，避免假保存。 |
+| `POST /api/settings/proxy/test` | 已登录管理员（仅 NAS Node） | 只接受 `{ enabled, protocol, host, port }` 四个无认证字段；服务端固定测试 `https://www.nintendo.com/robots.txt` 与 `https://store-jp.nintendo.com/robots.txt`，不持久化草稿，返回普通 HTTP 与浏览器两项三态结果。Worker/D1 返回 `404`，匿名请求先返回 `401`。 |
 | `POST /api/refresh` | 已登录管理员 | 当前无 15 分钟冷却：每个已认证请求都在当前请求内执行一次与六小时 Cron 相同的统一采集链，并返回本轮 `attempted`、`collected`、`stale` 与执行时间。最近刷新审计只保留最大 UTC 时刻；接口不创建等待 Cron 消费的队列。 |
 | `GET /api/dashboard` | 已登录管理员 | 返回按创建顺序排列的订阅概览，包括游戏名称、启用状态、已确认地区商品、各区最新快照及当地货币历史最低价，并提供仅由已完成汇率换算快照计算的全区人民币历史最低价；统计同时返回已验证的管理员 IANA `timezone`，浏览器据此格式化 UTC 的最近采集与下次日报时间，不依赖设备时区。最新快照保留原始来源标记，首次尚未订阅时稳定返回空数组。`POST /api/refresh` 成功后浏览器会重新读取此接口，不从完成统计自行拼接价格。 |
 | `GET /api/history?subscriptionId=&region=` | 已登录管理员 | 按采集时间升序返回指定订阅的不可变价格快照；可选 `region` 在服务端筛选地区，响应保留原始货币、人民币金额、来源与采集时间。 |

@@ -5,11 +5,12 @@ import {
   createJapaneseUpgradeBrowserBatch,
   normalizeJapaneseUpgradeUrl,
 } from "../src/providers/playwright/japanese-upgrade-browser";
-import type { BrowserLike } from "../src/providers/playwright/browser-launcher";
+import { BrowserProxyTransportError, type BrowserLike, type BrowserLaunchOptions } from "../src/providers/playwright/browser-launcher";
+import type { JapaneseUpgradeBrowserBatchOptions } from "../src/providers/playwright/japanese-upgrade-browser";
 
 /** 将各测试的本地启动函数包装成新 BrowserLauncher 契约，避免测试保留 Cloudflare Binding 参数。 */
-function localBatch(launch: () => Promise<BrowserLike>) {
-  return createJapaneseUpgradeBrowserBatch({ launch });
+function localBatch(launch: (options?: BrowserLaunchOptions) => Promise<BrowserLike>, options?: JapaneseUpgradeBrowserBatchOptions) {
+  return createJapaneseUpgradeBrowserBatch({ launch }, options);
 }
 
 /**
@@ -38,6 +39,40 @@ describe("Japanese upgrade Browser Run batch", () => {
       "launch", "context:1", "page:1", "goto:1:https://store-jp.nintendo.com/item/software/D70010000106252/:30000",
       "page-close:1", "context-close:1", "context:2", "page:2", "goto:2:https://store-jp.nintendo.com/item/software/D70010000106253/:30000",
       "page-close:2", "context-close:2", "browser-close",
+    ]);
+  });
+
+  it("closes the proxy browser before retrying the current and remaining roots directly", async () => {
+    // 代理导航失败后必须按 page → context → browser 顺序释放，再从当前商品重新开始；成功项不能被重复处理或与代理状态混用。
+    const events: string[] = [];
+    const proxyBrowser = failingBrowserWithEvents(events, "proxy");
+    const directBrowser = browserWithEvents(events, "direct", [
+      "https://store-jp.nintendo.com/item/software/D70050000064985/",
+      "https://store-jp.nintendo.com/item/software/D70050000064986/",
+    ]);
+    const launch = vi.fn(async (options?: BrowserLaunchOptions) => {
+      if (options?.proxy) {
+        events.push("proxy-launch");
+        return proxyBrowser;
+      }
+      events.push("direct-launch");
+      return directBrowser;
+    });
+    const readProxySettings = vi.fn(async () => ({ enabled: true, protocol: "http" as const, host: "127.0.0.1", port: 7890 }));
+    const firstUrl = "https://store-jp.nintendo.com/item/software/D70010000106252/";
+    const secondUrl = "https://store-jp.nintendo.com/item/software/D70010000106253/";
+
+    const result = await localBatch(launch, { readProxySettings }).resolve([root(firstUrl), root(secondUrl)], new AbortController().signal);
+
+    expect(result).toEqual(new Map([
+      [firstUrl, { status: "success", upgradeUrl: "https://store-jp.nintendo.com/item/software/D70050000064985/" }],
+      [secondUrl, { status: "success", upgradeUrl: "https://store-jp.nintendo.com/item/software/D70050000064986/" }],
+    ]));
+    expect(readProxySettings).toHaveBeenCalledOnce();
+    expect(events).toEqual([
+      "proxy-launch", "proxy-context", "proxy-page", "proxy-goto", "proxy-page-close", "proxy-context-close", "proxy-browser-close",
+      "direct-launch", "direct-context", "direct-page", "direct-goto", "direct-page-close", "direct-context-close",
+      "direct-context", "direct-page", "direct-goto", "direct-page-close", "direct-context-close", "direct-browser-close",
     ]);
   });
 
@@ -477,6 +512,53 @@ function pageWithUpgradeLink(href: string, goto: () => Promise<void> = async () 
 /** 生成最窄 context，避免延迟生命周期测试引入页面正文、Cookie 或真实 Playwright 行为。 */
 function contextWithPage(page: ReturnType<typeof pageWithUpgradeLink>) {
   return { newPage: async () => page, close: async () => undefined };
+}
+
+/** 代理导航失败夹具只模拟受控传输错误与资源释放顺序，不携带真实地址、响应正文或浏览器状态。 */
+function failingBrowserWithEvents(events: string[], prefix: string): BrowserLike {
+  return {
+    newContext: async () => {
+      events.push(`${prefix}-context`);
+      return {
+        newPage: async () => {
+          events.push(`${prefix}-page`);
+          return {
+            goto: async () => {
+              events.push(`${prefix}-goto`);
+              throw new BrowserProxyTransportError("connection");
+            },
+            locator: () => ({ all: async () => [] }),
+            close: async () => { events.push(`${prefix}-page-close`); },
+          };
+        },
+        close: async () => { events.push(`${prefix}-context-close`); },
+      };
+    },
+    close: async () => { events.push(`${prefix}-browser-close`); },
+  };
+}
+
+/** 直连回退夹具逐项交付唯一合规升级链接，验证当前项重做且后续项只在直连浏览器中执行。 */
+function browserWithEvents(events: string[], prefix: string, upgradeUrls: string[]): BrowserLike {
+  let index = 0;
+  return {
+    newContext: async () => {
+      index += 1;
+      events.push(`${prefix}-context`);
+      return {
+        newPage: async () => {
+          events.push(`${prefix}-page`);
+          return {
+            goto: async () => { events.push(`${prefix}-goto`); },
+            locator: () => ({ all: async () => [visibleUpgradeLink(upgradeUrls[index - 1] ?? upgradeUrls.at(-1) ?? "")] }),
+            close: async () => { events.push(`${prefix}-page-close`); },
+          };
+        },
+        close: async () => { events.push(`${prefix}-context-close`); },
+      };
+    },
+    close: async () => { events.push(`${prefix}-browser-close`); },
+  };
 }
 
 /**

@@ -1,0 +1,50 @@
+# NAS 生产 Compose 只把应用和 PostgreSQL 放入默认 bridge 网络；代理端点由设置页保存，不使用 host/privileged/socket。
+services:
+  app:
+    # 发布时由管理员在环境文件中固定镜像版本；环境文件不承载代理地址、用户名或密码。
+    image: ${APP_IMAGE:-switch-price-monitor:local}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      PORT: "3000"
+      STATIC_DIRECTORY: /app/dist/client
+      MIGRATIONS_DIRECTORY: /app/migrations/postgres
+      MAXIMUM_BODY_BYTES: "1048576"
+      SHUTDOWN_GRACE_MS: "10000"
+      # Telegram 只有在管理员另行注入成对秘密时启用；代理不在环境变量中配置。
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    ports:
+      - "3000:3000"
+    healthcheck:
+      # 健康状态只反映应用本地 API，代理或外部价格站点暂时失败不应让容器反复重启。
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then((r)=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+    healthcheck:
+      # PostgreSQL 健康检查只验证本容器内服务，不向宿主机发布数据库端口。
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+volumes:
+  # 价格历史和设置由 Docker 管理卷持久化；备份脚本应从该卷对应数据库执行 pg_dump。
+  postgres_prod_data:

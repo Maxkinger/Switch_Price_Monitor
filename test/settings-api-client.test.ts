@@ -48,6 +48,18 @@ describe("public settings API client", () => {
     await pending;
     expect(tracker.getPendingCount()).toBe(0);
   });
+
+  it("tests only the fixed proxy endpoint through the same-origin API", async () => {
+    // 连接测试请求只能携带四个无认证代理字段；固定目标和浏览器通道由服务端决定，前端不提交 URL 或方法。
+    const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ http: "proxy-success", browser: "direct-fallback-success" }));
+    const proxy = { enabled: false, protocol: "socks5" as const, host: "proxy.test", port: 7890 };
+    await expect(createSettingsApiClient(request).testProxy(proxy)).resolves.toEqual({ http: "proxy-success", browser: "direct-fallback-success" });
+    expect(request).toHaveBeenCalledWith("/api/settings/proxy/test", expect.objectContaining({
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify(proxy),
+    }));
+  });
 });
 
 /** 与设置路由的完整公开 DTO 对齐；夹具不含任何管理员密码、会话或 Telegram 字段。 */

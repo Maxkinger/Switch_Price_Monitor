@@ -4,7 +4,9 @@
 
 **Goal:** 在 NAS Node.js 运行时的设置页提供无认证 HTTP、HTTPS、SOCKS5 代理，使全部外部 HTTP 与 Playwright 请求优先走代理，并在安全边界内直连回退。
 
-**执行状态（2026-08-05）：** Task 1 与 Task 2 的代码和测试已完成并通过本地质量门禁，等待管理员确认后与文档一同提交、推送；Task 2 已用回环 HTTP/SOCKS5 夹具验证真实成功路径，HTTPS 代理的真实 TLS 证书链保留给容器/NAS 验收，Task 3 尚未开始。
+**执行状态（2026-08-05）：** Task 1–6 与 Task 7 的本地容器/CI/文档门禁已实现并通过回归；代理 Agent、出站层、提供方快照、Telegram 非幂等预检、Playwright 清理后直连、固定 HTTP/浏览器连接测试、设置 API/UI 和回环冒烟均已验证。`npx vitest run`（disposable PostgreSQL 环境）通过 83 个文件/432 项测试；`node --test test/proxy-container-contract.test.mjs` 与 `npm run build` 通过。Task 7 的 DS423+ 真机代理、真实 TLS 证书链和真实 Telegram 单次消息仍待管理员单独授权；本地 Git 提交/推送也待本次变更范围确认。
+
+**本轮实现记录：** 为保持 Worker/D1 不加载 Node 模块，浏览器代理错误标记放在纯领域文件，Chromium 探测器放在 `src/server/network/proxy-browser-probe.ts` 并只由 PostgreSQL Node 装配注入。商品搜索、详情/价格预览、跨区发现、订阅确认、地区补全、手动刷新、六小时采集和 Telegram 均在操作开始时创建出站快照；Playwright 使用该快照的代理字段。连接测试同时返回普通 HTTP 和浏览器两项三态，并保留进程内互斥。Task 7 本地冒烟使用随机 `127.0.0.1` 端口与内存浏览器替身，不声称已完成 NAS 或公网验收。
 
 **Architecture:** 在 PostgreSQL 设置单例中保存代理开关、协议、主机与端口，由集中式 `OutboundNetworkService` 为任天堂、汇率、第三方来源与 Telegram 提供统一 Fetch 风格传输；Playwright 使用同一配置快照创建浏览器代理。设置 API 继续原子保存完整公开设置，并增加固定目标的 HTTP/浏览器连接测试；当前 Cloudflare Worker 不实现代理兼容层。
 

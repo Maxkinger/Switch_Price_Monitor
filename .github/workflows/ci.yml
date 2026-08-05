@@ -1,0 +1,43 @@
+name: quality
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: switch_test
+          POSTGRES_USER: switch_test
+          POSTGRES_PASSWORD: switch_test
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd "pg_isready -U switch_test -d switch_test"
+          --health-interval 2s --health-timeout 5s --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run build
+      # 代理回归只访问本机回环夹具，禁止 CI 对任天堂、Telegram 或开发者局域网产生真实请求。
+      - name: Verify local proxy transports
+        env:
+          TEST_DATABASE_URL: postgres://switch_test:switch_test@127.0.0.1:54329/switch_test
+          TEST_DATABASE_DISPOSABLE_MARKER: switch-price-monitor-disposable-test
+        run: |
+          npx vitest run test/proxy-agent-factory.test.ts test/outbound-network.test.ts test/proxy-connection-test-service.test.ts test/proxy-browser-probe.test.ts test/proxy-smoke.test.ts
+          node --test test/proxy-container-contract.test.mjs
+      - name: Verify full tests
+        env:
+          TEST_DATABASE_URL: postgres://switch_test:switch_test@127.0.0.1:54329/switch_test
+          TEST_DATABASE_DISPOSABLE_MARKER: switch-price-monitor-disposable-test
+        run: npx vitest run

@@ -1,5 +1,10 @@
 import { chromium } from "playwright";
 
+import { classifyProxyError } from "../../server/network/proxy-errors";
+import { validateProxySettings, type ProxySettings } from "../../shared/proxy-settings";
+import { BrowserProxyTransportError } from "./browser-errors";
+export { BrowserProxyTransportError, isBrowserProxyTransportError } from "./browser-errors";
+
 /** 页面能力仅暴露日区升级关系提取所需的导航、定位与关闭操作，禁止业务层读取 Cookie、存储或 CDP 调试会话。 */
 export interface BrowserPageLike {
   goto(url: string, options: { waitUntil: "domcontentloaded"; timeout: number }): Promise<unknown>;
@@ -25,16 +30,29 @@ export interface BrowserLike {
   close(): Promise<void>;
 }
 
+/** Chromium 启动参数只暴露代理草稿；业务层不能注入 executablePath 以外的调试、持久化或远端连接选项。 */
+export interface BrowserLaunchOptions {
+  proxy?: ProxySettings;
+}
+
 /** 本地启动器以窄对象提供浏览器，便于关系适配器与测试都不依赖完整 Playwright API。 */
 export interface BrowserLauncher {
-  launch(): Promise<BrowserLike>;
+  launch(options?: BrowserLaunchOptions): Promise<BrowserLike>;
 }
 
 /** Playwright 注入面只包含 Chromium 本地 launch；没有 connect、connectOverCDP 或任何远端端点能力。 */
 export interface LocalPlaywrightModule {
   chromium: {
-    launch(options: { headless: true; executablePath?: string }): Promise<BrowserLike>;
+    launch(options: { headless: true; executablePath?: string; proxy?: { server: string } }): Promise<BrowserLike>;
   };
+}
+
+/** 代理配置只在启动器边界转换为 Playwright server；不接收完整 URL、用户名、密码或未知字段。 */
+export function toPlaywrightProxy(settings: ProxySettings | undefined): { server: string } | undefined {
+  if (settings === undefined || !settings.enabled) return undefined;
+  if (validateProxySettings(settings) !== null) throw new BrowserProxyTransportError("unknown-transport");
+  const host = settings.host.includes(":") ? `[${settings.host}]` : settings.host;
+  return { server: `${settings.protocol}://${host}:${settings.port}` };
 }
 
 /**
@@ -46,9 +64,22 @@ export function createLocalBrowserLauncher(
   playwright: LocalPlaywrightModule = { chromium },
 ): BrowserLauncher {
   return {
-    launch: () => playwright.chromium.launch({
-      headless: true,
-      ...(options.executablePath ? { executablePath: options.executablePath } : {}),
-    }),
+    async launch(launchOptions = {}) {
+      const proxy = toPlaywrightProxy(launchOptions.proxy);
+      try {
+        return await playwright.chromium.launch({
+          headless: true,
+          ...(options.executablePath ? { executablePath: options.executablePath } : {}),
+          ...(proxy ? { proxy } : {}),
+        });
+      } catch (error) {
+        // 只有代理模式把启动失败归为可回退传输错误；关闭代理时保留普通启动失败的安全降级语义。
+        if (proxy) {
+          const classified = classifyProxyError(error);
+          throw new BrowserProxyTransportError(classified.category, error);
+        }
+        throw error;
+      }
+    },
   };
 }

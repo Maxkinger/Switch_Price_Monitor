@@ -41,6 +41,9 @@ export default defineConfig({
             "test/postgres-*.test.ts",
             "test/server-*.test.ts",
             "test/playwright-*.test.ts",
+            // 日区升级 Browser Run 测试直接加载本地 Playwright 启动器；文件名不统一以 playwright- 开头，必须显式留在 Node 项目。
+            "test/japanese-upgrade-browser.test.ts",
+            "test/japanese-upgrade-relation-service.test.ts",
             "test/proxy-*.test.ts",
             "test/outbound-network.test.ts",
             ...postgresReadTestFiles,
@@ -64,7 +67,16 @@ export default defineConfig({
           // 服务器测试不加载 D1 迁移或 PostgreSQL destructive fixture；每项仅使用临时静态目录与显式注入的 API 依赖，绝不读取真实环境秘密。
           // 本地 Chromium 启动器依赖 Node 子进程与浏览器缓存，必须与 HTTP 服务器测试同属 Node 项目，不能装入 Miniflare。
           // 代理 Agent 依赖 Node TCP 与本机回环夹具；放入此项目可验证真实连接器，同时避免为 Worker 创建不受支持的代理兼容层。
-          include: ["test/server-*.test.ts", "test/playwright-*.test.ts", "test/proxy-*.test.ts", "test/outbound-network.test.ts"],
+          include: [
+            "test/server-*.test.ts",
+            "test/playwright-*.test.ts",
+            "test/japanese-upgrade-browser.test.ts",
+            "test/japanese-upgrade-relation-service.test.ts",
+            "test/proxy-*.test.ts",
+            "test/outbound-network.test.ts",
+          ],
+          // Node HTTP、Playwright 和回环代理夹具都会监听本机端口；串行文件执行避免多个浏览器/代理同时争抢 5 秒测试窗口。
+          fileParallelism: false,
         },
       },
     ],

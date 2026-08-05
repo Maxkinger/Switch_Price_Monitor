@@ -149,6 +149,14 @@
 - 在已登录管理员会话中搜索美区 `Overcooked! 2 - Nintendo Switch 2 Edition Upgrade Pack` 并执行只读跨区核验。MX、BR、HK 首次均自动匹配；JP 首次按设计独立降级为“暂不可用”，页面没有在同一请求内自动重试。管理员显式点击一次“重新核验”后，JP 返回 `automatic`，标题为 `Overcooked® 2 - オーバークック２ Nintendo Switch 2 Edition アップグレードパス`，同时保留其他三区的自动结果。
 - 部署后验收共启动两次日区 Browser Run 请求；每次请求均由既有请求生命周期负责关闭，不启用 keep-alive 或跨请求复用。验收没有点击“确认订阅”、价格来源写入、手动刷新、删除或 Telegram，因此没有创建或修改订阅、地区映射、价格快照、目标价或通知；也没有读取或记录 Cookie、密码、恢复码、Browser Session 标识、页面正文、截图、Trace、网络归档或异常堆栈。
 
+## 3.18 网络代理本地门禁（2026-08-05）
+
+- `npx vitest run` 在提供 disposable PostgreSQL 环境变量后通过 83 个测试文件、432 项测试；覆盖代理设置、三协议 Agent、统一出站回退、Telegram 非幂等预检、提供方快照、Playwright 清理后直连、连接测试、设置 API/UI 和回环冒烟。
+- `npm run test:dom -- --run` 通过 4 个 DOM 测试文件、16 项测试，设置页代理卡片、独立测试 loading 和结果文案继续在 jsdom 中回归。
+- `node --test test/proxy-container-contract.test.mjs` 通过；契约确认镜像以非 root 运行、健康检查只访问本地 API、Compose 不使用 host/privileged/Docker Socket、`.env.example` 不承载代理变量，CI 调用代理 Agent 与冒烟测试。
+- `npm run build`、`npx tsc --noEmit` 和 `git diff --check` 通过；敏感扫描未发现代理认证字段、`NODE_TLS_REJECT_UNAUTHORIZED` 或代理环境变量。
+- DS423+ 真机部署、临时无认证代理成功/回退和真实 Telegram 单次消息未执行，保持“待管理员单独授权”；不得将未执行记录写成生产通过。
+
 ## 4. 验收原则
 
 - 不把“请求成功”当作“价格正确”：必须通过商品身份校验。
