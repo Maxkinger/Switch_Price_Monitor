@@ -3,6 +3,7 @@ import {
   copyFile,
   mkdtemp,
   mkdir,
+  readdir,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -374,14 +375,25 @@ describe("PostgreSQL 迁移运行器", () => {
     await database.close();
   });
 
-  it("重复运行同一初始迁移时只记录和应用一次", async () => {
+  it("重复运行完整迁移集时每个版本只记录和应用一次", async () => {
     await runMigrations(database, POSTGRES_MIGRATION_DIRECTORY);
     await runMigrations(database, POSTGRES_MIGRATION_DIRECTORY);
 
-    const result = await database.query<{ count: string }>(
-      "SELECT COUNT(*)::text AS count FROM schema_migrations",
+    /**
+     * 迁移目录是版本集合的唯一权威来源：不能把首个 0001 文件误当成总数，也不能因新增安全迁移
+     * 而放宽“每个文件仅一条账本记录”的幂等性保证。只统计当前目录第一层常规 SQL 文件，
+     * 与运行器的发现边界保持一致，避免临时目录或编辑器文件影响数据库升级结论。
+     */
+    const expectedVersions = (await readdir(POSTGRES_MIGRATION_DIRECTORY, {
+      withFileTypes: true,
+    }))
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".sql"))
+      .map((entry) => entry.name)
+      .sort();
+    const result = await database.query<{ version: string }>(
+      "SELECT version FROM schema_migrations ORDER BY version",
     );
-    expect(result.rows[0].count).toBe("1");
+    expect(result.rows.map((row) => row.version)).toEqual(expectedVersions);
   });
 
   it("已应用迁移的精确字节变化时以 SHA-256 不匹配阻止启动", async () => {
