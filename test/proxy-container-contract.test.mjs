@@ -26,4 +26,6 @@ test("keeps proxy settings in PostgreSQL without privileged networking", async (
   assert.match(migration, /proxy_port/);
   assert.match(ci, /proxy-agent-factory\.test\.ts/);
   assert.match(ci, /proxy-smoke\.test\.ts/);
+  // CI 会运行真实本地 Chromium 冒烟测试；必须先按 package-lock 安装匹配版本的浏览器，避免开发机缓存掩盖干净 runner 的缺失依赖。
+  assert.match(ci, /playwright install --with-deps chromium/);
 });

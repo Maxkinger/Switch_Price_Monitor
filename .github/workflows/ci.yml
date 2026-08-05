@@ -26,6 +26,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # 本地 Playwright 冒烟测试会真正启动锁定版本的 Chromium；干净 runner 没有开发机浏览器缓存，必须安装浏览器及系统依赖，且测试仍只访问本机夹具。
+      - name: Install Playwright Chromium
+        run: npx --no-install playwright install --with-deps chromium
       - run: npx tsc --noEmit
       - run: npm run build
       # 代理回归只访问本机回环夹具，禁止 CI 对任天堂、Telegram 或开发者局域网产生真实请求。

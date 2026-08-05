@@ -155,6 +155,7 @@
 - `npm run test:dom -- --run` 通过 4 个 DOM 测试文件、16 项测试，设置页代理卡片、独立测试 loading 和结果文案继续在 jsdom 中回归。
 - `node --test test/proxy-container-contract.test.mjs` 通过；契约确认镜像以非 root 运行、健康检查只访问本地 API、Compose 不使用 host/privileged/Docker Socket、`.env.example` 不承载代理变量，CI 调用代理 Agent 与冒烟测试。
 - `npm run build`、`npx tsc --noEmit` 和 `git diff --check` 通过；敏感扫描未发现代理认证字段、`NODE_TLS_REJECT_UNAUTHORIZED` 或代理环境变量。
+- GitHub Actions 的 `quality` workflow 在 `npm ci` 后显式执行 `npx --no-install playwright install --with-deps chromium`，保证干净 runner 具备与 lockfile 匹配的 Chromium 及系统依赖；该安装不改变测试目标，浏览器冒烟仍只访问本机回环夹具。
 - DS423+ 真机部署、临时无认证代理成功/回退和真实 Telegram 单次消息未执行，保持“待管理员单独授权”；不得将未执行记录写成生产通过。
 
 ## 4. 验收原则
