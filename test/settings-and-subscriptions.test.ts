@@ -6,6 +6,7 @@ import { SubscriptionRepository } from "../src/repositories/postgres/subscriptio
 import type { SettingsStore } from "../src/repositories/ports";
 import { runMigrations } from "../src/server/database/migrations";
 import { SettingsService, SettingsValidationError } from "../src/services/settings-service";
+import { defaultProxySettings, type ProxySettings } from "../src/shared/proxy-settings";
 import { SubscriptionService } from "../src/services/subscription-service";
 import { createTestDatabase, resetDisposableTestSchema } from "./support/postgres";
 
@@ -47,6 +48,7 @@ describe("settings and subscriptions repositories", () => {
       dailyReportTime: "09:00",
       taxState: "OR",
       priceHistoryRetention: "forever",
+      proxy: defaultProxySettings,
       createdAt: "2026-07-16T00:00:00.000Z",
     });
   });
@@ -89,6 +91,7 @@ describe("settings and subscriptions repositories", () => {
       dailyReportTime: "08:30",
       taxState: "OR",
       priceHistoryRetention: "one-year",
+      proxy: { enabled: true, protocol: "socks5", host: "::1", port: 10_801 },
     }, "2026-07-16T01:00:00.000Z");
 
     await expect(settings.get()).resolves.toEqual({
@@ -99,7 +102,32 @@ describe("settings and subscriptions repositories", () => {
       dailyReportTime: "08:30",
       taxState: "OR",
       priceHistoryRetention: "one-year",
+      proxy: { enabled: true, protocol: "socks5", host: "::1", port: 10_801 },
       createdAt: "2026-07-16T00:00:00.000Z",
+    });
+  });
+
+  it("在更新其他公开设置时保留既有代理，并拒绝无效代理而不写入半配置", async () => {
+    // 代理与其他设置共享同一行锁事务：修改主题不能擦除已验证端点，而无效草稿必须在 UPDATE 前失败以避免留下可误启用的半状态。
+    await database.query(
+      `INSERT INTO settings (id, enabled_regions_json, default_search_region, proxy_enabled, proxy_protocol, proxy_host, proxy_port, created_at, updated_at)
+       VALUES (1, $1::jsonb, $2, TRUE, 'https', 'proxy.test', 8_080, $3, $3)`,
+      [JSON.stringify(["US", "JP"]), "US", "2026-07-16T00:00:00.000Z"],
+    );
+
+    await settings.save({ theme: "calm-dark" }, "2026-07-16T01:00:00.000Z");
+    await expect(settings.get()).resolves.toMatchObject({
+      theme: "calm-dark",
+      proxy: { enabled: true, protocol: "https", host: "proxy.test", port: 8_080 },
+    });
+
+    const invalidProxy = { enabled: true, protocol: "http", host: "proxy.test/path", port: 8_080 } as ProxySettings;
+    await expect(settings.save({ proxy: invalidProxy }, "2026-07-16T02:00:00.000Z")).rejects.toMatchObject({
+      message: "代理主机无效。",
+    });
+    await expect(settings.get()).resolves.toMatchObject({
+      theme: "calm-dark",
+      proxy: { enabled: true, protocol: "https", host: "proxy.test", port: 8_080 },
     });
   });
 

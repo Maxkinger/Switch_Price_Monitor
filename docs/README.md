@@ -17,6 +17,8 @@
 | [质量与验收策略](quality/quality-and-acceptance.md) | 可靠性、安全、测试和发布验收规则 | 已确认部分 |
 | [NAS Docker 与 PostgreSQL 迁移设计规格](superpowers/specs/2026-07-27-nas-docker-postgresql-migration-design.md) | 完全迁出 Cloudflare、本地 M1 调试、多架构 Docker Hub 发布及 DS423+ Compose 部署 | 已确认，待实施 |
 | [NAS Docker 与 PostgreSQL 迁移实施计划](superpowers/plans/2026-07-27-nas-docker-postgresql-migration.md) | 平台中立重构、PostgreSQL、Node、调度器、本地 Playwright、容器、备份、发布和 NAS 切换的测试先行步骤 | 实施中；Task 1–7 已完成本地实现与验证，Task 5 使用原生 Node Fetch 适配器，Hono 依赖待环境允许后评估 |
+| [网络代理设置设计规格](superpowers/specs/2026-08-01-network-proxy-settings-design.md) | NAS Node 全部外部请求的无认证 HTTP/HTTPS/SOCKS5 代理、直连回退与连接测试 | 实施中：Task 1 已完成，待提交 |
+| [网络代理设置实施计划](superpowers/plans/2026-08-01-network-proxy-settings.md) | PostgreSQL 代理字段、统一出站层、全部提供方与 Playwright 接线、设置 API/UI 及 M1/NAS 验收 | 实施中：Task 1 已完成，待提交 |
 | [MVP 实施计划](superpowers/plans/2026-07-16-switch-price-monitor-mvp.md) | 8 个可独立验收任务的实施顺序、测试与提交点 | 已批准，执行中 |
 | [官方价格 ID 与订阅前来源预览计划](superpowers/plans/2026-07-16-official-price-id-subscription-flow.md) | 日区官方价格接口、地区价格 ID 与创建前来源预览的后端实施步骤 | 已完成，待后续前端与其他地区适配器接续 |
 | [官方订阅发现与批量确认设计](superpowers/specs/2026-07-17-official-subscription-discovery-design.md) | 官方默认区搜索、批量候选选择、跨区确认与候选卡布局 | 已确认（草图暂定） |

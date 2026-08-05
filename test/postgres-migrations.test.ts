@@ -169,6 +169,23 @@ describe("PostgreSQL 初始模式", () => {
     }
   });
 
+  it("仅新增无认证代理设置列", async () => {
+    // 代理首版只能持久化开关、协议、主机和端口；认证、密文和加密密钥字段会扩大秘密管理面，迁移必须明确禁止它们出现。
+    const columns = await database.query<{ columnName: string }>(
+      `SELECT column_name AS "columnName"
+         FROM information_schema.columns
+        WHERE table_name = 'settings'`,
+    );
+    const names = columns.rows.map((row) => row.columnName);
+    expect(names).toEqual(expect.arrayContaining([
+      "proxy_enabled",
+      "proxy_protocol",
+      "proxy_host",
+      "proxy_port",
+    ]));
+    expect(names.join(" ")).not.toMatch(/proxy_(user|password|credential|secret|cipher)/i);
+  });
+
   it("由全部业务外键拒绝孤儿记录", async () => {
     await seedConstraintParents(database);
     const invalidTime = "2026-08-03T09:00:00.000Z";
@@ -320,7 +337,7 @@ describe("PostgreSQL 迁移执行器", () => {
     return directory;
   }
 
-  it("按迁移表记录只应用一次完整初始模式", async () => {
+  it("按迁移表记录只应用一次完整模式与后续代理扩展", async () => {
     await runMigrations(database, migrationsDirectory);
     await runMigrations(database, migrationsDirectory);
 
@@ -329,7 +346,11 @@ describe("PostgreSQL 迁移执行器", () => {
          FROM schema_migrations
         GROUP BY version`,
     );
-    expect(applied.rows).toEqual([{ version: "0001_initial.sql", count: "1" }]);
+    // 迁移执行器必须同时记录初始模式与后续代理列扩展；重复运行只能校验 checksum，不能再次 ALTER 或遗漏版本。
+    expect(applied.rows).toEqual(expect.arrayContaining([
+      { version: "0001_initial.sql", count: "1" },
+      { version: "0002_proxy_settings.sql", count: "1" },
+    ]));
     expect((await database.query<{ tableName: string | null }>(
       "SELECT to_regclass('public.games')::text AS \"tableName\"",
     )).rows[0].tableName).toBe("games");

@@ -1,4 +1,5 @@
 import type { ProductType } from "../providers/types";
+import type { ProxySettings } from "./proxy-settings";
 
 /**
  * 前后端共用的核心业务类型。这里集中枚举可持久化的受控值，
@@ -116,13 +117,17 @@ export interface InitialSettings {
   createdAt: string;
 }
 
-/** 完整设置包含 UI、日报与保留策略；敏感 Telegram 配置故意不在该可返回模型中。 */
+/**
+ * 完整设置包含 UI、日报与保留策略；敏感 Telegram 配置故意不在该可返回模型中。
+ * `proxy` 在 PostgreSQL Node 运行时始终存在；可选性仅保留给不实现代理功能的历史 Worker/D1 读取路径，避免该运行时伪造可保存的代理设置。
+ */
 export interface AppSettings extends InitialSettings {
   theme: Theme;
   timezone: string;
   dailyReportTime: string;
   taxState: string;
   priceHistoryRetention: "forever" | "one-year" | "two-years";
+  proxy?: ProxySettings;
 }
 
 /** 创建订阅时前端确认的最小数据；地区商品 ID 必须已由跨区匹配或手动链接校验通过。 */

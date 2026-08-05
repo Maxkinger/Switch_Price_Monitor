@@ -1,4 +1,5 @@
 import { initialRegionCodes, themes, type AppSettings, type RegionCode } from "../shared/domain";
+import { validateProxySettings } from "../shared/proxy-settings";
 import type { SettingsPatch as SettingsPatchInput, SettingsStore } from "../repositories/ports";
 
 /** 设置记录异常缺失时使用明确错误，避免在已登录但未完成初始化的异常状态下返回空对象。 */
@@ -50,6 +51,11 @@ export function validateSettings(settings: AppSettings): void {
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(settings.dailyReportTime)) throw new SettingsValidationError("日报时间无效。");
   if (!/^[A-Z]{2}$/.test(settings.taxState)) throw new SettingsValidationError("税务州设置无效。");
   if (!["forever", "one-year", "two-years"].includes(settings.priceHistoryRetention)) throw new SettingsValidationError("历史保留策略无效。");
+  // Worker/D1 历史运行时不提供代理能力，故仅在 PostgreSQL Node 设置携带该字段时校验；其余字段仍完全沿用统一设置规则。
+  if (settings.proxy !== undefined) {
+    const proxyError = validateProxySettings(settings.proxy);
+    if (proxyError) throw new SettingsValidationError(proxyError);
+  }
 }
 
 /** 用共享地区枚举做运行时收窄，JSON 输入不得仅依赖 TypeScript 的编译期类型。 */
