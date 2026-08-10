@@ -46,7 +46,6 @@
 
 | 文档 | 状态 |
 | --- | --- |
-| [NAS Docker 与 PostgreSQL 迁移设计规格](superpowers/specs/2026-07-27-nas-docker-postgresql-migration-design.md) | 仓库实现、M1 生产运行时 Compose 与业务自动化分层证据已完成；公开发布、NAS 和退役待执行 |
 | [NAS Docker 与 PostgreSQL 迁移实施计划](superpowers/plans/2026-07-27-nas-docker-postgresql-migration.md) | 保留原始步骤历史；顶部摘要记录本轮实际状态 |
 | [PostgreSQL 登录竞态设计](superpowers/specs/2026-07-30-postgres-login-attempt-upsert-race-design.md) | 已实现并通过真实 PostgreSQL 回归 |
 | [GitHub Actions 双角色设计](superpowers/specs/2026-08-01-github-actions-postgres-dual-role-design.md) | 已实现；历史远程 CI 通过 |
