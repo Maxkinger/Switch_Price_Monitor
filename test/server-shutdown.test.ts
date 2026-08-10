@@ -6,6 +6,7 @@ import type { ServerDependencies } from "../src/server/app";
 import type { ServerConfig } from "../src/server/config";
 import {
   coordinateServerShutdown,
+  resolveListenHostname,
   runServerProcess,
   startServer,
   type ProcessLifecycleController,
@@ -30,6 +31,12 @@ afterEach(async () => {
 });
 
 describe("Node HTTP 服务生命周期", () => {
+  it("本机免登录旁路强制监听回环地址，普通运行仍保留容器监听范围", async () => {
+    // 若未来把旁路误改回 0.0.0.0，此断言会阻止无认证管理 API 向局域网暴露；普通容器运行则必须继续由 Compose 端口映射控制。
+    expect(resolveListenHostname(await createConfig({ localDevelopmentAuthBypass: true }), {}))
+      .toBe("127.0.0.1");
+    expect(resolveListenHostname(await createConfig(), {})).toBe("0.0.0.0");
+  });
   it("在端口 0 监听、停止接受新连接并等待在途响应完成", async () => {
     const lifecycle = new TestLifecycleController();
     let releaseRequest: (() => void) | undefined;
@@ -652,7 +659,7 @@ async function runDeferredStartupSignalCase(
 
 /** 每个用例创建隔离静态根和完整配置；数据库 URL 只是假值且 startServer 不连接数据库。 */
 async function createConfig(
-  overrides: Partial<Pick<ServerConfig, "shutdownGraceMs">> = {},
+  overrides: Partial<Pick<ServerConfig, "shutdownGraceMs" | "localDevelopmentAuthBypass">> = {},
 ): Promise<ServerConfig> {
   const staticDirectory = await mkdtemp(join(tmpdir(), "switch-price-monitor-server-shutdown-"));
   temporaryDirectories.push(staticDirectory);
@@ -661,6 +668,8 @@ async function createConfig(
     port: 0,
     databaseUrl: "postgres://example.invalid/not-used-by-start-server",
     cookieSecure: false,
+    // 关停夹具不测试本机旁路；显式 false 防止未来 ServerConfig 新增默认行为让启动顺序测试意外失去认证边界。
+    localDevelopmentAuthBypass: overrides.localDevelopmentAuthBypass ?? false,
     staticDirectory,
     maximumBodyBytes: 1024,
     shutdownGraceMs: overrides.shutdownGraceMs ?? 500,

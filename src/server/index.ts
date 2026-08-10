@@ -9,6 +9,7 @@ import { readServerConfig, type ServerConfig } from "./config";
 import { createPostgresDatabase } from "./database/pool";
 import { runMigrations } from "./database/migrations";
 import type { AppDatabase } from "./database/types";
+import { ensureLocalDevelopmentSetup } from "./local-development-setup";
 import {
   createServerDependencies,
   type NodeServerDependencies,
@@ -288,7 +289,7 @@ export async function startServer(
 ): Promise<RunningServer> {
   const app = createServerApp(config, dependencies);
   const server = createAdaptorServer({ fetch: app.fetch }) as Server;
-  await listen(server, config.port, lifecycle.listenHostname ?? "0.0.0.0");
+  await listen(server, config.port, resolveListenHostname(config, lifecycle));
   const address = server.address() as AddressInfo | null;
   if (!address) {
     // 监听回调后仍无地址属于 Node 生命周期异常；固定错误不含 URL、环境或数据库连接信息。
@@ -337,6 +338,18 @@ export async function startServer(
   };
 }
 
+/**
+ * 免登录旁路拥有比测试观察器更高的监听收窄优先级：即使误传了全接口地址，也只能监听本机回环。
+ * 旁路关闭时保留生产容器的 0.0.0.0 与测试注入地址，避免把 Docker 服务误收窄后导致 Compose 健康检查失效。
+ */
+export function resolveListenHostname(
+  config: Pick<ServerConfig, "localDevelopmentAuthBypass">,
+  lifecycle: ServerLifecycleController,
+): string {
+  if (config.localDevelopmentAuthBypass) return "127.0.0.1";
+  return lifecycle.listenHostname ?? "0.0.0.0";
+}
+
 /** 监听启动错误通过 promise 返回；调用方在成功前不会注册信号或报告临时端口。 */
 async function listen(server: Server, port: number, hostname: string): Promise<void> {
   await new Promise<void>((resolveListening, rejectListening) => {
@@ -356,7 +369,7 @@ async function listen(server: Server, port: number, hostname: string): Promise<v
 }
 
 /**
- * 进程入口按“配置校验 → 数据库 → 迁移 → 依赖 → HTTP → scheduler”顺序启动，
+ * 进程入口按“配置校验 → 数据库 → 迁移 → 可选本机默认设置 → 依赖 → HTTP → scheduler”顺序启动，
  * 并在统一协调器完成 HTTP 与调度等待后关闭数据库。
  * catch 只打印固定摘要，不把原始数据库 URL、Telegram 凭据、SQL 或外部错误正文写入普通日志。
  */
@@ -380,6 +393,12 @@ export async function runServerProcess(
   try {
     database = runtime.createDatabase(config.databaseUrl);
     await runtime.runMigrations(database);
+    // 默认设置必须在路由、HTTP 与调度装配前就绪；旁路关闭时函数严格无副作用，生产首次初始化仍由认证服务事务负责。
+    await ensureLocalDevelopmentSetup(
+      database,
+      config.localDevelopmentAuthBypass,
+      new Date().toISOString(),
+    );
     const dependencies = runtime.createDependencies(database, config);
     http = await runtime.startHttp(config, dependencies.http);
     const scheduler = runtime.startScheduler(dependencies.scheduler);

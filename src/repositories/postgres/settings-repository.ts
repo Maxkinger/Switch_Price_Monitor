@@ -22,6 +22,25 @@ interface SettingsRow {
 export class PostgresSettingsRepository implements SettingsStore {
   public constructor(private readonly database: SqlExecutor) {}
 
+  /**
+   * 仅供已被启动配置明确授权的本机开发流程，在空库写入可用的公开设置单例。
+   * INSERT 不触及 admin_credentials、sessions 或任何密码/恢复码字段；冲突时不覆盖既有设置，
+   * 因而重启开发服务、已有正常初始化或并发启动都不会改变管理员已经选择的地区与偏好。
+   */
+  public async ensureLocalDevelopmentDefaults(createdAt: string): Promise<void> {
+    await this.database.query(
+      `INSERT INTO settings (
+         id,
+         enabled_regions_json,
+         default_search_region,
+         created_at,
+         updated_at
+       ) VALUES (1, $1::jsonb, $2, $3, $3)
+       ON CONFLICT (id) DO NOTHING`,
+      [JSON.stringify(initialRegionCodes), initialRegionCodes[0], createdAt],
+    );
+  }
+
   public async get(): Promise<AppSettings | null> {
     const result = await this.database.query<SettingsRow>(
       `SELECT enabled_regions_json AS "enabledRegions",

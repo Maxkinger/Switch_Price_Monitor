@@ -88,4 +88,25 @@ describe("PostgreSQL 设置读取仓储", () => {
       createdAt: "2026-07-16T00:00:00.000Z",
     });
   });
+
+  it("仅在空库建立本机开发默认设置且不写入管理员凭据", async () => {
+    // 本机免登录需要真实 settings 单例供设置页与商品搜索读取；该路径不能复用密码初始化，
+    // 因为开发期不得生成、保存或返回管理员密码、恢复码与会话材料。
+    const repository = new PostgresSettingsRepository(database);
+    await repository.ensureLocalDevelopmentDefaults("2026-08-10T03:00:00.000Z");
+
+    await expect(repository.get()).resolves.toEqual({
+      enabledRegions: ["US", "JP", "MX", "BR", "HK"],
+      defaultSearchRegion: "US",
+      theme: "warm-card",
+      timezone: "Asia/Shanghai",
+      dailyReportTime: "09:00",
+      taxState: "OR",
+      priceHistoryRetention: "forever",
+      createdAt: "2026-08-10T03:00:00.000Z",
+    });
+    await expect(database.query<{ count: string }>(
+      "SELECT COUNT(*)::text AS count FROM admin_credentials",
+    )).resolves.toMatchObject({ rows: [{ count: "0" }] });
+  });
 });

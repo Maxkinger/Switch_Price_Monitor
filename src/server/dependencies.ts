@@ -101,7 +101,7 @@ export function createServerDependencies(
   config: Pick<
     ServerConfig,
     "cookieSecure" | "telegramBotToken" | "telegramChatId"
-  >,
+  > & Partial<Pick<ServerConfig, "localDevelopmentAuthBypass">>,
 ): NodeServerDependencies {
   if (
     (config.telegramBotToken === undefined)
@@ -111,6 +111,13 @@ export function createServerDependencies(
     throw new Error("SCHEDULER_TELEGRAM_CREDENTIALS_INCOMPLETE");
   }
   const auth = new AuthService(new PostgresAuthRepository(database));
+  /**
+   * 旁路替身只在已校验的本机开发配置为 true 时产生，且不读取、创建或伪造 Cookie/会话。
+   * 默认仍将真实 AuthService 交给所有管理路由，因此生产、NAS 与未设置变量的本机进程不会失去认证保护。
+   */
+  const routeSessions = config.localDevelopmentAuthBypass
+    ? { authenticate: async (): Promise<boolean> => true }
+    : auth;
   const settingsRepository = new PostgresSettingsRepository(database);
   const settings = new SettingsService(settingsRepository);
   const dashboardRepository = new PostgresDashboardRepository(database);
@@ -172,25 +179,26 @@ export function createServerDependencies(
     dispatchApi: createApiDispatcher([
       (request) => handleAuthRoute(request, {
         auth,
-        sessions: auth,
+        sessions: routeSessions,
         // Cookie Secure 只由启动配置决定；任何 Forwarded 请求头都不会参与此值。
         cookieSecure: config.cookieSecure,
+        localDevelopmentAuthBypass: config.localDevelopmentAuthBypass,
       }),
-      (request) => handleSettingsRoute(request, auth, settings),
-      (request) => handleDashboardRoute(request, auth, dashboard),
-      (request) => handleManualRefreshRoute(request, auth, refresh),
-      (request) => handleHistoryRoute(request, auth, history),
-      (request) => handleExportRoute(request, auth, exports),
+      (request) => handleSettingsRoute(request, routeSessions, settings),
+      (request) => handleDashboardRoute(request, routeSessions, dashboard),
+      (request) => handleManualRefreshRoute(request, routeSessions, refresh),
+      (request) => handleHistoryRoute(request, routeSessions, history),
+      (request) => handleExportRoute(request, routeSessions, exports),
       (request) => handleProductRoute(
         request,
-        auth,
+        routeSessions,
         new SubscriptionPreviewService(officialPriceIds, defaultFallbackSources),
         discovery,
         confirmation,
       ),
       (request) => handleSubscriptionRoute(
         request,
-        auth,
+        routeSessions,
         subscriptions,
         details,
         completion,

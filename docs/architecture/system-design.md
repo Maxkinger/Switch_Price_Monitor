@@ -17,7 +17,7 @@
     ▼
 app：Node.js 22，唯一映射 NAS 端口
     ├─ 同源 React 静态资源与 SPA 回退
-    ├─ 开发期直入 API 与业务服务（认证恢复前不得部署）
+    ├─ 显式本机开发旁路下的直入 API 与业务服务（认证恢复前不得部署）
     ├─ UTC 进程内调度器
     └─ 本地 Playwright + Chromium
     │ Compose 私有网络
@@ -65,7 +65,7 @@ postgres：PostgreSQL 17，不映射宿主 5432
 
 ## 5. 认证与秘密边界
 
-- 当前本机开发期的共享守卫不解析 Cookie、不读取 PostgreSQL 会话，状态接口固定允许页面进入；密码、恢复码和会话实现仅保留供未来独立恢复认证。此状态严禁部署。
+- `LOCAL_DEVELOPMENT_AUTH_BYPASS=true` 仅可用于本机开发：共享守卫不解析 Cookie、不读取 PostgreSQL 会话，状态接口允许页面进入；进程会强制监听 `127.0.0.1`，并仅为空库建立五区默认公开设置，不写管理员密码、恢复码或会话。变量缺失或为 `false` 时恢复真实首次初始化和 Cookie 认证；此旁路严禁用于 Docker、NAS、局域网或公网部署。
 - 系统只允许单一管理员。密码、恢复码和会话令牌只保存不可逆校验材料或摘要；恢复码仅初始化时显示一次。
 - 会话 Cookie 始终使用 `HttpOnly` 与 `SameSite=Strict`。局域网纯 HTTP 必须显式设置 `COOKIE_SECURE=false`；未来接入可信 HTTPS（包括经正确 TLS 终止的 FRP）必须改为 `true`。应用不会依据转发头自动降低该约束。
 - 登录连续失败会临时锁定；成功登录清理失败状态。退出、恢复密码和修改密码按业务规则撤销会话。
@@ -94,7 +94,8 @@ GitHub Actions 普通 CI 验证测试、类型、构建、秘密扫描和双架�
 docker compose -f docker-compose.dev.yml up -d postgres
 docker compose -f docker-compose.dev.yml ps postgres
 DATABASE_URL=postgres://switch_test:switch_test@127.0.0.1:54329/switch_test \
-  COOKIE_SECURE=false npm run dev
+  COOKIE_SECURE=false \
+  LOCAL_DEVELOPMENT_AUTH_BYPASS=true npm run dev
 ```
 
 测试使用同一受守卫 URL：

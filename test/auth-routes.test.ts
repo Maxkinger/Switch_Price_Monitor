@@ -41,11 +41,12 @@ describe("authentication HTTP routes", () => {
     expect(login.headers.get("set-cookie")).toContain("Secure");
   });
 
-  it("reports every local development request as ready to enter the application", async () => {
-    // 本机开发阶段不展示密码入口：空 PostgreSQL、缺失 Cookie 与伪造 Cookie 都必须直接挂载应用，且状态接口不得读取数据库、生成令牌或回显认证资料。
+  it("只在显式本机开发开关开启时将匿名请求视为可直接进入", async () => {
+    // 空库且开关关闭必须仍返回真实状态；否则部署遗漏变量时会绕过管理员认证。开关开启的分支不读取 Cookie，
+    // 保证本机开发可在不生成密码、恢复码或会话的情况下进入应用。
     await expect((await call("/api/auth/status", undefined, null, "GET")).json())
-      .resolves.toEqual({ initialized: true, authenticated: true });
-    await expect((await call("/api/auth/status", undefined, "session=forged", "GET")).json())
+      .resolves.toEqual({ initialized: false, authenticated: false });
+    await expect((await call("/api/auth/status", undefined, "session=forged", "GET", true)).json())
       .resolves.toEqual({ initialized: true, authenticated: true });
   });
 
@@ -82,7 +83,7 @@ describe("authentication HTTP routes", () => {
     expect(logout.headers.get("set-cookie")).toContain("Max-Age=0");
   });
 
-  it("开发期状态接口不读取可能失败的认证依赖", async () => {
+  it("显式本机开发旁路不读取可能失败的认证依赖", async () => {
     /**
      * 合成依赖模拟数据库连接或驱动异常；路由只能返回固定 INTERNAL_ERROR，
      * 不能把可能包含 SQL、表名、连接信息或认证材料的 error.message 交给浏览器。
@@ -97,7 +98,13 @@ describe("authentication HTTP routes", () => {
 
     const response = await handleAuthRoute(
       new Request("https://example.test/api/auth/status"),
-      { auth: failingAuth, sessions: failingAuth, cookieSecure: true },
+      {
+        auth: failingAuth,
+        sessions: failingAuth,
+        cookieSecure: true,
+        // 只在本测试明确模拟开关开启，证明旁路不会因认证数据库异常而阻断本机页面挂载。
+        localDevelopmentAuthBypass: true,
+      },
     );
 
     expect(response?.status).toBe(200);
@@ -121,9 +128,15 @@ async function initializeThroughHttp(): Promise<{ recoveryCode: string }> {
   return response.json() as Promise<{ recoveryCode: string }>;
 }
 
-async function call(path: string, body?: unknown, cookie?: string | null, method = "POST"): Promise<Response> {
+async function call(
+  path: string,
+  body?: unknown,
+  cookie?: string | null,
+  method = "POST",
+  localDevelopmentAuthBypass = false,
+): Promise<Response> {
   // 认证测试显式启用 Secure，继续锁定 HTTPS Cookie 合同；LAN false/HTTPS true 双分支另由 server-http 回归覆盖。
-  const response = await createTestAuthDispatcher(database, true)(
+  const response = await createTestAuthDispatcher(database, true, localDevelopmentAuthBypass)(
     jsonRequest(path, body, cookie, method),
   );
   if (!response) throw new Error("认证测试请求未被认证路由处理");

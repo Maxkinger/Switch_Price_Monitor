@@ -5,10 +5,10 @@
 ## 1. 通用约束
 
 - Node.js 22 以同一 origin 提供 React 静态资源与 `/api/*`；不启用跨域 API。浏览器不直接访问任天堂、汇率、Telegram 或数据库。
-- 当前仅限本机的开发阶段，认证状态固定返回 `{ initialized: true, authenticated: true }`，所有管理 API 由共享守卫直接放行；它不读取 Cookie 或 PostgreSQL 会话，也不生成认证材料。认证恢复前严禁部署到 Docker、NAS、局域网或公网。
+- 只有显式 `LOCAL_DEVELOPMENT_AUTH_BYPASS=true` 的本机开发进程才让认证状态返回 `{ initialized: true, authenticated: true }` 并由共享守卫直入；它强制监听 `127.0.0.1`、不读取 Cookie 或 PostgreSQL 会话，启动时只为空库写入公开默认设置，不生成认证材料。变量缺失或为 `false` 时所有接口恢复正常初始化与认证；旁路严禁部署到 Docker、NAS、局域网或公网。
 - 请求体在路由边界按受控字段和大小上限校验；未知 API 返回固定 `404`，超限返回 `413`。数据库、网络和浏览器异常只映射为安全摘要。
 - 会话 Cookie 始终为 `HttpOnly; SameSite=Strict`。`Secure` 由部署层显式 `COOKIE_SECURE` 决定，不能信任 `Forwarded` 或 `X-Forwarded-Proto` 自动推断。
-- 所有写入仍先校验，再由服务/仓储执行参数化 SQL 与显式事务；当前不执行会话校验。响应、CSV 和日志不得包含密码、恢复码、会话、数据库或 Telegram 秘密。
+- 所有写入仍先校验，再由服务/仓储执行参数化 SQL 与显式事务；除显式本机旁路外必须执行会话校验。响应、CSV 和日志不得包含密码、恢复码、会话、数据库或 Telegram 秘密。
 
 ## 2. 接口清单
 

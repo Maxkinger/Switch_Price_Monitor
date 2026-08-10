@@ -20,7 +20,21 @@ describe("Node 服务配置", () => {
       staticDirectory: expect.stringMatching(/dist[/\\]client$/),
       maximumBodyBytes: 1_048_576,
       shutdownGraceMs: 10_000,
+      // 本机免登录默认关闭；遗漏环境变量时不能把 NAS 或公网部署意外降级为无认证。
+      localDevelopmentAuthBypass: false,
     });
+  });
+
+  it("只接受显式 true 启用本机免登录，其他部署保持认证流程", () => {
+    const common = {
+      DATABASE_URL: "postgres://example.invalid/switch",
+      COOKIE_SECURE: "false",
+    };
+
+    expect(readServerConfig({ ...common, LOCAL_DEVELOPMENT_AUTH_BYPASS: "true" }))
+      .toMatchObject({ localDevelopmentAuthBypass: true });
+    expect(() => readServerConfig({ ...common, LOCAL_DEVELOPMENT_AUTH_BYPASS: "TRUE" }))
+      .toThrow("LOCAL_DEVELOPMENT_AUTH_BYPASS_INVALID");
   });
 
   it("缺少数据库连接配置时使用固定错误码且不展开环境对象", () => {

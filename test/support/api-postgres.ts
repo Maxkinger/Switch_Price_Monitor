@@ -52,6 +52,7 @@ export function createTestAuth(database: AppDatabase): AuthService {
 export function createTestAuthDispatcher(
   database: AppDatabase,
   cookieSecure = false,
+  localDevelopmentAuthBypass = false,
 ): TestApiDispatcher {
   const auth = createTestAuth(database);
   return (request) => handleAuthRoute(request, {
@@ -59,6 +60,8 @@ export function createTestAuthDispatcher(
     sessions: auth,
     // LAN HTTP 测试默认不设置 Secure；需要 HTTPS 契约的认证文件会显式传 true。
     cookieSecure,
+    // 只有专门的本机开发回归会显式启用旁路，其他认证测试默认保留真实首次初始化和 Cookie 校验。
+    localDevelopmentAuthBypass,
   });
 }
 

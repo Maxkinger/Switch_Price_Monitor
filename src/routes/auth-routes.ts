@@ -17,10 +17,12 @@ export interface AuthRouteDependencies {
   auth: AuthService;
   sessions: SessionReader;
   cookieSecure: boolean;
+  /** 仅由启动配置显式开启的本机开发旁路；路由绝不从请求、Cookie 或浏览器地址自行推断。 */
+  localDevelopmentAuthBypass?: boolean;
 }
 
 /**
- * 集中处理首次初始化和登录接口；开发期仅状态查询固定直入，其余端点仍保留原有密码、恢复码与会话语义，
+ * 集中处理首次初始化和登录接口；仅显式本机开发旁路可固定状态查询为直入，其他环境保留密码、恢复码与会话语义。
  * 不回显密码、恢复码哈希或会话哈希，且只在首次初始化响应中返回一次明文恢复码。
  */
 export async function handleAuthRoute(
@@ -35,9 +37,19 @@ export async function handleAuthRoute(
   if (!isStatus && !isAuthAction) return null;
 
   try {
-    // 本机开发期固定允许 SPA 挂载，不读取 PostgreSQL、Cookie 或会话服务，也不生成认证材料；公开部署前必须恢复真实状态查询。
-    if (isStatus) {
+    // 本机旁路必须由进程启动配置明确授予；缺失或 false 时仍读取真实数据库与 Cookie，防止 NAS/公网意外无认证。
+    if (isStatus && dependencies.localDevelopmentAuthBypass === true) {
       return Response.json({ initialized: true, authenticated: true });
+    }
+    // 非旁路状态端点只返回两个布尔值；数据库异常也必须进入统一安全 500，不能把内部消息抛给运行时默认响应。
+    if (isStatus) {
+      return Response.json({
+        initialized: await dependencies.auth.isInitialized(),
+        authenticated: await dependencies.sessions.authenticate(
+          readSessionCookie(request.headers.get("cookie")),
+          new Date().toISOString(),
+        ),
+      });
     }
 
     const auth = dependencies.auth;

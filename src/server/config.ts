@@ -5,6 +5,8 @@ export interface ServerConfig {
   port: number;
   databaseUrl: string;
   cookieSecure: boolean;
+  /** 仅本机开发显式开启时允许无密码直入；生产和 NAS 缺省为 false，不能依赖 NODE_ENV 等可漂移推断。 */
+  localDevelopmentAuthBypass: boolean;
   staticDirectory: string;
   maximumBodyBytes: number;
   shutdownGraceMs: number;
@@ -20,7 +22,7 @@ const MINIMUM_SHUTDOWN_GRACE_MS = 100;
 const MAXIMUM_SHUTDOWN_GRACE_MS = 120_000;
 
 /**
- * 只读取 Node 服务明确允许的八项环境变量，并把错误限制为固定代码。
+ * 只读取 Node 服务明确允许的九项环境变量，并把错误限制为固定代码。
  * 数据库 URL 与 Telegram 凭据从不进入错误正文，调用方也无法借返回对象取得无关环境秘密。
  */
 export function readServerConfig(environment: NodeJS.ProcessEnv): ServerConfig {
@@ -31,6 +33,11 @@ export function readServerConfig(environment: NodeJS.ProcessEnv): ServerConfig {
   const cookieSecure = readStrictBoolean(
     environment.COOKIE_SECURE,
     "COOKIE_SECURE_INVALID",
+  );
+  const localDevelopmentAuthBypass = readOptionalStrictBoolean(
+    environment.LOCAL_DEVELOPMENT_AUTH_BYPASS,
+    false,
+    "LOCAL_DEVELOPMENT_AUTH_BYPASS_INVALID",
   );
   const telegramBotToken = readOptionalSecret(environment.TELEGRAM_BOT_TOKEN);
   const telegramChatId = readOptionalSecret(environment.TELEGRAM_CHAT_ID);
@@ -53,6 +60,7 @@ export function readServerConfig(environment: NodeJS.ProcessEnv): ServerConfig {
       "PORT_INVALID",
     ),
     cookieSecure,
+    localDevelopmentAuthBypass,
     // 入口只保存规范化绝对根；静态服务仍会对每个目标执行 realpath 根包含检查，防止符号链接逃逸。
     staticDirectory: resolve(staticDirectoryValue),
     maximumBodyBytes: readIntegerInRange(
@@ -94,6 +102,19 @@ function readStrictBoolean(value: string | undefined, errorCode: string): boolea
   if (value === "true") return true;
   if (value === "false") return false;
   throw new Error(errorCode);
+}
+
+/**
+ * 本机免登录只能由显式小写 true 开启，缺失时固定关闭；不能借 NODE_ENV、监听地址或 Cookie Secure 推断，
+ * 因为这些条件会在 Docker、NAS 反向代理和测试环境中变化，可能把管理入口意外暴露给局域网或公网。
+ */
+function readOptionalStrictBoolean(
+  value: string | undefined,
+  defaultValue: boolean,
+  errorCode: string,
+): boolean {
+  if (value === undefined) return defaultValue;
+  return readStrictBoolean(value, errorCode);
 }
 
 /** 运行资源上限必须是无符号十进制整数且处于封闭区间，拒绝指数、小数、符号和隐式截断。 */
