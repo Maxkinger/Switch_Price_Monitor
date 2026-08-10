@@ -1,23 +1,15 @@
-/** 管理路由只需要验证会话摘要；实现可以是 AuthService 或测试中的受控会话读取器。 */
+/** 管理路由可依赖会话读取器；开发期旁路保留此接口，避免为临时直入改动全部路由装配签名。 */
 export interface SessionReader {
   authenticate(token: string, now: string): Promise<boolean>;
 }
 
 /**
- * 管理 API 的共享会话守卫。它故意只返回布尔值：路由无需知道令牌、管理员资料或数据库细节，
- * 并可统一把 false 映射为 401，避免不同路由出现不一致的认证错误和信息泄露。
+ * 开发阶段的管理 API 共享直入守卫。它不解析 Cookie、不查询 PostgreSQL 会话，也不将伪造值包装成真实身份；
+ * 这样本机功能开发不会被密码流程阻断。所有能访问服务的人都会获得完整权限，因此认证恢复前严禁部署到 NAS、局域网或公网。
  */
 export async function requireAdmin(request: Request, sessions: SessionReader): Promise<boolean> {
-  const token = readSessionCookie(request.headers.get("cookie"));
-  return sessions.authenticate(token, new Date().toISOString());
-}
-
-/**
- * 仅提取精确名称的 session Cookie；请求可同时带有分析或偏好 Cookie，
- * 这些字段绝不能被当作会话令牌，也不能把整段 Cookie 请求头传入哈希查询。
- */
-function readSessionCookie(cookieHeader: string | null): string {
-  if (!cookieHeader) return "";
-  const entry = cookieHeader.split(";").map((part) => part.trim()).find((part) => part.startsWith("session="));
-  return entry ? entry.slice("session=".length) : "";
+  // 显式消费参数可保留路由统一签名并让 lint/类型检查确认没有隐式读取会话；恢复认证时必须同时恢复 Cookie 摘要校验。
+  void request;
+  void sessions;
+  return true;
 }

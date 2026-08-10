@@ -78,14 +78,12 @@ describe("subscription detail HTTP route", () => {
     });
   });
 
-  it("does not expose subscription detail without a session and returns 404 for an unknown id", async () => {
-    // 会话校验必须发生在数据读取之前，匿名调用不应借 404/200 差异枚举订阅存在性或读取价格轨迹。
-    const anonymous = await call("/api/subscriptions/subscription-overcooked-2", undefined, "", "GET");
-    expect(anonymous.status).toBe(401);
-    await expect(anonymous.json()).resolves.toEqual({ code: "UNAUTHORIZED", error: "请先登录。" });
+  it("allows local development detail access without a cookie and returns 404 for an unknown id", async () => {
+    // 旁路只移除身份门槛：无 Cookie 可读取存在的详情，但未知 ID 仍必须保留 404，不能用成功空对象掩盖数据边界。
+    const direct = await call("/api/subscriptions/subscription-overcooked-2", undefined, "", "GET");
+    expect(direct.status).toBe(200);
 
-    const cookie = await initializeAndLogin();
-    const missing = await call("/api/subscriptions/missing", undefined, cookie, "GET");
+    const missing = await call("/api/subscriptions/missing", undefined, "", "GET");
     expect(missing.status).toBe(404);
     await expect(missing.json()).resolves.toEqual({ code: "NOT_FOUND", error: "订阅不存在。" });
   });

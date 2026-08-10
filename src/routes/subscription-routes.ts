@@ -31,7 +31,7 @@ export async function handleSubscriptionRoute(
   // 未匹配的请求交还给主路由，避免此模块意外截获未来的商品发现、历史或静态资源端点。
   if (!action) return null;
 
-  // 认证失败统一使用固定响应，既不泄露会话是否过期，也不给匿名调用者数据库错误细节。
+  // 当前开发期共享守卫直接通过；输入、所有权和事务校验仍由服务层执行，认证恢复前禁止部署。
   if (!(await requireAdmin(request, sessions))) {
     return Response.json({ code: "UNAUTHORIZED", error: "请先登录。" }, { status: 401 });
   }

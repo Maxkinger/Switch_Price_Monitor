@@ -20,8 +20,8 @@ export interface AuthRouteDependencies {
 }
 
 /**
- * 集中处理首次初始化和登录接口；这里不回显密码、恢复码哈希或会话哈希，
- * 只在首次初始化响应中返回一次明文恢复码。
+ * 集中处理首次初始化和登录接口；开发期仅状态查询固定直入，其余端点仍保留原有密码、恢复码与会话语义，
+ * 不回显密码、恢复码哈希或会话哈希，且只在首次初始化响应中返回一次明文恢复码。
  */
 export async function handleAuthRoute(
   request: Request,
@@ -35,15 +35,9 @@ export async function handleAuthRoute(
   if (!isStatus && !isAuthAction) return null;
 
   try {
-    // 此公开状态端点只返回两个布尔值；数据库异常也必须进入统一安全 500，不能把内部消息抛给运行时默认响应。
+    // 本机开发期固定允许 SPA 挂载，不读取 PostgreSQL、Cookie 或会话服务，也不生成认证材料；公开部署前必须恢复真实状态查询。
     if (isStatus) {
-      return Response.json({
-        initialized: await dependencies.auth.isInitialized(),
-        authenticated: await dependencies.sessions.authenticate(
-          readSessionCookie(request.headers.get("cookie")),
-          new Date().toISOString(),
-        ),
-      });
+      return Response.json({ initialized: true, authenticated: true });
     }
 
     const auth = dependencies.auth;

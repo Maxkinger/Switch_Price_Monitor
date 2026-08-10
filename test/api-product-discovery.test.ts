@@ -23,18 +23,14 @@ describe("product discovery HTTP routes", () => {
     await resetApiTestData(database);
   });
 
-  it("rejects anonymous default-region search and returns only the configured official candidates to an administrator", async () => {
-    // 路由依赖已扩展为完整的发现契约；未被本用例调用的方法仍给出受控空结果，防止类型检查遗漏接口变更。
+  it("returns only configured official candidates without a cookie during local development", async () => {
+    // 无 Cookie 必须直入但不得扩大候选；未被调用的方法仍给出受控空结果，防止类型检查遗漏接口变更。
     const discovery = {
       searchDefaultRegion: async () => ({ status: "available" as const, candidates: [candidate()] }),
       resolveOfficialLink: async () => candidate(),
       resolveRegions: async () => [],
     };
-    const anonymous = await handleProductRoute(request("/api/products/search", { query: "Overcooked" }), sessions(), fixedPreview(), discovery);
-    expect(anonymous?.status).toBe(401);
-
-    const cookie = await initializeAndLogin();
-    const response = await handleProductRoute(request("/api/products/search", { query: "Overcooked" }, cookie), sessions(), fixedPreview(), discovery);
+    const response = await handleProductRoute(request("/api/products/search", { query: "Overcooked" }), sessions(), fixedPreview(), discovery);
     expect(response?.status).toBe(200);
     await expect(response?.json()).resolves.toEqual({ status: "available", candidates: [candidate()] });
   });

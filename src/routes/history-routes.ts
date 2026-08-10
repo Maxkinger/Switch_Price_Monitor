@@ -2,7 +2,7 @@ import type { HistoryService } from "../services/history-service";
 import { requireAdmin } from "./auth-guard";
 import type { SessionReader } from "./auth-guard";
 
-/** 历史价格包含长期消费行为线索，仅允许管理员会话读取。 */
+/** 当前本机开发期历史价格可直接读取；查询参数和 DTO 脱敏仍生效，认证恢复前禁止任何非本机部署。 */
 export async function handleHistoryRoute(request: Request, sessions: SessionReader, history: HistoryService): Promise<Response | null> {
   const url = new URL(request.url);
   if (request.method !== "GET" || url.pathname !== "/api/history") return null;

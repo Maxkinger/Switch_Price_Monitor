@@ -2,7 +2,7 @@ import type { ExportService } from "../services/export-service";
 import { requireAdmin } from "./auth-guard";
 import type { SessionReader } from "./auth-guard";
 
-/** 导出接口由管理员会话保护，且只接受明确白名单 kind，不能让请求参数选择表名或列名。 */
+/** 当前开发期导出可直接访问，但仍只接受白名单 kind，不能让请求参数选择表名或列名；认证恢复前不得部署。 */
 export async function handleExportRoute(request: Request, sessions: SessionReader, service: ExportService): Promise<Response | null> {
   const url = new URL(request.url);
   if (request.method !== "GET" || url.pathname !== "/api/export") return null;

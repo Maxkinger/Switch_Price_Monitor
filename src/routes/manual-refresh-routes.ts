@@ -3,8 +3,8 @@ import { requireAdmin } from "./auth-guard";
 import type { SessionReader } from "./auth-guard";
 
 /**
- * 接收管理员发起的手动刷新请求。端点在取得原子冷却名额后等待统一采集器完成，
- * 因此 200 仅表示本次采集已经结束；来源、汇率和健康状态仍由服务端运行器统一控制。
+ * 当前本机开发期接收直接发起的手动刷新请求。端点在取得原子冷却名额后等待统一采集器完成，
+ * 因此 200 仅表示本次采集已经结束；来源、汇率和健康状态仍由服务端运行器统一控制，认证恢复前严禁部署。
  */
 export async function handleManualRefreshRoute(
   request: Request,

@@ -35,7 +35,7 @@ export async function handleProductRoute(
   const isConfirmSubscriptions = request.method === "POST" && path === "/api/products/confirm-subscriptions" && confirmation !== undefined;
   if (!isPreview && !isSearch && !isResolveLink && !isResolveRegions && !isConfirmSubscriptions) return null;
 
-  // 必须先验证管理员会话才解析请求体或访问官方接口，避免匿名调用借预览端点放大任天堂请求负载。
+  // 当前本机开发期共享守卫直接放行；请求体、官方 URL 白名单和调用范围仍必须先校验，认证恢复前禁止部署以避免外部请求被滥用。
   if (!(await requireAdmin(request, sessions))) {
     return Response.json({ code: "UNAUTHORIZED", error: "请先登录。" }, { status: 401 });
   }

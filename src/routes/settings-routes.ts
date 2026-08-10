@@ -3,7 +3,7 @@ import { SettingsNotInitializedError, SettingsService, SettingsValidationError, 
 import { requireAdmin } from "./auth-guard";
 import type { SessionReader } from "./auth-guard";
 
-/** 受管理员会话保护的全局设置读取与局部更新入口；不处理 Telegram 等秘密配置。 */
+/** 当前本机开发期直接访问的全局设置入口；不处理 Telegram 等秘密配置，认证恢复前不得部署。 */
 export async function handleSettingsRoute(request: Request, sessions: SessionReader, service: SettingsService): Promise<Response | null> {
   const path = new URL(request.url).pathname;
   if (path !== "/api/settings" || !["GET", "PATCH"].includes(request.method)) return null;

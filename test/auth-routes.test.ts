@@ -41,15 +41,11 @@ describe("authentication HTTP routes", () => {
     expect(login.headers.get("set-cookie")).toContain("Secure");
   });
 
-  it("reports setup and current-session state without exposing administrator data", async () => {
-    // 刷新 SPA 时只能依据两个布尔值恢复界面：是否需首次设置、当前请求的 HttpOnly Cookie 是否有效；响应不得泄露令牌、密码哈希或管理员配置。
-    await expect((await call("/api/auth/status", undefined, null, "GET")).json()).resolves.toEqual({ initialized: false, authenticated: false });
-
-    await initializeThroughHttp();
-    await expect((await call("/api/auth/status", undefined, null, "GET")).json()).resolves.toEqual({ initialized: true, authenticated: false });
-
-    const login = await call("/api/auth/login", { password: "correct-horse-battery-staple" });
-    await expect((await call("/api/auth/status", undefined, login.headers.get("set-cookie"), "GET")).json())
+  it("reports every local development request as ready to enter the application", async () => {
+    // 本机开发阶段不展示密码入口：空 PostgreSQL、缺失 Cookie 与伪造 Cookie 都必须直接挂载应用，且状态接口不得读取数据库、生成令牌或回显认证资料。
+    await expect((await call("/api/auth/status", undefined, null, "GET")).json())
+      .resolves.toEqual({ initialized: true, authenticated: true });
+    await expect((await call("/api/auth/status", undefined, "session=forged", "GET")).json())
       .resolves.toEqual({ initialized: true, authenticated: true });
   });
 
@@ -86,7 +82,7 @@ describe("authentication HTTP routes", () => {
     expect(logout.headers.get("set-cookie")).toContain("Max-Age=0");
   });
 
-  it("未知认证依赖异常固定返回 500 且不回显内部消息", async () => {
+  it("开发期状态接口不读取可能失败的认证依赖", async () => {
     /**
      * 合成依赖模拟数据库连接或驱动异常；路由只能返回固定 INTERNAL_ERROR，
      * 不能把可能包含 SQL、表名、连接信息或认证材料的 error.message 交给浏览器。
@@ -104,11 +100,11 @@ describe("authentication HTTP routes", () => {
       { auth: failingAuth, sessions: failingAuth, cookieSecure: true },
     );
 
-    expect(response?.status).toBe(500);
-    const body = await response?.json() as { code: string; error: string } | undefined;
+    expect(response?.status).toBe(200);
+    const body = await response?.json() as Record<string, unknown> | undefined;
     expect(body).toEqual({
-      code: "INTERNAL_ERROR",
-      error: "认证暂时无法处理，请稍后重试。",
+      initialized: true,
+      authenticated: true,
     });
     expect(JSON.stringify(body)).not.toContain(sensitiveMessage);
   });

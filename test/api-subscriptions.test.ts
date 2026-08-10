@@ -16,24 +16,25 @@ describe("subscription management HTTP routes", () => {
     await seedSubscriptionCandidate();
   });
 
-  it("rejects subscription creation when the administrator session is absent", async () => {
-    // 订阅会改变监控范围与后续通知，未登录请求不能仅依赖前端隐藏按钮，必须由 Node API 返回 401 拦截。
+  it("creates a subscription without a cookie during local development", async () => {
+    // 当前开发期特意移除会话门槛；仍须验证真实写入成功，防止守卫放行后路由遗漏服务调用。
     const response = await call("/api/subscriptions", {
       id: "subscription-overcooked-2",
       gameId: "game-overcooked-2",
       regionalProductIds: ["product-overcooked-2-us"],
     });
 
-    expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({ code: "UNAUTHORIZED", error: "请先登录。" });
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toEqual({ subscriptionId: "subscription-overcooked-2", created: true });
   });
 
-  it("rejects hard deletion when the administrator session is absent", async () => {
-    // 永久删除会清除价格与通知审计记录，必须和创建一样由 HttpOnly 管理员会话保护，不能仅依赖前端确认框。
+  it("performs hard deletion without a cookie during local development", async () => {
+    // 开发期直接访问不替代精确 ID 和事务约束；先创建再删除可证明无 Cookie 路径未绕开真实服务。
+    await call("/api/subscriptions", { id: "subscription-overcooked-2", gameId: "game-overcooked-2", regionalProductIds: ["product-overcooked-2-us"] });
     const response = await call("/api/subscriptions", { subscriptionIds: ["subscription-overcooked-2"] }, undefined, "DELETE");
 
-    expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({ code: "UNAUTHORIZED", error: "请先登录。" });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ deletedSubscriptionIds: ["subscription-overcooked-2"] });
   });
 
   it("creates one subscription for a game and reopens it instead of inserting a duplicate", async () => {

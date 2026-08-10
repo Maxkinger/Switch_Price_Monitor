@@ -22,14 +22,11 @@ describe("product source preview HTTP route", () => {
     await resetApiTestData(database);
   });
 
-  it("rejects anonymous access and returns source previews to a signed-in administrator without persisting candidates", async () => {
+  it("returns source previews without a cookie during local development without persisting candidates", async () => {
+    // 直入仅取消认证，不得使只读预览写入候选、订阅或地区商品。
     const preview = fixedPreview();
-    const anonymous = await handleProductRoute(request([jpCandidate()]), sessions(), preview);
-    expect(anonymous?.status).toBe(401);
-
-    const cookie = await initializeAndLogin();
     const before = await counts();
-    const response = await handleProductRoute(request([jpCandidate(), hkCandidate()], cookie), sessions(), preview);
+    const response = await handleProductRoute(request([jpCandidate(), hkCandidate()]), sessions(), preview);
 
     expect(response?.status).toBe(200);
     await expect(response?.json()).resolves.toMatchObject({ regions: [
