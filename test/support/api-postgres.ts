@@ -31,7 +31,6 @@ export async function resetApiTestData(database: AppDatabase): Promise<void> {
     fetch_logs,
     exchange_rates,
     price_snapshots,
-    subscription_region_targets,
     subscription_regions,
     subscriptions,
     regional_products,

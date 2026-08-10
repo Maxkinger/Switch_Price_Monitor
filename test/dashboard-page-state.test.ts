@@ -6,15 +6,11 @@ import { applyAutomaticMissingResolutions, applyDetailRequestFailure, immediateR
 
 /** 页面状态机测试将安全登出、表单草稿与刷新队列文案从 React 渲染中分离，避免错误处理分支彼此覆盖。 */
 describe("dashboard page state", () => {
-  it("keeps an invalid target draft after a 422 but clears all dashboard state after a 401", () => {
-    // 目标价校验失败时管理员需要继续修正输入；认证失败则不能继续显示价格、地区或目标价等私有信息。
-    const editing = {
-      ...initialDetailState,
-      targetDraft: { globalTargetCnyFen: 5000, regionTargets: [{ regionCode: "JP", targetAmountMinor: 800 }] },
-    };
-    const invalid = applyDetailRequestFailure(editing, new DashboardApiError("目标价设置无效。", 422));
+  it("keeps editable detail state after a 422 but clears all dashboard state after a 401", () => {
+    // 地区编辑校验失败时管理员需要继续修正选择；认证失败则不能继续显示任何私有订阅信息。
+    const invalid = applyDetailRequestFailure(initialDetailState, new DashboardApiError("地区设置无效。", 422));
 
-    expect(invalid).toMatchObject({ kind: "ready", targetDraft: { globalTargetCnyFen: 5000 }, error: "目标价设置无效。" });
+    expect(invalid).toMatchObject({ kind: "ready", error: "地区设置无效。" });
     expect(applyDetailRequestFailure(invalid, new DashboardApiError("请先登录。", 401))).toEqual({ kind: "unauthorized" });
   });
 

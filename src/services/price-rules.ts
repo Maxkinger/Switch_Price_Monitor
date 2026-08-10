@@ -9,12 +9,6 @@ interface ComparablePrice {
   source: PriceSource;
 }
 
-/** 目标价的持久化状态与 subscription_region_targets.target_state 的存储值一致。 */
-export type TargetState = "unmet" | "met";
-
-/** 采集轮写入通知事件前需要执行的唯一状态变迁。 */
-export type TargetTransition = "trigger" | "reset" | "none";
-
 /** PostgreSQL `regional_product_health` 中与通知去重相关的最小状态，避免规则层依赖完整数据库行。 */
 export interface ProductHealthState {
   consecutiveFailures: number;
@@ -35,17 +29,6 @@ export interface HealthTransition extends ProductHealthState {
  */
 export function evaluateOfficialDrop(previous: ComparablePrice, current: ComparablePrice): boolean {
   return previous.source === "official" && current.source === "official" && current.amountMinor < previous.amountMinor;
-}
-
-/**
- * 判断目标价的状态机。目标价本身使用同一货币的最小单位，价格小于等于目标即命中；
- * 已命中时保持低价不重复通知，只有回升到目标之上才返回 reset，使下次再次跌破可以重新提醒。
- */
-export function evaluateTarget(targetAmountMinor: number, currentAmountMinor: number, priorState: TargetState): TargetTransition {
-  const isMet = currentAmountMinor <= targetAmountMinor;
-  if (priorState === "unmet" && isMet) return "trigger";
-  if (priorState === "met" && !isMet) return "reset";
-  return "none";
 }
 
 /**

@@ -28,7 +28,7 @@
 | `POST /api/products/confirm-subscriptions` | 已登录 | 保存前重新验证全部官方身份；一个 PostgreSQL 事务批量创建，任一失败零写入。 |
 | `POST /api/subscriptions` | 已登录 | 以已确认的游戏和地区商品创建或幂等打开既有订阅。 |
 | `GET /api/subscriptions/:id` | 已登录 | 返回脱敏订阅详情。 |
-| `PATCH /api/subscriptions/:id` | 已登录 | 更新启用状态、地区范围或目标价；地区商品必须属于同一游戏。 |
+| `PATCH /api/subscriptions/:id` | 已登录 | 更新启用状态或地区范围；地区商品必须属于同一游戏。 |
 | `POST /api/subscriptions/:id/disable` | 已登录 | 软停用，不删除历史。 |
 | `POST /api/subscriptions/:id/resolve-regions` | 已登录 | 以现有订阅和设置决定缺失地区，忽略浏览器自定义范围。 |
 | `POST /api/subscriptions/:id/complete-regions` | 已登录 | 复核并原子新增缺失地区，不替换现有映射或历史。 |

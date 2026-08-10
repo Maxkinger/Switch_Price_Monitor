@@ -9,7 +9,7 @@
 | FR-001 | 多商品订阅、默认区、五区发现、人工修正与补全 | 仓库已实现；Node 本地 Playwright 取代 Browser Binding，真实 NAS 样本待验收 | [PRD](PRD.md)、[API](../architecture/api-design.md)、[ADR-002](../decisions/ADR-002-price-provider-validation.md) |
 | FR-002 | 官方优先、第三方准入、货币与税费 | 官方五区链路已实现；第三方无许可时不创建提供方、不发请求；真实 Node/NAS 样本待验收 | [PRD](PRD.md)、[ADR-002](../decisions/ADR-002-price-provider-validation.md) |
 | FR-003 | 六小时采集、历史保留、手动刷新 | 已实现：UTC 六小时任务 + PG advisory lock；每个认证刷新请求同步执行，无冷却/队列，仅记最近时间 | [系统设计](../architecture/system-design.md)、[数据模型](../architecture/data-model.md)、[API](../architecture/api-design.md) |
-| FR-004 | 官方降价与目标价提醒 | 规则、PostgreSQL 状态与事件预留已实现；真实 Telegram 演练待执行 | [PRD](PRD.md)、[系统设计](../architecture/system-design.md) |
+| FR-004 | 官方降价提醒 | 官方降价规则与事件预留已实现；真实 Telegram 演练待执行 | [PRD](PRD.md)、[系统设计](../architecture/system-design.md) |
 | FR-005 | 日报与 Telegram | 中文模板、分页、pending/delivered 和 UTC 分钟调度已实现；只接受成对环境变量，设置页不存秘密；真实投递待验收 | [PRD](PRD.md)、[系统设计](../architecture/system-design.md) |
 | FR-006 | 单管理员初始化、登录、锁定与恢复码 | 已实现；Cookie 为 `HttpOnly; SameSite=Strict`，`Secure` 由部署配置决定；NAS 初始化待验收 | [API](../architecture/api-design.md)、[数据模型](../architecture/data-model.md) |
 | FR-007 | 导航、仪表盘、地区/价格格式与版本 | 已实现当前页面；版本改为正式 Git 标签构建，不再自动修改 package 版本；NAS 页面待验收 | [PRD](PRD.md)、[Docker Hub 发布](../deployment/docker-hub-release.md) |

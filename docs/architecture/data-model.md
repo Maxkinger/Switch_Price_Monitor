@@ -21,13 +21,12 @@
 | `login_attempts` | 登录失败计数与锁定时间；并发更新使用单条原子 upsert，成功登录清除状态。 |
 | `games` | 逻辑商品主档；规范化名称的非空值唯一，避免并发重复创建。 |
 | `regional_products` | 本区官方 URL、币种、独立官方价格 ID、匹配来源、商品校验元数据与启用状态；价格 ID 不得跨区复用。 |
-| `subscriptions` | 单一逻辑商品的监控状态、全局人民币目标价和通知选项；停用为软操作。 |
-| `subscription_region_targets` | 订阅的地区范围、当地货币目标价和命中状态；地区目标优先于全局目标。 |
+| `subscriptions` | 单一逻辑商品的监控状态和通知选项；停用为软操作。 |
 | `price_snapshots` | 不可变的金额、币种、口径、人民币换算、汇率、来源、采集时间和有效状态。 |
 | `exchange_rates` | 每日对人民币中间汇率、来源、读取时间和过期标记。 |
 | `fetch_logs` | 来源、状态、耗时、脱敏错误摘要与采集时间；固定 90 天清理。 |
 | `regional_product_health` | 连续失败数、最近成功时间和异常通知状态；成功后清零并允许恢复事件。 |
-| `notification_events` | 目标价、降价、失败和恢复等通知的唯一业务键、`pending/delivered` 状态及投递时间；保证同一事件只取得一次发送资格。 |
+| `notification_events` | 降价、失败和恢复等通知的唯一业务键、`pending/delivered` 状态及投递时间；保证同一事件只取得一次发送资格。 |
 | `manual_refresh_requests` | 单行最近手动请求时间。它不是队列，不含 `queued/running`，也不承担冷却或调度认领。 |
 
 ## 3. 关系与事务边界
@@ -35,7 +34,6 @@
 ```text
 games 1 ── * regional_products
 games 1 ── * subscriptions
-subscriptions 1 ── * subscription_region_targets
 regional_products 1 ── * price_snapshots / fetch_logs
 regional_products 1 ── 1 regional_product_health
 subscriptions / regional_products ── * notification_events
@@ -44,7 +42,7 @@ subscriptions / regional_products ── * notification_events
 - 批量确认在一个 PostgreSQL 事务中验证并写入商品、地区商品、订阅与地区目标；任一官方身份或 SQL 失败均零写入。
 - 永久删除先锁定并验证全部目标，再在同一事务删除订阅专属数据；设置、汇率、认证和未选择订阅不受影响。
 - 自动采集与每次已认证手动刷新共享采集服务，但互不排队。每次手动请求同步执行并更新最近时间。
-- 目标价只在未命中到命中的边沿创建事件；价格回升后才重新允许下一次命中。即时降价只比较官方成功快照。
+- 即时降价只比较官方成功快照，并由通知事件的唯一业务键确保同一事件只投递一次。
 - 迁移、采集调度和分钟通知各自依赖明确的事务或 advisory lock，不能以进程内布尔值替代数据库互斥。
 
 ## 4. 敏感数据与导出

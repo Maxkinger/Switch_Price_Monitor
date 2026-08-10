@@ -32,7 +32,6 @@ const expectedTables = [
   "schema_migrations",
   "sessions",
   "settings",
-  "subscription_region_targets",
   "subscription_regions",
   "subscriptions",
 ];
@@ -114,6 +113,36 @@ describe("PostgreSQL 初始 schema", () => {
     ]);
   });
 
+  it("升级旧库时永久删除目标价结构和目标价通知，但保留普通降价通知", async () => {
+    // 先只应用历史 0001，才能真实模拟已部署的旧库；夹具中的价格、订阅和两类通知都是固定测试值，
+    // 不包含真实商品、目标金额、会话或 Telegram 凭据。最终迁移只能删除目标价专属数据。
+    const legacyDirectory = await mkdtemp(join(tmpdir(), "switch-price-monitor-target-price-legacy-"));
+    try {
+      await copyFile(
+        join(POSTGRES_MIGRATION_DIRECTORY, "0001_initial.sql"),
+        join(legacyDirectory, "0001_initial.sql"),
+      );
+      await resetTestSchema(database);
+      await runMigrations(database, legacyDirectory);
+      await database.query("INSERT INTO games (id, name_zh, name_en, product_type) VALUES ('target-game', '测试', 'Test', 'game')");
+      await database.query("INSERT INTO subscriptions (id, game_id, global_target_cny_fen) VALUES ('target-subscription', 'target-game', 5000)");
+      await database.query("INSERT INTO subscription_region_targets (subscription_id, region_code, target_amount_minor) VALUES ('target-subscription', 'US', 1500)");
+      await database.query("INSERT INTO notification_events (event_type, status, dedupe_key, created_at) VALUES ('target-price', 'pending', 'target-event', CURRENT_TIMESTAMP), ('official-price-drop', 'pending', 'drop-event', CURRENT_TIMESTAMP)");
+
+      await runMigrations(database, POSTGRES_MIGRATION_DIRECTORY);
+
+      const targetTable = await database.query<{ exists: boolean }>("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'subscription_region_targets') AS exists");
+      const targetColumn = await database.query<{ exists: boolean }>("SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'subscriptions' AND column_name = 'global_target_cny_fen') AS exists");
+      const notifications = await database.query<{ eventType: string; count: string }>("SELECT event_type AS \"eventType\", COUNT(*)::text AS count FROM notification_events GROUP BY event_type ORDER BY event_type");
+      expect(targetTable.rows).toEqual([{ exists: false }]);
+      expect(targetColumn.rows).toEqual([{ exists: false }]);
+      expect(notifications.rows).toEqual([{ eventType: "official-price-drop", count: "1" }]);
+    } finally {
+      // 临时目录只由本用例创建且前缀固定；无论 RED/GREEN 都清理，避免测试文件残留污染后续迁移扫描。
+      await rm(legacyDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("把布尔、时间、JSON、身份主键和整数金额映射为 PostgreSQL 原生类型", async () => {
     const columns = await database.query<{
       table_name: string;
@@ -138,9 +167,7 @@ describe("PostgreSQL 初始 schema", () => {
           ('fetch_logs', 'id'),
           ('notification_events', 'id'),
           ('price_snapshots', 'amount_minor'),
-          ('price_snapshots', 'cny_fen'),
-          ('subscriptions', 'global_target_cny_fen'),
-          ('subscription_region_targets', 'target_amount_minor')
+          ('price_snapshots', 'cny_fen')
         )
       ORDER BY table_name, column_name
     `);
@@ -159,9 +186,7 @@ describe("PostgreSQL 初始 schema", () => {
       { table_name: "regional_products", column_name: "enabled", data_type: "boolean", is_identity: "NO" },
       { table_name: "sessions", column_name: "expires_at", data_type: "timestamp with time zone", is_identity: "NO" },
       { table_name: "settings", column_name: "enabled_regions_json", data_type: "jsonb", is_identity: "NO" },
-      { table_name: "subscription_region_targets", column_name: "target_amount_minor", data_type: "integer", is_identity: "NO" },
       { table_name: "subscriptions", column_name: "enabled", data_type: "boolean", is_identity: "NO" },
-      { table_name: "subscriptions", column_name: "global_target_cny_fen", data_type: "integer", is_identity: "NO" },
     ]);
 
     const nonTimestampTimeColumns = await database.query<{
@@ -193,10 +218,6 @@ describe("PostgreSQL 初始 schema", () => {
       [
         "INSERT INTO subscription_regions (subscription_id, regional_product_id) VALUES ($1, $2)",
         ["missing-subscription", "missing-product"],
-      ],
-      [
-        "INSERT INTO subscription_region_targets (subscription_id, region_code, target_amount_minor) VALUES ($1, 'JP', 100)",
-        ["missing-subscription"],
       ],
       [
         "INSERT INTO price_snapshots (regional_product_id, amount_minor, currency, source, captured_at) VALUES ($1, 100, 'USD', 'official', CURRENT_TIMESTAMP)",
@@ -255,11 +276,6 @@ describe("PostgreSQL 初始 schema", () => {
         "23505",
       ],
       [
-        "INSERT INTO subscription_region_targets (subscription_id, region_code, target_amount_minor) VALUES ('subscription-a', 'US', 200)",
-        [],
-        "23505",
-      ],
-      [
         "INSERT INTO exchange_rates (currency, cny_rate, source, captured_at) VALUES ('USD', 7.1, 'duplicate', '2026-07-27T00:00:00Z')",
         [],
         "23505",
@@ -273,11 +289,6 @@ describe("PostgreSQL 初始 schema", () => {
         "INSERT INTO notification_events (event_type, status, dedupe_key) VALUES ('price-drop', 'pending', 'event-a')",
         [],
         "23505",
-      ],
-      [
-        "INSERT INTO subscription_region_targets (subscription_id, region_code, target_amount_minor, target_state) VALUES ('subscription-a', 'JP', 100, 'invalid')",
-        [],
-        "23514",
       ],
       [
         "INSERT INTO admin_credentials (id, password_hash, password_salt, recovery_hash, recovery_salt, created_at) VALUES (2, 'hash', 'salt', 'recovery', 'salt', CURRENT_TIMESTAMP)",
@@ -324,17 +335,14 @@ describe("PostgreSQL 初始 schema", () => {
     await database.query("DELETE FROM subscriptions WHERE id = 'subscription-a'");
     const subscriptionDependents = await database.query<{
       regions: string;
-      targets: string;
       notification_subscription_id: string | null;
     }>(`
       SELECT
         (SELECT COUNT(*) FROM subscription_regions)::text AS regions,
-        (SELECT COUNT(*) FROM subscription_region_targets)::text AS targets,
         (SELECT subscription_id FROM notification_events WHERE dedupe_key = 'event-a') AS notification_subscription_id
     `);
     expect(subscriptionDependents.rows[0]).toEqual({
       regions: "0",
-      targets: "0",
       notification_subscription_id: null,
     });
 
@@ -374,14 +382,15 @@ describe("PostgreSQL 迁移运行器", () => {
     await database.close();
   });
 
-  it("重复运行同一初始迁移时只记录和应用一次", async () => {
+  it("重复运行当前完整迁移集时每个版本只记录和应用一次", async () => {
     await runMigrations(database, POSTGRES_MIGRATION_DIRECTORY);
     await runMigrations(database, POSTGRES_MIGRATION_DIRECTORY);
 
     const result = await database.query<{ count: string }>(
       "SELECT COUNT(*)::text AS count FROM schema_migrations",
     );
-    expect(result.rows[0].count).toBe("1");
+    // 当前包含不可变初始结构与目标价移除两版迁移；第二次启动不得重复记录任一版本。
+    expect(result.rows[0].count).toBe("2");
   });
 
   it("已应用迁移的精确字节变化时以 SHA-256 不匹配阻止启动", async () => {
@@ -465,8 +474,6 @@ async function insertCoreFixture(database: SqlExecutor): Promise<void> {
     INSERT INTO subscriptions (id, game_id) VALUES ('subscription-a', 'game-a');
     INSERT INTO subscription_regions (subscription_id, regional_product_id)
     VALUES ('subscription-a', 'product-a-us');
-    INSERT INTO subscription_region_targets (subscription_id, region_code, target_amount_minor)
-    VALUES ('subscription-a', 'US', 100);
     INSERT INTO exchange_rates (currency, cny_rate, source, captured_at)
     VALUES ('USD', 7.0, 'test', '2026-07-27T00:00:00Z');
     INSERT INTO sessions (id, token_hash, expires_at, created_at)

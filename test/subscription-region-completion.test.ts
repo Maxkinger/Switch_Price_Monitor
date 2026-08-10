@@ -4,12 +4,12 @@ import type { OfficialProductCandidate } from "../src/shared/domain";
 import { SubscriptionRegionCompletionService } from "../src/services/subscription-region-completion-service";
 import { InMemorySubscriptionConfirmationStore } from "./support/in-memory-business-stores";
 
-// 外部服务工厂共享当前用例端口；beforeEach 必须替换实例，确保既有地区、历史哨兵和目标价不会跨测试泄漏。
+// 外部服务工厂共享当前用例端口；beforeEach 必须替换实例，确保既有地区和历史哨兵不会跨测试泄漏。
 let confirmationStore: InMemorySubscriptionConfirmationStore;
 
 /**
  * 已有订阅地区补全使用平台中立端口夹具验证服务边界：补全只能追加经官方复核的缺失地区，
- * 绝不能替换既有美区商品、历史哨兵、目标价或订阅本身；真实跨表事务由 PostgreSQL 集成测试负责。
+ * 绝不能替换既有美区商品、历史哨兵或订阅本身；真实跨表事务由 PostgreSQL 集成测试负责。
  */
 describe("subscription region completion service", () => {
   const now = "2026-07-17T03:00:00.000Z";
@@ -20,7 +20,7 @@ describe("subscription region completion service", () => {
     seedUsOnlySubscription();
   });
 
-  it("adds a validated missing region without changing existing history or targets", async () => {
+  it("adds a validated missing region without changing existing history", async () => {
     const service = createService([overcookedUs(), overcookedJp()]);
 
     await expect(service.resolveExisting("subscription-overcooked")).resolves.toEqual([
@@ -31,10 +31,9 @@ describe("subscription region completion service", () => {
       skippedRegionCodes: [],
     }, now)).resolves.toEqual({ subscriptionId: "subscription-overcooked", addedRegionCodes: ["JP"] });
 
-    // 旧快照和目标价是用户既有监控历史；原子补全只允许新增 JP 的商品与订阅关联，不能重建或覆盖它们。
+    // 旧快照是用户既有监控历史；原子补全只允许新增 JP 的商品与订阅关联，不能重建或覆盖它。
     await expect(readRegionCodes()).resolves.toEqual(["JP", "US"]);
     await expect(readUsSnapshotCount()).resolves.toBe(1);
-    await expect(readGlobalTarget()).resolves.toBe(5000);
   });
 
   it("writes nothing when one new regional official page cannot be validated", async () => {
@@ -48,7 +47,6 @@ describe("subscription region completion service", () => {
     // 官方复核失败必须发生在仓储提交之前，不能留下地区商品或订阅关系的部分写入。
     await expect(readRegionCodes()).resolves.toEqual(["US"]);
     await expect(readUsSnapshotCount()).resolves.toBe(1);
-    await expect(readGlobalTarget()).resolves.toBe(5000);
   });
 
   it("adds a manually selected localized Japanese official candidate without replacing history", async () => {
@@ -66,7 +64,7 @@ describe("subscription region completion service", () => {
 
   it("rejects a localized manual candidate with a different product type without adding a region", async () => {
     // 人工候选不允许把同名本体、DLC 或组合包混进既有订阅；类型不一致时必须在仓储提交前失败，
-    // 保证美区历史、目标价和现有地区关联均不发生部分更新。
+    // 保证美区历史和现有地区关联均不发生部分更新。
     const invalidJapaneseUpgrade = { ...localizedOvercookedJp(), productType: "upgrade-pack" as const };
     const service = createService([overcookedUs(), invalidJapaneseUpgrade]);
 
@@ -76,7 +74,6 @@ describe("subscription region completion service", () => {
     }, now)).rejects.toThrow("地区商品与既有订阅身份不一致。");
     await expect(readRegionCodes()).resolves.toEqual(["US"]);
     await expect(readUsSnapshotCount()).resolves.toBe(1);
-    await expect(readGlobalTarget()).resolves.toBe(5000);
   });
 
   it("continues to reject localized candidates that claim the automatic source", async () => {
@@ -112,12 +109,11 @@ function createService(candidates: OfficialProductCandidate[]): SubscriptionRegi
   );
 }
 
-/** 夹具模拟已有订阅只包含美区，并保留一条价格快照和人民币目标价作为不得被补全改变的历史。 */
+/** 夹具模拟已有订阅只包含美区，并保留一条价格快照作为不得被补全改变的历史。 */
 function seedUsOnlySubscription(): void {
   confirmationStore.seedExisting({
     anchor: overcookedUs(),
     historySnapshotCount: 1,
-    globalTargetCnyFen: 5000,
     confirmation: {
       game: {
         id: "game-overcooked",
@@ -149,11 +145,6 @@ async function readRegionCodes(): Promise<string[]> {
 /** 历史计数哨兵位于补全端口能力之外；服务追加地区时不得改变它。 */
 async function readUsSnapshotCount(): Promise<number> {
   return confirmationStore.protectedState("subscription-overcooked")?.historySnapshotCount ?? 0;
-}
-
-/** 全局目标价属于订阅配置，补全只添加地区映射，不能覆盖该字段。 */
-async function readGlobalTarget(): Promise<number | null> {
-  return confirmationStore.protectedState("subscription-overcooked")?.globalTargetCnyFen ?? null;
 }
 
 /** 美区官方候选既是已有订阅的持久化锚点，也是跨区身份比较的起点。 */

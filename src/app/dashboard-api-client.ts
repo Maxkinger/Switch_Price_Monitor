@@ -49,8 +49,6 @@ export interface SubscriptionDetail {
   subscriptionId: string;
   game: { id: string; nameZh: string; nameEn: string; productType: string };
   enabled: boolean;
-  globalTargetCnyFen: number | null;
-  regionTargets: Array<{ regionCode: string; targetAmountMinor: number }>;
   regions: Array<DashboardRegion & { monitored: boolean }>;
 }
 
@@ -76,11 +74,10 @@ import type { ConfirmedRegionalProduct, RegionCode } from "../shared/domain";
 import type { RegionResolutionResponse } from "./api-client";
 import type { ApiRequestTracker } from "./api-request-tracker";
 
-/** PATCH 的三个互斥更新形状严格对应服务端现有校验，避免前端拼接未支持的自由字段。 */
+/** PATCH 的两个互斥更新形状严格对应服务端现有校验，避免前端拼接未支持的自由字段。 */
 export type SubscriptionUpdate =
   | { enabled: boolean }
-  | { regionalProductIds: string[] }
-  | { globalTargetCnyFen: number | null; regionTargets: Array<{ regionCode: string; targetAmountMinor: number }> };
+  | { regionalProductIds: string[] };
 
 /**
  * 已有订阅补全只提交本次新确认的官方候选与明确跳过地区；游戏 ID、已有商品 ID 和启用地区范围不在浏览器载荷中，

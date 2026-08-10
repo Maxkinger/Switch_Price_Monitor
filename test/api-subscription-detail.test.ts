@@ -22,12 +22,12 @@ describe("subscription detail HTTP route", () => {
   afterAll(async () => { await database.close(); });
 
   beforeEach(async () => {
-    // 详情依赖价格、目标价、订阅、地区商品与认证记录；统一清空一次性库避免测试轮次互相保留状态。
+    // 详情依赖价格、订阅、地区商品与认证记录；统一清空一次性库避免测试轮次互相保留状态。
     await resetApiTestData(database);
     await seedSubscriptionDetail();
   });
 
-  it("returns a subscribed game's confirmed regions, targets, current price and historical low", async () => {
+  it("returns a subscribed game's confirmed regions, current price and historical low", async () => {
     // 真实初始化和登录路径生成 HttpOnly 会话，防止测试绕过认证守卫而只验证了数据库读取本身。
     const cookie = await initializeAndLogin();
     const response = await call("/api/subscriptions/subscription-overcooked-2", undefined, cookie, "GET");
@@ -42,8 +42,6 @@ describe("subscription detail HTTP route", () => {
         productType: "game",
       },
       enabled: true,
-      globalTargetCnyFen: 5000,
-      regionTargets: [{ regionCode: "JP", targetAmountMinor: 800 }],
       regions: [
         {
           regionalProductId: "product-overcooked-2-us",
@@ -121,9 +119,8 @@ async function seedSubscriptionDetail(): Promise<void> {
     await transaction.query("INSERT INTO games (id, name_zh, name_en, product_type, created_at) VALUES ($1, $2, $3, $4, $5)", ["game-overcooked-2", "胡闹厨房 2", "Overcooked! 2", "game", "2026-07-16T00:00:00.000Z"]);
     await transaction.query("INSERT INTO regional_products (id, game_id, region_code, currency, product_url, match_source, enabled, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", ["product-overcooked-2-us", "game-overcooked-2", "US", "USD", "https://example.test/us/overcooked-2", "manual_selection", true, "2026-07-16T00:00:00.000Z"]);
     await transaction.query("INSERT INTO regional_products (id, game_id, region_code, currency, product_url, match_source, enabled, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", ["product-overcooked-2-jp", "game-overcooked-2", "JP", "JPY", "https://example.test/jp/overcooked-2", "manual_selection", true, "2026-07-16T00:00:00.000Z"]);
-    await transaction.query("INSERT INTO subscriptions (id, game_id, enabled, global_target_cny_fen, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6)", ["subscription-overcooked-2", "game-overcooked-2", true, 5000, "2026-07-16T00:00:00.000Z", "2026-07-16T00:00:00.000Z"]);
+    await transaction.query("INSERT INTO subscriptions (id, game_id, enabled, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)", ["subscription-overcooked-2", "game-overcooked-2", true, "2026-07-16T00:00:00.000Z", "2026-07-16T00:00:00.000Z"]);
     await transaction.query("INSERT INTO subscription_regions (subscription_id, regional_product_id) VALUES ($1, $2)", ["subscription-overcooked-2", "product-overcooked-2-us"]);
-    await transaction.query("INSERT INTO subscription_region_targets (subscription_id, region_code, target_amount_minor, target_state) VALUES ($1, $2, $3, $4)", ["subscription-overcooked-2", "JP", 800, "unmet"]);
     await transaction.query("INSERT INTO price_snapshots (regional_product_id, amount_minor, currency, cny_fen, source, captured_at) VALUES ($1, $2, $3, $4, $5, $6)", ["product-overcooked-2-us", 999, "USD", 6800, "official", "2026-07-16T00:00:00.000Z"]);
     await transaction.query("INSERT INTO price_snapshots (regional_product_id, amount_minor, currency, cny_fen, source, captured_at) VALUES ($1, $2, $3, $4, $5, $6)", ["product-overcooked-2-us", 1099, "USD", 7450, "official", "2026-07-17T00:00:00.000Z"]);
     await transaction.query("INSERT INTO regional_product_health (regional_product_id, consecutive_failures, last_success_at, failure_notified, updated_at) VALUES ($1, $2, $3, $4, $5)", ["product-overcooked-2-us", 1, "2026-07-16T00:00:00.000Z", false, "2026-07-17T00:00:00.000Z"]);

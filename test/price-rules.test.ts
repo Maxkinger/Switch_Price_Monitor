@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { evaluateHealthTransition, evaluateOfficialDrop, evaluateTarget } from "../src/services/price-rules";
+import { evaluateHealthTransition, evaluateOfficialDrop } from "../src/services/price-rules";
 
 /**
  * 价格规则保持纯函数，测试不接触 PostgreSQL、Telegram 或外部商店。
@@ -22,13 +22,6 @@ describe("price monitoring rules", () => {
     expect(evaluateOfficialDrop({ amountMinor: 1_000, source: "official" }, { amountMinor: 800, source: "official" })).toBe(true);
     expect(evaluateOfficialDrop({ amountMinor: 800, source: "official" }, { amountMinor: 800, source: "official" })).toBe(false);
     expect(evaluateOfficialDrop({ amountMinor: 800, source: "official" }, { amountMinor: 1_000, source: "official" })).toBe(false);
-  });
-
-  it("triggers a target only on the first crossing and resets after recovery", () => {
-    // 命中状态持久化在目标价记录中：首次降到目标价或以下提醒，持续低价不重复提醒，回升后重置以允许下次再次跌破。
-    expect(evaluateTarget(5_000, 4_900, "unmet")).toBe("trigger");
-    expect(evaluateTarget(5_000, 4_800, "met")).toBe("none");
-    expect(evaluateTarget(5_000, 5_100, "met")).toBe("reset");
   });
 
   it("alerts once at the third consecutive failure and once again when collection recovers", () => {

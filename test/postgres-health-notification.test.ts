@@ -68,7 +68,8 @@ describe("PostgreSQL 商品健康与通知事件仓储", () => {
   it("同时间待发送事件按 identity 排序且允许关联字段为空", async () => {
     const repository = new PostgresNotificationEventRepository(database);
     await repository.reserve({ regionalProductId: "product-health", eventType: "collection-failure", dedupeKey: "event-linked", createdAt: "2026-07-16T06:00:00.000Z" });
-    await repository.reserve({ regionalProductId: null, eventType: "target-price", dedupeKey: "event-null", createdAt: "2026-07-16T06:00:00.000Z" });
+    // 官方降价事件也允许关联字段为空，用来验证通知仓储不会把可选外键错误收窄为必填。
+    await repository.reserve({ regionalProductId: null, eventType: "official-price-drop", dedupeKey: "event-null", createdAt: "2026-07-16T06:00:00.000Z" });
     await expect(repository.pending()).resolves.toEqual([
       {
         regionalProductId: "product-health",
@@ -80,7 +81,7 @@ describe("PostgreSQL 商品健康与通知事件仓储", () => {
       },
       {
         regionalProductId: null,
-        eventType: "target-price",
+        eventType: "official-price-drop",
         dedupeKey: "event-null",
         createdAt: "2026-07-16T06:00:00.000Z",
         gameNameZh: null,

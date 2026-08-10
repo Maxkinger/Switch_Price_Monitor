@@ -77,8 +77,7 @@ export async function handleSubscriptionRoute(
     const update = readSubscriptionUpdate((await request.json()) as unknown);
     if (update.kind === "enabled") { await service.setEnabled(action.subscriptionId, update.enabled, new Date().toISOString()); return Response.json({ subscriptionId: action.subscriptionId, enabled: update.enabled }); }
     if (update.kind === "regions") { await service.replaceRegionalProducts(action.subscriptionId, update.regionalProductIds, new Date().toISOString()); return Response.json({ subscriptionId: action.subscriptionId, regionalProductIds: update.regionalProductIds }); }
-    await service.setTargets(action.subscriptionId, update.globalTargetCnyFen, update.regionTargets, new Date().toISOString());
-    return Response.json({ subscriptionId: action.subscriptionId, globalTargetCnyFen: update.globalTargetCnyFen, regionTargets: update.regionTargets });
+    throw new SubscriptionRequestError("订阅更新无效。");
   } catch (error) {
     // 可预期的表单或商品归属错误使用 422；数据库故障则使用通用 500，任何路径都不回显 JSON、SQL 或堆栈。
     const isValidationError = error instanceof SubscriptionRequestError || error instanceof RegionalProductMismatchError || error instanceof SubscriptionRegionCompletionError;
@@ -240,8 +239,8 @@ function readProductType(value: unknown): ProductType {
   return value as ProductType;
 }
 
-/** PATCH 只接受启用状态或完整目标价配置，禁止把地区商品编辑等尚未实现的字段静默忽略。 */
-function readSubscriptionUpdate(value: unknown): { kind: "enabled"; enabled: boolean } | { kind: "regions"; regionalProductIds: string[] } | { kind: "targets"; globalTargetCnyFen: number | null; regionTargets: Array<{ regionCode: string; targetAmountMinor: number }> } {
+/** PATCH 只接受启用状态或完整地区范围，其他字段必须显式拒绝而非静默忽略。 */
+function readSubscriptionUpdate(value: unknown): { kind: "enabled"; enabled: boolean } | { kind: "regions"; regionalProductIds: string[] } {
   if (!isRecord(value)) throw new SubscriptionRequestError("请求内容必须是对象。");
   if (typeof value.enabled === "boolean") return { kind: "enabled", enabled: value.enabled };
   if (Array.isArray(value.regionalProductIds)) {
@@ -249,13 +248,7 @@ function readSubscriptionUpdate(value: unknown): { kind: "enabled"; enabled: boo
     if (regionalProductIds.length === 0 || new Set(regionalProductIds).size !== regionalProductIds.length) throw new SubscriptionRequestError("地区商品选择无效。");
     return { kind: "regions", regionalProductIds };
   }
-  if (!(value.globalTargetCnyFen === null || (Number.isInteger(value.globalTargetCnyFen) && (value.globalTargetCnyFen as number) > 0)) || !Array.isArray(value.regionTargets)) throw new SubscriptionRequestError("目标价设置无效。");
-  const regionTargets = value.regionTargets.map((target) => {
-    if (!isRecord(target) || typeof target.regionCode !== "string" || !Number.isInteger(target.targetAmountMinor) || (target.targetAmountMinor as number) <= 0) throw new SubscriptionRequestError("单区目标价无效。");
-    return { regionCode: target.regionCode, targetAmountMinor: target.targetAmountMinor as number };
-  });
-  if (new Set(regionTargets.map((target) => target.regionCode)).size !== regionTargets.length) throw new SubscriptionRequestError("单区目标价不能重复。");
-  return { kind: "targets", globalTargetCnyFen: value.globalTargetCnyFen as number | null, regionTargets };
+  throw new SubscriptionRequestError("订阅更新无效。");
 }
 
 /** 只接受普通对象形态，数组、null 与原型对象都不应被当作浏览器表单提交解析。 */

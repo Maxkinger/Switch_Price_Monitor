@@ -41,18 +41,13 @@ export class SubscriptionService {
   }
 
   /**
-   * 切换订阅软状态。停用不是删除操作：历史快照、地区映射和目标价状态都要继续存在，
+   * 切换订阅软状态。停用不是删除操作：历史快照与地区映射都要继续存在，
    * 采集器仅根据 enabled 决定是否继续生成新记录和通知。
    */
   public async setEnabled(subscriptionId: string, enabled: boolean, now: string): Promise<void> {
     if (!(await this.subscriptions.setEnabled(subscriptionId, enabled, now))) {
       throw new SubscriptionNotFoundError("订阅不存在。");
     }
-  }
-
-  /** 保存全局人民币和单区当地货币目标；单区记录由规则层优先使用。 */
-  public async setTargets(subscriptionId: string, globalTargetCnyFen: number | null, regionTargets: Array<{ regionCode: string; targetAmountMinor: number }>, now: string): Promise<void> {
-    if (!(await this.subscriptions.setTargets(subscriptionId, globalTargetCnyFen, regionTargets, now))) throw new SubscriptionNotFoundError("订阅不存在。");
   }
 
   /** 更新监控地区前确认订阅存在且全部地区商品属于同一逻辑游戏，避免跨游戏历史混合。 */

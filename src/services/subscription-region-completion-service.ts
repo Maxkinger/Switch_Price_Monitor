@@ -34,7 +34,7 @@ export interface CompletionRegionsResult {
 
 /**
  * 已有订阅地区补全把“读取既有锚点、重验任天堂页面、校验设置覆盖范围、原子追加”放在同一服务。
- * 它绝不删除或替换既有地区、价格快照、目标价、启用状态和订阅 ID，补全失败也不会产生部分写入。
+ * 它绝不删除或替换既有地区、价格快照、启用状态和订阅 ID，补全失败也不会产生部分写入。
  */
 export class SubscriptionRegionCompletionService {
   public constructor(

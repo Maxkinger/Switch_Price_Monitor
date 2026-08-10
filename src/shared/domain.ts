@@ -139,7 +139,7 @@ export interface SubscriptionRecord extends SubscriptionInput {
 }
 
 /**
- * 不可变价格快照统一使用最小货币单位与分为单位的人民币，避免浮点误差影响历史最低价和目标价判定。
+ * 不可变价格快照统一使用最小货币单位与分为单位的人民币，避免浮点误差影响历史最低价和官方降价判定。
  * cnyFen 可为空，表示该次本币价格已取得但当日汇率不可用。
  */
 export interface PriceSnapshot {

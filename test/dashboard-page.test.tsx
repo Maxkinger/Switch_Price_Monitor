@@ -54,8 +54,6 @@ const subscriptionDetail: SubscriptionDetail = {
   subscriptionId: "subscription-overcooked-2",
   game: { id: "game-overcooked-2", nameZh: "胡闹厨房 2", nameEn: "Overcooked! 2", productType: "game" },
   enabled: true,
-  globalTargetCnyFen: null,
-  regionTargets: [],
   regions: [{
     regionalProductId: "product-overcooked-2-us",
     regionCode: "US",
@@ -106,8 +104,6 @@ const localizedSubscriptionDetail: SubscriptionDetail = {
   subscriptionId: "subscription-overcooked-2-switch-2-edition",
   game: { id: "game-overcooked-2-switch-2-edition", nameZh: "胡闹厨房 2 Nintendo Switch 2 Edition", nameEn: "Overcooked! 2 – Nintendo Switch 2 Edition", productType: "upgrade_pack" },
   enabled: true,
-  globalTargetCnyFen: null,
-  regionTargets: [],
   regions: localizedOverview.subscriptions[0].regions.map((region) => ({
     ...region,
     monitored: true,
@@ -261,7 +257,7 @@ describe("地区中文名与官网价格文字", () => {
       deleteSubscriptions: vi.fn(),
     };
 
-    render(<SubscriptionDetailPage api={api} productApi={{} as ReturnType<typeof createProductApiClient>} subscriptionId="subscription-overcooked-2-switch-2-edition" onBack={vi.fn()} onUnauthorized={vi.fn()} />);
+    const { container } = render(<SubscriptionDetailPage api={api} productApi={{} as ReturnType<typeof createProductApiClient>} subscriptionId="subscription-overcooked-2-switch-2-edition" onBack={vi.fn()} onUnauthorized={vi.fn()} />);
 
     expect(await screen.findByText("美国区")).toBeTruthy();
     expect(screen.getAllByText("$ 39.99")).toHaveLength(2);
@@ -270,6 +266,8 @@ describe("地区中文名与官网价格文字", () => {
     expect(screen.getByText("香港区")).toBeTruthy();
     expect(screen.getByText("HKD 198")).toBeTruthy();
     expect(screen.queryByText("US · USD")).toBeNull();
+    // 详情管理区只保留地区补全、监控范围和不可逆删除三组操作；精确图例集合避免已移除表单被悄然重新渲染。
+    expect([...container.querySelectorAll(".detail-management fieldset legend")].map((legend) => legend.textContent)).toEqual(["补全已启用地区", "监控地区", "危险操作"]);
   });
 });
 

@@ -11,7 +11,7 @@ describe("subscription management HTTP routes", () => {
   afterAll(async () => { await database.close(); });
 
   beforeEach(async () => {
-    // 硬删除覆盖快照、日志、健康状态、通知和目标价；清空一次性库避免某次删除测试污染后续用例。
+    // 硬删除覆盖快照、日志、健康状态和通知；清空一次性库避免某次删除测试污染后续用例。
     await resetApiTestData(database);
     await seedSubscriptionCandidate();
   });
@@ -103,21 +103,19 @@ describe("subscription management HTTP routes", () => {
     await expect(queryOne<{ enabled: boolean }>("SELECT enabled FROM subscriptions WHERE id = $1", ["subscription-overcooked-2"])).resolves.toEqual({ enabled: true });
   });
 
-  it("saves a global CNY target and a regional local-currency target for a subscription", async () => {
-    // 单区目标价格优先于全局人民币目标；两者都以最小货币单位保存，避免浮点金额让提醒阈值出现偏差。
+  it("rejects unsupported PATCH fields instead of silently ignoring them", async () => {
+    // 未受支持字段必须返回明确校验错误，防止浏览器把无效设置误以为保存成功而产生错误的通知预期。
     const cookie = await initializeAndLogin();
     await createSubscription(cookie);
     const response = await call(
       "/api/subscriptions/subscription-overcooked-2",
-      { globalTargetCnyFen: 5000, regionTargets: [{ regionCode: "JP", targetAmountMinor: 800 }] },
+      { unsupportedSetting: true },
       cookie,
       "PATCH",
     );
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ subscriptionId: "subscription-overcooked-2", globalTargetCnyFen: 5000, regionTargets: [{ regionCode: "JP", targetAmountMinor: 800 }] });
-    await expect(queryOne<{ target: number }>("SELECT global_target_cny_fen AS target FROM subscriptions WHERE id = $1", ["subscription-overcooked-2"])).resolves.toEqual({ target: 5000 });
-    await expect(queryOne<{ target: number }>("SELECT target_amount_minor AS target FROM subscription_region_targets WHERE subscription_id = $1 AND region_code = $2", ["subscription-overcooked-2", "JP"])).resolves.toEqual({ target: 800 });
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({ code: "VALIDATION_ERROR", error: "订阅更新无效。" });
   });
 
   it("replaces a subscription's monitored regional products without creating another subscription", async () => {
@@ -147,7 +145,6 @@ describe("subscription management HTTP routes", () => {
     await expect(queryOne<{ count: number }>("SELECT COUNT(*)::int AS count FROM price_snapshots")).resolves.toEqual({ count: 0 });
     await expect(queryOne<{ count: number }>("SELECT COUNT(*)::int AS count FROM regional_product_health")).resolves.toEqual({ count: 0 });
     await expect(queryOne<{ count: number }>("SELECT COUNT(*)::int AS count FROM notification_events")).resolves.toEqual({ count: 0 });
-    await expect(queryOne<{ count: number }>("SELECT COUNT(*)::int AS count FROM subscription_region_targets")).resolves.toEqual({ count: 0 });
     await expect(queryOne<{ count: number }>("SELECT COUNT(*)::int AS count FROM subscription_regions WHERE subscription_id = $1", ["subscription-overcooked-2"])).resolves.toEqual({ count: 0 });
     await expect(queryOne<{ count: number }>("SELECT COUNT(*)::int AS count FROM subscriptions")).resolves.toEqual({ count: 1 });
     await expect(queryOne<{ count: number }>("SELECT COUNT(*)::int AS count FROM regional_products WHERE game_id = $1", ["game-overcooked-2"])).resolves.toEqual({ count: 0 });
@@ -189,7 +186,6 @@ describe("subscription management HTTP routes", () => {
 async function seedSubscriptionDependentData(): Promise<void> {
   // 所有专属数据在一个夹具事务中写入；任一约束失败都不能留下会让硬删除断言失真的半成品。
   await database.transaction(async (transaction) => {
-    await transaction.query("INSERT INTO subscription_region_targets (subscription_id, region_code, target_amount_minor, target_state) VALUES ($1, $2, $3, $4)", ["subscription-overcooked-2", "JP", 800, "met"]);
     await transaction.query("INSERT INTO price_snapshots (regional_product_id, amount_minor, currency, cny_fen, source, captured_at) VALUES ($1, $2, $3, $4, $5, $6)", ["product-overcooked-2-jp", 800, "JPY", 4000, "official", "2026-07-18T00:00:00.000Z"]);
     await transaction.query("INSERT INTO fetch_logs (regional_product_id, source, status, message, captured_at) VALUES ($1, $2, $3, $4, $5)", ["product-overcooked-2-jp", "official-test", "failed", "测试采集失败", "2026-07-18T00:00:00.000Z"]);
     await transaction.query("INSERT INTO regional_product_health (regional_product_id, consecutive_failures, last_success_at, failure_notified, updated_at) VALUES ($1, $2, $3, $4, $5)", ["product-overcooked-2-jp", 3, null, true, "2026-07-18T00:00:00.000Z"]);

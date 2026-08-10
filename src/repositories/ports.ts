@@ -238,18 +238,12 @@ export interface SubscriptionConfirmationStore {
 }
 
 /**
- * 订阅编辑端口把创建、目标价、地区替换与永久删除定义为平台中立能力。
+ * 订阅编辑端口把创建、地区替换与永久删除定义为平台中立能力。
  * 需要多条 SQL 的实现必须自行提供真实事务，服务层不模拟批处理或持有数据库连接。
  */
 export interface SubscriptionStore extends SubscriptionReader {
   create(input: SubscriptionInput): Promise<void>;
   setEnabled(id: string, enabled: boolean, updatedAt: string): Promise<boolean>;
-  setTargets(
-    id: string,
-    globalTargetCnyFen: number | null,
-    regionTargets: Array<{ regionCode: string; targetAmountMinor: number }>,
-    updatedAt: string,
-  ): Promise<boolean>;
   replaceRegionalProducts(
     id: string,
     regionalProductIds: string[],
@@ -282,7 +276,7 @@ export interface RetentionStore {
 }
 
 /**
- * Task 3 只迁移订阅查询能力；创建、目标价、地区替换与永久删除事务由 Task 4 接管。
+ * Task 3 只迁移订阅查询能力；创建、地区替换与永久删除事务由 Task 4 接管。
  * 空地区数组是合法查询输入并返回 false，避免生成 PostgreSQL 的非法空 IN 条件。
  */
 export interface SubscriptionReader {
@@ -329,8 +323,6 @@ export interface SubscriptionDetail {
     productType: string;
   };
   enabled: boolean;
-  globalTargetCnyFen: number | null;
-  regionTargets: Array<{ regionCode: string; targetAmountMinor: number }>;
   regions: SubscriptionDetailRegion[];
 }
 
@@ -356,7 +348,7 @@ export interface ProductHealthStore {
  */
 export interface NotificationEventReservation {
   regionalProductId: string | null;
-  eventType: "collection-failure" | "collection-recovered" | "official-price-drop" | "target-price";
+  eventType: "collection-failure" | "collection-recovered" | "official-price-drop";
   dedupeKey: string;
   createdAt: string;
 }

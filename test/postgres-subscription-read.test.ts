@@ -37,17 +37,10 @@ describe("PostgreSQL 订阅读取仓储", () => {
               ('product-jp', 800, 'JPY', 3900, 'official', $1)`,
       ["2026-07-16T06:00:00.000Z"],
     );
-    await database.query(
-      `INSERT INTO subscription_region_targets (subscription_id, region_code, target_amount_minor)
-       VALUES ('subscription-read', 'JP', 850)`,
-    );
-
     const detail = await new PostgresSubscriptionDetailRepository(database).find("subscription-read");
     expect(detail).toMatchObject({
       subscriptionId: "subscription-read",
       enabled: true,
-      globalTargetCnyFen: null,
-      regionTargets: [{ regionCode: "JP", targetAmountMinor: 850 }],
     });
     expect(detail?.regions).toEqual([
       {

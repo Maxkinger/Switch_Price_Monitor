@@ -174,7 +174,6 @@ function buildPendingNotificationMessage(event: PendingNotificationEvent): Teleg
     "collection-failure": `⚠️ 采集异常\n${game}${region}已连续 3 次无法获取价格，请检查商品链接与已启用价格来源。`,
     "collection-recovered": `✅ 采集恢复\n${game}${region}已恢复获取价格。`,
     "official-price-drop": `🔻 官方降价提醒\n${game}${region}检测到官方价格下降。`,
-    "target-price": `🎯 目标价提醒\n${game}${region}当前价格已达到设定目标。`,
   };
   return { text: messages[event.eventType] };
 }

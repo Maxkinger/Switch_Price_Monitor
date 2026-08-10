@@ -240,14 +240,13 @@ export class InMemoryNotificationEventStore implements NotificationEventStore {
 }
 
 /**
- * 一个已确认订阅的内存投影。`historySnapshotCount` 与 `globalTargetCnyFen` 是补全端口不可写的既有业务哨兵，
- * 用于证明服务只追加地区；它们不模拟价格表或目标价表，真实跨表事务仍由 PostgreSQL 集成测试承担。
+ * 一个已确认订阅的内存投影。`historySnapshotCount` 是补全端口不可写的既有业务哨兵，
+ * 用于证明服务只追加地区；它不模拟价格表，真实跨表事务仍由 PostgreSQL 集成测试承担。
  */
 interface StoredConfirmation {
   confirmation: ValidatedSubscriptionConfirmation;
   anchor: OfficialProductCandidate;
   historySnapshotCount: number;
-  globalTargetCnyFen: number | null;
 }
 
 /** 供用例构造既有订阅；所有字段均是公开业务 DTO 或不变量哨兵，不包含数据库行与驱动句柄。 */
@@ -255,7 +254,6 @@ export interface ExistingConfirmationSeed {
   confirmation: ValidatedSubscriptionConfirmation;
   anchor: OfficialProductCandidate;
   historySnapshotCount?: number;
-  globalTargetCnyFen?: number | null;
 }
 
 /**
@@ -277,7 +275,6 @@ export class InMemorySubscriptionConfirmationStore implements SubscriptionConfir
       confirmation: cloneConfirmation(seed.confirmation),
       anchor: { ...seed.anchor },
       historySnapshotCount: seed.historySnapshotCount ?? 0,
-      globalTargetCnyFen: seed.globalTargetCnyFen ?? null,
     });
   }
 
@@ -338,7 +335,6 @@ export class InMemorySubscriptionConfirmationStore implements SubscriptionConfir
           regularPriceMinor: null,
         },
         historySnapshotCount: 0,
-        globalTargetCnyFen: null,
       });
     }
   }
@@ -368,7 +364,7 @@ export class InMemorySubscriptionConfirmationStore implements SubscriptionConfir
     if (regions.some((region) => occupied.has(region.regionCode)) || new Set(regions.map((region) => region.regionCode)).size !== regions.length) {
       throw new Error("订阅补全包含重复地区");
     }
-    // 只有地区 DTO 被追加；历史快照计数、目标价、游戏和订阅 ID 均保持原值。
+    // 只有地区 DTO 被追加；历史快照计数、游戏和订阅 ID 均保持原值。
     stored.confirmation.regions.push(...regions.map((region) => ({ ...region })));
   }
 
@@ -399,12 +395,12 @@ export class InMemorySubscriptionConfirmationStore implements SubscriptionConfir
       .sort();
   }
 
-  /** 返回补全端口无权修改的历史与目标价哨兵，确保测试继续锁定“不覆盖既有监控配置”的规则。 */
-  public protectedState(subscriptionId: string): { historySnapshotCount: number; globalTargetCnyFen: number | null } | null {
+  /** 返回补全端口无权修改的历史哨兵，确保测试继续锁定“不覆盖既有监控配置”的规则。 */
+  public protectedState(subscriptionId: string): { historySnapshotCount: number } | null {
     const stored = this.recordsBySubscriptionId.get(subscriptionId);
     return stored === undefined
       ? null
-      : { historySnapshotCount: stored.historySnapshotCount, globalTargetCnyFen: stored.globalTargetCnyFen };
+      : { historySnapshotCount: stored.historySnapshotCount };
   }
 
   private findStoredByNormalizedName(normalizedName: string): StoredConfirmation | null {

@@ -12,9 +12,7 @@ interface SubscriptionRow {
   nameEn: string;
   productType: string;
   enabled: boolean;
-  globalTargetCnyFen: number | null;
 }
-interface TargetRow { regionCode: string; targetAmountMinor: number; }
 interface RegionRow {
   regionalProductId: string;
   regionCode: string;
@@ -46,8 +44,7 @@ export class PostgresSubscriptionDetailRepository implements SubscriptionDetailR
               games.name_zh AS "nameZh",
               games.name_en AS "nameEn",
               games.product_type AS "productType",
-              subscriptions.enabled,
-              subscriptions.global_target_cny_fen AS "globalTargetCnyFen"
+              subscriptions.enabled
          FROM subscriptions
          INNER JOIN games ON games.id = subscriptions.game_id
         WHERE subscriptions.id = $1`,
@@ -56,16 +53,7 @@ export class PostgresSubscriptionDetailRepository implements SubscriptionDetailR
     const subscription = subscriptionResult.rows[0];
     if (!subscription) return null;
 
-    const [targets, regions] = await Promise.all([
-      this.database.query<TargetRow>(
-        `SELECT region_code AS "regionCode",
-                target_amount_minor AS "targetAmountMinor"
-           FROM subscription_region_targets
-          WHERE subscription_id = $1
-          ORDER BY region_code ASC`,
-        [subscriptionId],
-      ),
-      this.database.query<RegionRow>(
+    const regions = await this.database.query<RegionRow>(
         `SELECT products.id AS "regionalProductId",
                 products.region_code AS "regionCode",
                 products.currency,
@@ -103,8 +91,7 @@ export class PostgresSubscriptionDetailRepository implements SubscriptionDetailR
             AND products.enabled IS TRUE
           ORDER BY monitored DESC, products.created_at ASC, products.id ASC`,
         [subscriptionId, subscription.gameId],
-      ),
-    ]);
+    );
 
     return {
       subscriptionId: subscription.subscriptionId,
@@ -115,8 +102,6 @@ export class PostgresSubscriptionDetailRepository implements SubscriptionDetailR
         productType: subscription.productType,
       },
       enabled: subscription.enabled,
-      globalTargetCnyFen: subscription.globalTargetCnyFen,
-      regionTargets: targets.rows,
       regions: regions.rows.map((region) => ({
         regionalProductId: region.regionalProductId,
         regionCode: region.regionCode,

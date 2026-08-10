@@ -99,37 +99,6 @@ export class PostgresSubscriptionRepository implements SubscriptionStore {
     return result.rowCount === 1;
   }
 
-  public async setTargets(
-    id: string,
-    globalTargetCnyFen: number | null,
-    regionTargets: Array<{ regionCode: string; targetAmountMinor: number }>,
-    updatedAt: string,
-  ): Promise<boolean> {
-    return this.database.transaction(async (transaction) => {
-      const updated = await transaction.query(
-        `UPDATE subscriptions
-            SET global_target_cny_fen = $1,
-                updated_at = $2
-          WHERE id = $3`,
-        [globalTargetCnyFen, updatedAt, id],
-      );
-      if (updated.rowCount !== 1) return false;
-      await transaction.query(
-        "DELETE FROM subscription_region_targets WHERE subscription_id = $1",
-        [id],
-      );
-      for (const target of regionTargets) {
-        await transaction.query(
-          `INSERT INTO subscription_region_targets (
-             subscription_id, region_code, target_amount_minor, target_state
-           ) VALUES ($1, $2, $3, 'unmet')`,
-          [id, target.regionCode, target.targetAmountMinor],
-        );
-      }
-      return true;
-    });
-  }
-
   public async replaceRegionalProducts(
     id: string,
     regionalProductIds: string[],
@@ -181,10 +150,6 @@ export class PostgresSubscriptionRepository implements SubscriptionStore {
                   SELECT id FROM regional_products WHERE game_id = ANY($2::text[])
                 )`,
         [subscriptionIds, gameIds],
-      );
-      await transaction.query(
-        "DELETE FROM subscription_region_targets WHERE subscription_id = ANY($1::text[])",
-        [subscriptionIds],
       );
       await transaction.query(
         "DELETE FROM subscription_regions WHERE subscription_id = ANY($1::text[])",

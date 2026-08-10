@@ -75,7 +75,7 @@ test("仅含迁移的 fresh 备份可恢复为空业务库", { timeout: 120_000 
   assertCustomArchive(freshDump);
   createEmptyDatabase(freshDatabase);
   restore(freshDump, freshDatabase);
-  assert.equal(sql(freshDatabase, "SELECT count(*) FROM schema_migrations").trim(), "1");
+  assert.equal(sql(freshDatabase, "SELECT count(*) FROM schema_migrations").trim(), "2");
   assert.equal(sql(freshDatabase, "SELECT count(*) FROM admin_credentials").trim(), "0");
   assert.equal(sql(freshDatabase, "SELECT count(*) FROM price_snapshots").trim(), "0");
 });
@@ -162,7 +162,7 @@ test("账本 checksum 与迁移精确字节不一致的 archive 必须拒绝恢�
   // 临时改为固定 64 个零仅构造坏归档；备份后立即还原真实 SHA，后续测试不继承错误源库状态。
   sql(sourceDatabase, "UPDATE schema_migrations SET checksum = repeat('0', 64) WHERE version = '0001_initial.sql'");
   const badDump = backup("4");
-  sql(sourceDatabase, `UPDATE schema_migrations SET checksum = '${migrationChecksum()}' WHERE version = '0001_initial.sql'`);
+  sql(sourceDatabase, `UPDATE schema_migrations SET checksum = '${migrationChecksum("0001_initial.sql")}' WHERE version = '0001_initial.sql'`);
   // 共享表空间授权位于目标数据库之外；恢复失败清理绝不能用 DROP OWNED 顺带撤销该授权。
   bootstrapSharedPrivilege("GRANT CREATE ON TABLESPACE pg_default TO task9_app");
   assert.equal(explicitTablespaceGrantCount(sourceDatabase), 1);
@@ -270,10 +270,10 @@ test.after(() => {
 function writeFixtureCompose() {
   mkdirSync(projectRoot, { recursive: true, mode: 0o700 });
   const initScript = resolve(repositoryRoot, "docker/postgres/init-app-role.sh");
-  const migration = resolve(repositoryRoot, "migrations/postgres/0001_initial.sql");
+  const migrationDirectory = resolve(repositoryRoot, "migrations/postgres");
   // Compose 故意只引用 env 插值且测试从项目目录外启动，证明运维脚本不能依赖 cwd 自动发现 `.env`。
   writeFileSync(envFile, `TASK9_DATABASE=${sourceDatabase}\nTASK9_BOOTSTRAP_USER=task9_bootstrap\nTASK9_BOOTSTRAP_PASSWORD=synthetic-bootstrap-only\nTASK9_APP_USER=task9_app\nTASK9_APP_PASSWORD=synthetic-app-only\n`, { mode: 0o600 });
-  writeFileSync(composeFile, `services:\n  ${databaseService}:\n    image: postgres:17\n    environment:\n      POSTGRES_DB: \${TASK9_DATABASE:?TASK9_DATABASE_REQUIRED}\n      POSTGRES_USER: \${TASK9_BOOTSTRAP_USER:?TASK9_BOOTSTRAP_USER_REQUIRED}\n      POSTGRES_PASSWORD: \${TASK9_BOOTSTRAP_PASSWORD:?TASK9_BOOTSTRAP_PASSWORD_REQUIRED}\n      APP_DATABASE_USER: \${TASK9_APP_USER:?TASK9_APP_USER_REQUIRED}\n      APP_DATABASE_PASSWORD: \${TASK9_APP_PASSWORD:?TASK9_APP_PASSWORD_REQUIRED}\n    volumes:\n      - type: bind\n        source: ${initScript}\n        target: /docker-entrypoint-initdb.d/010-init-app-role.sh\n        read_only: true\n      - type: bind\n        source: ${migration}\n        target: /fixtures/0001_initial.sql\n        read_only: true\n  app:\n    image: postgres:17\n    command: [\"sh\", \"-ceu\", \"sleep infinity\"]\n    volumes:\n      - type: bind\n        source: ${migration}\n        target: /app/migrations/postgres/0001_initial.sql\n        read_only: true\n`);
+  writeFileSync(composeFile, `services:\n  ${databaseService}:\n    image: postgres:17\n    environment:\n      POSTGRES_DB: \${TASK9_DATABASE:?TASK9_DATABASE_REQUIRED}\n      POSTGRES_USER: \${TASK9_BOOTSTRAP_USER:?TASK9_BOOTSTRAP_USER_REQUIRED}\n      POSTGRES_PASSWORD: \${TASK9_BOOTSTRAP_PASSWORD:?TASK9_BOOTSTRAP_PASSWORD_REQUIRED}\n      APP_DATABASE_USER: \${TASK9_APP_USER:?TASK9_APP_USER_REQUIRED}\n      APP_DATABASE_PASSWORD: \${TASK9_APP_PASSWORD:?TASK9_APP_PASSWORD_REQUIRED}\n    volumes:\n      - type: bind\n        source: ${initScript}\n        target: /docker-entrypoint-initdb.d/010-init-app-role.sh\n        read_only: true\n      - type: bind\n        source: ${migrationDirectory}\n        target: /fixtures\n        read_only: true\n  app:\n    image: postgres:17\n    command: [\"sh\", \"-ceu\", \"sleep infinity\"]\n    volumes:\n      - type: bind\n        source: ${migrationDirectory}\n        target: /app/migrations/postgres\n        read_only: true\n`);
 }
 
 /** 所有 Docker 调用都明确 Compose 文件与 project，避免 Docker 默认项目名意外选择现有开发或验收容器。 */
@@ -349,15 +349,16 @@ function invalidAdminFixtureSql(statement) {
   return sql(sourceDatabase, statement);
 }
 
-/** 使用固定仓库迁移建立 source 基线，账本 checksum 来自精确字节，供恢复 manifest 对照。 */
+/** 使用当前完整迁移集建立 source 基线，账本 checksum 来自精确字节，供恢复 manifest 对照。 */
 function createMigratedSchema() {
   sql(sourceDatabase, "CREATE TABLE schema_migrations (version text primary key, checksum text not null, applied_at timestamptz not null default current_timestamp)");
   sql(sourceDatabase, "\\i /fixtures/0001_initial.sql");
-  sql(sourceDatabase, `INSERT INTO schema_migrations (version, checksum) VALUES ('0001_initial.sql', '${migrationChecksum()}')`);
+  sql(sourceDatabase, "\\i /fixtures/0002_remove_target_price.sql");
+  sql(sourceDatabase, `INSERT INTO schema_migrations (version, checksum) VALUES ('0001_initial.sql', '${migrationChecksum("0001_initial.sql")}'), ('0002_remove_target_price.sql', '${migrationChecksum("0002_remove_target_price.sql")}')`);
 }
 
 /** 账本校验和必须来自迁移精确字节；不能用夹具常量掩盖未来 app manifest 与恢复记录的不一致。 */
-function migrationChecksum() { return createHash("sha256").update(readFileSync(resolve(repositoryRoot, "migrations/postgres/0001_initial.sql"))).digest("hex"); }
+function migrationChecksum(version) { return createHash("sha256").update(readFileSync(resolve(repositoryRoot, "migrations/postgres", version))).digest("hex"); }
 
 /** 仅向已迁移 source 追加固定认证/价格夹具，验证 archive 保存业务历史而不接收外部秘密。 */
 function seedSourceFixture() {
@@ -453,7 +454,7 @@ function countUserObjects(database) {
 
 /** 只读取迁移、管理员与代表性价格字段，证明恢复完整性且不读取认证材料。 */
 function assertRestoredFixture(database) {
-  assert.equal(sql(database, "SELECT version FROM schema_migrations").trim(), "0001_initial.sql");
+  assert.equal(sql(database, "SELECT version FROM schema_migrations ORDER BY version").trim(), "0001_initial.sql\n0002_remove_target_price.sql");
   assert.equal(sql(database, "SELECT count(*) FROM admin_credentials WHERE id = 1").trim(), "1");
   assert.equal(sql(database, "SELECT amount_minor || ':' || cny_fen || ':' || source FROM price_snapshots").trim(), "5980:28000:official");
   assert.equal(sql(database, "SELECT count(*) FROM settings WHERE id = 1").trim(), "1");

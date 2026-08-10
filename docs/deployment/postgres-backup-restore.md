@@ -100,7 +100,7 @@ docker compose --env-file .env -f docker-compose.prod.yml -p switch-price-monito
 脚本在写入前两次确认 app 已停止，验证目标由普通 app 角色拥有且没有用户对象，校验归档和应用镜像迁移 manifest，然后以 `--single-transaction --exit-on-error --no-owner --no-privileges` 恢复。成功后还会验证：
 
 - 迁移账本非空且与镜像文件名/校验和完全一致。
-- public 表集合与当前迁移精确一致，共 16 张：`schema_migrations`、`settings`、`games`、`regional_products`、`subscriptions`、`subscription_regions`、`subscription_region_targets`、`price_snapshots`、`exchange_rates`、`fetch_logs`、`regional_product_health`、`notification_events`、`admin_credentials`、`sessions`、`login_attempts`、`manual_refresh_requests`；缺表或额外旧表均拒绝。
+- public 表集合与当前迁移精确一致，共 15 张：`schema_migrations`、`settings`、`games`、`regional_products`、`subscriptions`、`subscription_regions`、`price_snapshots`、`exchange_rates`、`fetch_logs`、`regional_product_health`、`notification_events`、`admin_credentials`、`sessions`、`login_attempts`、`manual_refresh_requests`；缺表或额外旧表均拒绝。
 - 管理员记录为 0 行，或只有唯一 `id=1`。
 
 post-validation 失败时，脚本只清理这个已证明为空且仍持锁的显式目标数据库，重新证明为空后才允许重试；它不会修改生产数据库、其他数据库、表空间或角色级共享授权。

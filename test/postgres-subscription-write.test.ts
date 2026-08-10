@@ -70,21 +70,15 @@ describe("PostgreSQL 订阅确认与永久删除事务", () => {
     await expect(countRows(database, "subscription_regions")).resolves.toBe(2);
   });
 
-  it("已有订阅成功补全只追加地区并保留价格历史与全局目标价", async () => {
+  it("已有订阅成功补全只追加地区并保留价格历史", async () => {
     /**
-     * 成功路径比故障回滚更容易被宽泛 UPDATE 或重建订阅误伤：先给美区写入一条官方价格快照，并给订阅设置人民币分目标价，
-     * 再真实调用 completeAtomically 追加墨西哥区。补全只能新增地区商品和关系，不得触碰不可逆历史或管理员价格策略。
+     * 成功路径比故障回滚更容易被宽泛 UPDATE 或重建订阅误伤：先给美区写入一条官方价格快照，
+     * 再真实调用 completeAtomically 追加墨西哥区。补全只能新增地区商品和关系，不得触碰不可逆历史。
      */
     const repository = new PostgresSubscriptionConfirmationRepository(database);
     await repository.createAtomically(
       [confirmation("game-complete-success", "subscription-complete-success", "completion success")],
       fixedNow,
-    );
-    await database.query(
-      `UPDATE subscriptions
-          SET global_target_cny_fen = 5000
-        WHERE id = $1`,
-      ["subscription-complete-success"],
     );
     await database.query(
       `INSERT INTO price_snapshots (
@@ -107,12 +101,6 @@ describe("PostgreSQL 订阅确认与永久删除事务", () => {
       "2026-07-27T00:05:00.000Z",
     );
 
-    const subscription = await database.query<{ globalTargetCnyFen: number | null }>(
-      `SELECT global_target_cny_fen AS "globalTargetCnyFen"
-         FROM subscriptions
-        WHERE id = $1`,
-      ["subscription-complete-success"],
-    );
     const snapshots = await database.query<{
       amountMinor: number;
       currency: string;
@@ -129,7 +117,6 @@ describe("PostgreSQL 订阅确认与永久删除事务", () => {
         WHERE regional_product_id = $1`,
       ["game-complete-success-product-us"],
     );
-    expect(subscription.rows).toEqual([{ globalTargetCnyFen: 5000 }]);
     expect(snapshots.rows).toEqual([{
       amountMinor: 999,
       currency: "USD",
@@ -181,7 +168,6 @@ describe("PostgreSQL 订阅确认与永久删除事务", () => {
       regionalProducts: 2,
       subscriptions: 1,
       subscriptionRegions: 2,
-      targets: 1,
       snapshots: 2,
       logs: 2,
       health: 2,
@@ -217,7 +203,6 @@ describe("PostgreSQL 订阅确认与永久删除事务", () => {
       regionalProducts: 0,
       subscriptions: 0,
       subscriptionRegions: 0,
-      targets: 0,
       snapshots: 0,
       logs: 0,
       health: 0,
@@ -314,7 +299,7 @@ function confirmation(
 }
 
 /**
- * 为永久删除构造完整依赖图：目标价、两区价格/日志/健康状态以及分别按订阅和商品关联的通知。
+ * 为永久删除构造完整依赖图：两区价格/日志/健康状态以及分别按订阅和商品关联的通知。
  * 同时写入设置、汇率和认证单例作为不得删除的哨兵；所有值均为合成数据，不包含真实凭据或来源响应。
  */
 async function seedDeletionDependents(
@@ -323,12 +308,6 @@ async function seedDeletionDependents(
   subscriptionId: string,
 ): Promise<void> {
   const productIds = [`${gameId}-product-us`, `${gameId}-product-jp`];
-  await database.query(
-    `INSERT INTO subscription_region_targets (
-       subscription_id, region_code, target_amount_minor, target_state
-     ) VALUES ($1, 'US', 1500, 'met')`,
-    [subscriptionId],
-  );
   for (const [index, productId] of productIds.entries()) {
     const currency = index === 0 ? "USD" : "JPY";
     await database.query(
@@ -354,7 +333,7 @@ async function seedDeletionDependents(
     `INSERT INTO notification_events (
        subscription_id, regional_product_id, event_type, status, dedupe_key, created_at
      ) VALUES
-       ($1, NULL, 'target-reached', 'pending', $2, $3),
+       ($1, NULL, 'official-price-drop', 'pending', $2, $3),
        (NULL, $4, 'collection-failure', 'pending', $5, $3)`,
     [
       subscriptionId,
@@ -390,7 +369,6 @@ interface DeletionGraphCounts {
   regionalProducts: number;
   subscriptions: number;
   subscriptionRegions: number;
-  targets: number;
   snapshots: number;
   logs: number;
   health: number;
@@ -406,7 +384,6 @@ async function expectDeletionGraphCounts(
   await expect(countRows(database, "regional_products")).resolves.toBe(expected.regionalProducts);
   await expect(countRows(database, "subscriptions")).resolves.toBe(expected.subscriptions);
   await expect(countRows(database, "subscription_regions")).resolves.toBe(expected.subscriptionRegions);
-  await expect(countRows(database, "subscription_region_targets")).resolves.toBe(expected.targets);
   await expect(countRows(database, "price_snapshots")).resolves.toBe(expected.snapshots);
   await expect(countRows(database, "fetch_logs")).resolves.toBe(expected.logs);
   await expect(countRows(database, "regional_product_health")).resolves.toBe(expected.health);
@@ -451,7 +428,6 @@ async function countRows(
     | "regional_products"
     | "subscriptions"
     | "subscription_regions"
-    | "subscription_region_targets"
     | "price_snapshots"
     | "fetch_logs"
     | "regional_product_health"
