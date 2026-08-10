@@ -20,7 +20,8 @@
 | `POST /api/auth/login` | 公开 | 验证密码与失败锁定；成功设置会话 Cookie。无效凭据 `401`，锁定 `429`。 |
 | `POST /api/auth/recover` | 公开 | 一次性恢复码重设密码并撤销会话；成功 `204`，不回显秘密。 |
 | `POST /api/auth/logout` | 可无 Cookie | 幂等撤销当前会话并清除 Cookie，返回 `204`。 |
-| `GET/PATCH /api/settings` | 已登录 | 只读写公开偏好：地区、默认区、主题、时区、日报、税务州和保留策略；没有 Telegram 或认证秘密字段。 |
+| `GET/PATCH /api/settings` | 已登录 | 只读写公开偏好：地区、默认区、主题、时区、日报、税务州、保留策略及无认证代理的协议/主机/端口；没有 Telegram、认证或代理密码字段。 |
+| `POST /api/settings/proxy/test` | 已登录 | 仅测试请求体中的无认证代理草稿，目标固定为官方 robots.txt；返回 HTTP 与浏览器各自的安全三态，不保存草稿、不接受任意 URL。 |
 | `POST /api/products/search` | 已登录 | 名称只在服务端保存的默认区搜索官方候选，不允许浏览器覆盖默认区。 |
 | `POST /api/products/resolve-link` | 已登录 | 按地区官方主机和路径白名单解析单个 HTTPS 链接。 |
 | `POST /api/products/resolve-regions` | 已登录 | 按已保存启用地区解析跨区候选；必要时用本地 Playwright 处理最多三个日区升级包。只读，不创建订阅。 |

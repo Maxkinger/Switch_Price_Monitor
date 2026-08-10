@@ -1,4 +1,6 @@
 import type { JapaneseUpgradeRootCandidate } from "../official-japanese-upgrade-root";
+import type { ProxySettings } from "../../shared/proxy-settings";
+import { isBrowserProxyTransportError } from "./browser-errors";
 import {
   JapaneseUpgradeBatchLimitError,
   normalizeJapaneseUpgradeUrl,
@@ -36,7 +38,17 @@ export interface BrowserLike {
  * 从类型边界阻止关系适配器连接远程 Browser Server、CDP 会话或跨请求保活实例。
  */
 export interface BrowserLauncher {
-  launch(): Promise<BrowserLike>;
+  launch(options?: BrowserLaunchOptions): Promise<BrowserLike>;
+}
+
+/** 启动参数只允许已验证的无认证代理草稿，禁止业务层注入调试、持久化、CDP 或远端浏览器选项。 */
+export interface BrowserLaunchOptions {
+  proxy?: ProxySettings;
+}
+
+/** 代理设置在每个关系批次开始时读取一次；运行中的 PATCH 不能改变已启动浏览器的出口。 */
+export interface JapaneseUpgradeBrowserBatchOptions {
+  readProxySettings?: () => Promise<ProxySettings>;
 }
 
 /** 单项导航加页面关系提取的统一上限；没有重试，避免 Chromium 进程负载或外部页面请求被单次操作放大。 */
@@ -48,6 +60,7 @@ const itemTimeoutMs = 30_000;
  */
 export function createJapaneseUpgradeBrowserBatch(
   launcher: BrowserLauncher,
+  options: JapaneseUpgradeBrowserBatchOptions = {},
 ): JapaneseUpgradeBrowserBatch {
   return {
     async resolve(roots, signal) {
@@ -65,13 +78,44 @@ export function createJapaneseUpgradeBrowserBatch(
       });
       if (validRoots.length === 0) return results;
 
+      // 读取失败安全退回直连，设置仓储暂时不可用不能阻断原有日区关系核验能力。
+      const proxySettings = await options.readProxySettings?.().catch(() => undefined);
+      let proxyMode = proxySettings?.enabled === true;
+      let hasFallenBack = false;
       let browser: BrowserLike | undefined;
       try {
-        browser = await launcher.launch();
+        try {
+          browser = await launcher.launch(proxyMode ? { proxy: proxySettings } : undefined);
+        } catch (error) {
+          if (!proxyMode || !isBrowserProxyTransportError(error)) {
+            for (const root of validRoots) results.set(root.productUrl, { status: "browser-unavailable" });
+            return results;
+          }
+          // 代理启动失败时尚未交付浏览器资源，因此仅允许直接启动一次，禁止隐式多次重试。
+          proxyMode = false;
+          hasFallenBack = true;
+          browser = await launchDirectOrMarkUnavailable(launcher, validRoots, results);
+          if (browser === undefined) return results;
+        }
         // 串行处理可避免同一请求内并发上下文争抢 Chromium 资源；已交付页面的关闭屏障未确认前绝不进入下一个根。
         for (let index = 0; index < validRoots.length; index += 1) {
           const root = validRoots[index];
           const resolved = await resolveOne(browser, root, signal);
+          if (proxyMode && !hasFallenBack && resolved.proxyFailure && !signal.aborted) {
+            // 已打开的代理浏览器必须在直连前彻底关闭；关闭失败则安全降级余下项目而不是并行启动另一个实例。
+            const closed = await closeSafely(browser);
+            browser = undefined;
+            proxyMode = false;
+            hasFallenBack = true;
+            if (!closed) {
+              markRemainingUnavailable(validRoots, results, index);
+              break;
+            }
+            browser = await launchDirectOrMarkUnavailable(launcher, validRoots.slice(index), results);
+            if (browser === undefined) break;
+            index -= 1;
+            continue;
+          }
           results.set(root.productUrl, resolved.result);
           if (!resolved.canContinue) {
             // 关闭拒绝时不覆盖本项业务结论，但后续根不能复用可能仍忙碌的 browser，必须全部安全降级。
@@ -102,41 +146,48 @@ async function resolveOne(
   root: JapaneseUpgradeRootCandidate,
   signal: AbortSignal,
 ): Promise<ResolvedOne> {
-  if (signal.aborted) return { result: { status: "browser-unavailable" }, canContinue: true };
+  if (signal.aborted) return { result: { status: "browser-unavailable" }, proxyFailure: false, canContinue: true };
   const lifecycle = new ItemLifecycle();
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   let removeAbortListener: (() => void) | undefined;
   const operation = resolveOneOperation(browser, root, lifecycle);
-  const deadlineOrAbort = new Promise<JapaneseUpgradeBrowserResult>((resolve) => {
+  const deadlineOrAbort = new Promise<OperationOutcome>((resolve) => {
     timeoutId = setTimeout(() => {
       // 先把生命周期切到取消态并立即关闭已知资源，再返回 timeout；迟到资源会在交付瞬间走同一关闭路径。
       lifecycle.cancel();
-      resolve({ status: "timeout" });
+      resolve({ result: { status: "timeout" }, proxyFailure: false });
     }, itemTimeoutMs);
     const abort = () => {
       // AbortSignal 不能直接传给 Playwright，因此关闭已知 page/context 是停止已发出浏览器工作的唯一受控动作。
       lifecycle.cancel();
-      resolve({ status: "browser-unavailable" });
+      resolve({ result: { status: "browser-unavailable" }, proxyFailure: false });
     };
     signal.addEventListener("abort", abort, { once: true });
     removeAbortListener = () => signal.removeEventListener("abort", abort);
   });
-  let result: JapaneseUpgradeBrowserResult;
+  let outcome: OperationOutcome;
   try {
     // race 只限制导航和 DOM 关系提取；它绝不包含 close，慢清理不能把已确认的 success 改写为 timeout。
-    result = await Promise.race([operation, deadlineOrAbort]);
+    outcome = await Promise.race([operation, deadlineOrAbort]);
   } finally {
     if (timeoutId !== undefined) clearTimeout(timeoutId);
     removeAbortListener?.();
   }
   // 业务结果决定后 deadline 已取消；page → context 清理只决定是否可继续同一 browser，不得改变本项状态。
-  return { result, canContinue: await lifecycle.finishAfterBusiness() };
+  return { result: outcome.result, proxyFailure: outcome.proxyFailure, canContinue: await lifecycle.finishAfterBusiness() };
 }
 
 /** 单项业务结果与继续资格分离：关闭失败只能阻断后续根，不能覆盖本项已有的官方关系结论。 */
 interface ResolvedOne {
   result: JapaneseUpgradeBrowserResult;
+  proxyFailure: boolean;
   canContinue: boolean;
+}
+
+/** 业务状态与代理传输标记分离，确保普通提取失败、超时和中止都不会错误触发直连。 */
+interface OperationOutcome {
+  result: JapaneseUpgradeBrowserResult;
+  proxyFailure: boolean;
 }
 
 /**
@@ -148,23 +199,50 @@ async function resolveOneOperation(
   browser: BrowserLike,
   root: JapaneseUpgradeRootCandidate,
   lifecycle: ItemLifecycle,
-): Promise<JapaneseUpgradeBrowserResult> {
+): Promise<OperationOutcome> {
   try {
     const context = await browser.newContext();
-    if (!lifecycle.adoptContext(context)) return { status: "browser-unavailable" };
+    if (!lifecycle.adoptContext(context)) return { result: { status: "browser-unavailable" }, proxyFailure: false };
 
     const page = await context.newPage();
-    if (!lifecycle.adoptPage(page)) return { status: "browser-unavailable" };
+    if (!lifecycle.adoptPage(page)) return { result: { status: "browser-unavailable" }, proxyFailure: false };
 
     await page.goto(root.productUrl, { waitUntil: "domcontentloaded", timeout: itemTimeoutMs });
     lifecycle.assertActive();
-    return await extractUpgradeRelation(page, lifecycle);
+    return { result: await extractUpgradeRelation(page, lifecycle), proxyFailure: false };
   } catch (error) {
     // TimeoutError 是 Playwright 可识别的控制类型；本地取消标记和其他错误都不泄露详情，只安全降级。
-    return error instanceof ItemTimeoutError || (error instanceof Error && error.name === "TimeoutError")
-      ? { status: "timeout" }
-      : { status: "browser-unavailable" };
+    if (isBrowserProxyTransportError(error)) return { result: { status: "browser-unavailable" }, proxyFailure: true };
+    return {
+      result: error instanceof ItemTimeoutError || (error instanceof Error && error.name === "TimeoutError")
+        ? { status: "timeout" }
+        : { status: "browser-unavailable" },
+      proxyFailure: false,
+    };
   }
+}
+
+/** 直连启动失败时不回显底层信息，并把尚未完成的根统一标为不可用，避免出现第三次尝试。 */
+async function launchDirectOrMarkUnavailable(
+  launcher: BrowserLauncher,
+  roots: JapaneseUpgradeRootCandidate[],
+  results: Map<string, JapaneseUpgradeBrowserResult>,
+): Promise<BrowserLike | undefined> {
+  try {
+    return await launcher.launch();
+  } catch {
+    for (const root of roots) results.set(root.productUrl, { status: "browser-unavailable" });
+    return undefined;
+  }
+}
+
+/** 回退所需的代理实例关闭失败时，当前和剩余根均不能再使用未知状态资源。 */
+function markRemainingUnavailable(
+  roots: JapaneseUpgradeRootCandidate[],
+  results: Map<string, JapaneseUpgradeBrowserResult>,
+  startIndex: number,
+): void {
+  for (const root of roots.slice(startIndex)) results.set(root.productUrl, { status: "browser-unavailable" });
 }
 
 /**

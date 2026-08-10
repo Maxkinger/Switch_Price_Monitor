@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createLocalBrowserLauncher } from "../src/providers/playwright/browser-launcher";
+import { BrowserProxyTransportError, createLocalBrowserLauncher } from "../src/providers/playwright/browser-launcher";
 import type {
   BrowserContextLike,
   BrowserLike,
@@ -58,6 +58,34 @@ describe("local Playwright browser launcher", () => {
     await launcher.launch();
 
     expect(launch).toHaveBeenCalledWith({ headless: true });
+  });
+
+  it.each([
+    ["http", "http://127.0.0.1:7890"],
+    ["https", "https://127.0.0.1:7890"],
+    ["socks5", "socks5://127.0.0.1:7890"],
+  ] as const)("maps %s proxy settings without credentials", async (protocol, server) => {
+    // Chromium 只接收四个无认证字段构造的 server；未知对象中的用户名或密码绝不能通过展开进入启动参数。
+    const browser = { newContext: vi.fn(), close: vi.fn() };
+    const launch = vi.fn().mockResolvedValue(browser);
+    const launcher = createLocalBrowserLauncher({ headless: true }, { chromium: { launch } });
+
+    await expect(launcher.launch({ proxy: { enabled: true, protocol, host: "127.0.0.1", port: 7890 } })).resolves.toBe(browser);
+    expect(launch).toHaveBeenCalledWith({ headless: true, proxy: { server } });
+    expect(JSON.stringify(launch.mock.calls)).not.toMatch(/username|password/i);
+  });
+
+  it("omits disabled proxy and maps proxy launch failures to a safe browser error", async () => {
+    // 关闭状态不传 proxy，代理启动失败则只交给上层固定错误类型，避免 Playwright 原始错误进入页面或 API。
+    const disabledLaunch = vi.fn().mockResolvedValue({ newContext: vi.fn(), close: vi.fn() });
+    const disabledLauncher = createLocalBrowserLauncher({ headless: true }, { chromium: { launch: disabledLaunch } });
+    await disabledLauncher.launch({ proxy: { enabled: false, protocol: "http", host: "::1", port: 7890 } });
+    expect(disabledLaunch).toHaveBeenCalledWith({ headless: true });
+
+    const rejectedLaunch = vi.fn().mockRejectedValue(new Error("proxy connection refused"));
+    const rejectedLauncher = createLocalBrowserLauncher({ headless: true }, { chromium: { launch: rejectedLaunch } });
+    await expect(rejectedLauncher.launch({ proxy: { enabled: true, protocol: "http", host: "127.0.0.1", port: 7890 } }))
+      .rejects.toBeInstanceOf(BrowserProxyTransportError);
   });
 
   it("launches real local Chromium against a loopback fixture and closes every owned resource", async () => {

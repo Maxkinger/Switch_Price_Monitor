@@ -1,4 +1,5 @@
 import { initialRegionCodes, themes, type AppSettings, type RegionCode } from "../../shared/domain";
+import { defaultProxySettings, normalizeProxyHost, type ProxySettings, validateProxySettings } from "../../shared/proxy-settings";
 import type { SettingsStore } from "../ports";
 import type { SqlExecutor } from "../../server/database/types";
 
@@ -11,6 +12,10 @@ interface SettingsRow {
   dailyReportTime: string;
   taxState: string;
   priceHistoryRetention: string;
+  proxyEnabled?: boolean;
+  proxyProtocol?: string;
+  proxyHost?: string;
+  proxyPort?: number;
   createdAt: Date;
 }
 
@@ -50,6 +55,10 @@ export class PostgresSettingsRepository implements SettingsStore {
               daily_report_time AS "dailyReportTime",
               tax_state AS "taxState",
               price_history_retention AS "priceHistoryRetention",
+              proxy_enabled AS "proxyEnabled",
+              proxy_protocol AS "proxyProtocol",
+              proxy_host AS "proxyHost",
+              proxy_port AS "proxyPort",
               created_at AS "createdAt"
          FROM settings
         WHERE id = 1`,
@@ -66,6 +75,7 @@ export class PostgresSettingsRepository implements SettingsStore {
       throw new Error("设置中的历史保留策略无效");
     }
 
+    const proxy = readProxySettings(row);
     return {
       enabledRegions,
       defaultSearchRegion: row.defaultSearchRegion,
@@ -74,6 +84,7 @@ export class PostgresSettingsRepository implements SettingsStore {
       dailyReportTime: row.dailyReportTime,
       taxState: row.taxState,
       priceHistoryRetention: row.priceHistoryRetention as AppSettings["priceHistoryRetention"],
+      proxy,
       createdAt: row.createdAt.toISOString(),
     };
   }
@@ -83,6 +94,12 @@ export class PostgresSettingsRepository implements SettingsStore {
    * JSONB 参数由 pg 发送字符串并显式转 jsonb；所有值均绑定参数，不能借地区、时区或主题拼接 SQL。
    */
   public async save(settings: AppSettings, updatedAt: string): Promise<void> {
+    // 旧测试夹具与内部调用可能仍构造不含 proxy 的 AppSettings；迁移后的安全默认值关闭代理，不能为兼容性强迫它们产生网络行为。
+    const proxy = settings.proxy ?? defaultProxySettings;
+    const normalizedProxyHost = normalizeProxyHost(proxy.host);
+    if (normalizedProxyHost === null || validateProxySettings({ ...proxy, host: normalizedProxyHost })) {
+      throw new Error("代理设置无效。");
+    }
     await this.database.query(
       `UPDATE settings
           SET enabled_regions_json = $1::jsonb,
@@ -92,7 +109,11 @@ export class PostgresSettingsRepository implements SettingsStore {
               daily_report_time = $5,
               tax_state = $6,
               price_history_retention = $7,
-              updated_at = $8
+              proxy_enabled = $8,
+              proxy_protocol = $9,
+              proxy_host = $10,
+              proxy_port = $11,
+              updated_at = $12
         WHERE id = 1`,
       [
         JSON.stringify(settings.enabledRegions),
@@ -102,11 +123,22 @@ export class PostgresSettingsRepository implements SettingsStore {
         settings.dailyReportTime,
         settings.taxState,
         settings.priceHistoryRetention,
-        updatedAt,
+        proxy.enabled, proxy.protocol, normalizedProxyHost, proxy.port, updatedAt,
       ],
     );
   }
 
+}
+
+/** 四列缺失只允许映射为关闭默认值；部分缺失说明迁移或手工修复损坏，不能拼接混合代理端点。 */
+function readProxySettings(row: SettingsRow): ProxySettings {
+  const values = [row.proxyEnabled, row.proxyProtocol, row.proxyHost, row.proxyPort];
+  const missing = values.filter((value) => value === undefined).length;
+  if (missing === 4) return { ...defaultProxySettings };
+  if (missing !== 0 || normalizeProxyHost(row.proxyHost!) === null) throw new Error("代理设置无效。");
+  const proxy: ProxySettings = { enabled: row.proxyEnabled!, protocol: row.proxyProtocol as ProxySettings["protocol"], host: normalizeProxyHost(row.proxyHost!)!, port: row.proxyPort! };
+  if (validateProxySettings(proxy)) throw new Error("代理设置无效。");
+  return proxy;
 }
 
 /**

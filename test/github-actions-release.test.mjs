@@ -78,6 +78,7 @@ contractTest("普通 push 与 PR 运行完整质量门禁且没有发布权限",
       "unit_and_integration",
       "dom",
       "chromium_smoke",
+      "proxy_transport",
       "typecheck",
       "production_build",
       "docker_contract",
@@ -578,6 +579,9 @@ function assertPostgresAndBrowserGate(job) {
   assert.match(findStep(job, "dom").run, /test:dom/);
   assert.match(findStep(job, "install_chromium").run, /playwright install --with-deps chromium/);
   assert.match(findStep(job, "chromium_smoke").run, /playwright-browser-launcher\.test\.ts/);
+  // 代理回归只使用回环 HTTP/SOCKS5 夹具；两个工作流都要执行 Agent 与真实转发冒烟，不能依赖完整套件碰巧覆盖。
+  assert.match(findStep(job, "proxy_transport").run, /proxy-agent-factory\.test\.ts/);
+  assert.match(findStep(job, "proxy_transport").run, /proxy-smoke\.test\.ts/);
   assert.match(findStep(job, "typecheck").run, /tsc --noEmit/);
   assert.match(findStep(job, "production_build").run, /npm run build/);
   assert.match(findStep(job, "docker_contract").run, /test:docker-config/);

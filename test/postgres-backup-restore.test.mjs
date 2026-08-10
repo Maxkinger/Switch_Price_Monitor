@@ -75,7 +75,8 @@ test("仅含迁移的 fresh 备份可恢复为空业务库", { timeout: 120_000 
   assertCustomArchive(freshDump);
   createEmptyDatabase(freshDatabase);
   restore(freshDump, freshDatabase);
-  assert.equal(sql(freshDatabase, "SELECT count(*) FROM schema_migrations").trim(), "2");
+  // 迁移账本必须包含目标价删除后的代理设置迁移，恢复空库不能漏列或只恢复旧两条版本。
+  assert.equal(sql(freshDatabase, "SELECT count(*) FROM schema_migrations").trim(), "3");
   assert.equal(sql(freshDatabase, "SELECT count(*) FROM admin_credentials").trim(), "0");
   assert.equal(sql(freshDatabase, "SELECT count(*) FROM price_snapshots").trim(), "0");
 });
@@ -354,7 +355,8 @@ function createMigratedSchema() {
   sql(sourceDatabase, "CREATE TABLE schema_migrations (version text primary key, checksum text not null, applied_at timestamptz not null default current_timestamp)");
   sql(sourceDatabase, "\\i /fixtures/0001_initial.sql");
   sql(sourceDatabase, "\\i /fixtures/0002_remove_target_price.sql");
-  sql(sourceDatabase, `INSERT INTO schema_migrations (version, checksum) VALUES ('0001_initial.sql', '${migrationChecksum("0001_initial.sql")}'), ('0002_remove_target_price.sql', '${migrationChecksum("0002_remove_target_price.sql")}')`);
+  sql(sourceDatabase, "\\i /fixtures/0003_proxy_settings.sql");
+  sql(sourceDatabase, `INSERT INTO schema_migrations (version, checksum) VALUES ('0001_initial.sql', '${migrationChecksum("0001_initial.sql")}'), ('0002_remove_target_price.sql', '${migrationChecksum("0002_remove_target_price.sql")}'), ('0003_proxy_settings.sql', '${migrationChecksum("0003_proxy_settings.sql")}')`);
 }
 
 /** 账本校验和必须来自迁移精确字节；不能用夹具常量掩盖未来 app manifest 与恢复记录的不一致。 */
@@ -454,7 +456,7 @@ function countUserObjects(database) {
 
 /** 只读取迁移、管理员与代表性价格字段，证明恢复完整性且不读取认证材料。 */
 function assertRestoredFixture(database) {
-  assert.equal(sql(database, "SELECT version FROM schema_migrations ORDER BY version").trim(), "0001_initial.sql\n0002_remove_target_price.sql");
+  assert.equal(sql(database, "SELECT version FROM schema_migrations ORDER BY version").trim(), "0001_initial.sql\n0002_remove_target_price.sql\n0003_proxy_settings.sql");
   assert.equal(sql(database, "SELECT count(*) FROM admin_credentials WHERE id = 1").trim(), "1");
   assert.equal(sql(database, "SELECT amount_minor || ':' || cny_fen || ':' || source FROM price_snapshots").trim(), "5980:28000:official");
   assert.equal(sql(database, "SELECT count(*) FROM settings WHERE id = 1").trim(), "1");

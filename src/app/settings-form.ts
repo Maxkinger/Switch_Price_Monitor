@@ -1,4 +1,5 @@
 import type { AppSettings, RegionCode } from "../shared/domain";
+import { defaultProxySettings, type ProxySettings } from "../shared/proxy-settings";
 
 /**
  * 设置页面可提交的公开字段。初始化时间只用于服务端审计，绝不能随着浏览器草稿再次写入；
@@ -12,6 +13,7 @@ export interface PublicSettingsPatch {
   dailyReportTime: string;
   taxState: string;
   priceHistoryRetention: AppSettings["priceHistoryRetention"];
+  proxy: ProxySettings;
 }
 
 /** 受控表单状态与公开 PATCH 同形，便于一次保存且不会把 API 返回的 createdAt 滞留在 React 内存。 */
@@ -30,6 +32,8 @@ export function createSettingsForm(settings: AppSettings): SettingsFormState {
     dailyReportTime: settings.dailyReportTime,
     taxState: settings.taxState,
     priceHistoryRetention: settings.priceHistoryRetention,
+    // 历史响应缺少该字段时只创建关闭草稿；启用仍必须经过服务端完整校验。
+    proxy: settings.proxy ? { ...settings.proxy } : { ...defaultProxySettings },
   };
 }
 
@@ -70,5 +74,6 @@ export function toPublicSettingsPatch(state: SettingsFormState): PublicSettingsP
     dailyReportTime: state.dailyReportTime,
     taxState: state.taxState,
     priceHistoryRetention: state.priceHistoryRetention,
+    proxy: { ...state.proxy },
   };
 }

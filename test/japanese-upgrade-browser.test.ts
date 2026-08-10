@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { JapaneseUpgradeRootCandidate } from "../src/providers/official-japanese-upgrade-root";
 import { normalizeJapaneseUpgradeUrl } from "../src/providers/japanese-upgrade-browser";
+import { BrowserProxyTransportError } from "../src/providers/playwright/browser-errors";
 import { createJapaneseUpgradeBrowserBatch } from "../src/providers/playwright/japanese-upgrade-browser";
 
 /**
@@ -40,6 +41,41 @@ describe("Japanese upgrade local Playwright batch", () => {
 
     expect(result).toEqual(new Map());
     expect(launchBrowser).not.toHaveBeenCalled();
+  });
+
+  it("closes a failed proxy browser before resolving the same root directly once", async () => {
+    // 代理导航错误只能回退一次；旧浏览器必须先关闭，避免代理与直连 Chromium 并存并让商品页面产生两次并发访问。
+    const events: string[] = [];
+    const launch = vi.fn(async (options?: { proxy?: { enabled: boolean } }) => {
+      const proxyMode = options?.proxy?.enabled === true;
+      events.push(proxyMode ? "proxy-launch" : "direct-launch");
+      return {
+        newContext: async () => ({
+          newPage: async () => ({
+            goto: async () => {
+              events.push(proxyMode ? "proxy-goto" : "direct-goto");
+              if (proxyMode) throw new BrowserProxyTransportError("connection");
+            },
+            locator: () => ({ all: async () => [visibleUpgradeLink("/item/software/D70050000064985/")] }),
+            close: async () => { events.push(proxyMode ? "proxy-page-close" : "direct-page-close"); },
+          }),
+          close: async () => { events.push(proxyMode ? "proxy-context-close" : "direct-context-close"); },
+        }),
+        close: async () => { events.push(proxyMode ? "proxy-browser-close" : "direct-browser-close"); },
+      };
+    });
+    const productUrl = "https://store-jp.nintendo.com/item/software/D70010000106252/";
+    const batch = createJapaneseUpgradeBrowserBatch({ launch }, {
+      readProxySettings: async () => ({ enabled: true, protocol: "http", host: "proxy.test", port: 7890 }),
+    });
+
+    await expect(batch.resolve([root(productUrl)], new AbortController().signal)).resolves.toEqual(new Map([[productUrl, {
+      status: "success", upgradeUrl: "https://store-jp.nintendo.com/item/software/D70050000064985/",
+    }]]));
+    expect(events).toEqual([
+      "proxy-launch", "proxy-goto", "proxy-page-close", "proxy-context-close", "proxy-browser-close",
+      "direct-launch", "direct-goto", "direct-page-close", "direct-context-close", "direct-browser-close",
+    ]);
   });
 
   it("fails an invalid root without launching or navigating it", async () => {

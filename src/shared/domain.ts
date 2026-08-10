@@ -1,4 +1,5 @@
 import type { ProductType } from "../providers/types";
+import type { ProxySettings } from "./proxy-settings";
 
 /**
  * 前后端共用的核心业务类型。这里集中枚举可持久化的受控值，
@@ -123,6 +124,8 @@ export interface AppSettings extends InitialSettings {
   dailyReportTime: string;
   taxState: string;
   priceHistoryRetention: "forever" | "one-year" | "two-years";
+  /** 代理端点是管理员可见的非秘密设置；实际网络层只读取验证后的不可变快照。 */
+  proxy?: ProxySettings;
 }
 
 /** 创建订阅时前端确认的最小数据；地区商品 ID 必须已由跨区匹配或手动链接校验通过。 */

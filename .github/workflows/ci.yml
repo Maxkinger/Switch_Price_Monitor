@@ -119,6 +119,13 @@ jobs:
         # 显式覆盖真实浏览器启动/导航/关闭，不能用纯 mock 代替 NAS 浏览器边界。
         run: npx vitest run test/playwright-browser-launcher.test.ts
 
+      - name: 验证本地代理传输
+        id: proxy_transport
+        # 代理回归只启动 127.0.0.1 回环 HTTP/SOCKS5 夹具，不请求任天堂、Telegram 或开发者局域网代理。
+        run: |
+          npx vitest run test/proxy-agent-factory.test.ts test/outbound-network.test.ts
+          npx vitest run test/proxy-smoke.test.ts
+
       - name: TypeScript 严格检查
         id: typecheck
         run: npx tsc --noEmit

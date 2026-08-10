@@ -1,6 +1,7 @@
 import type { AppSettings } from "../shared/domain";
 import type { ApiRequestTracker } from "./api-request-tracker";
 import type { PublicSettingsPatch } from "./settings-form";
+import type { ProxyConnectionTestResult } from "../services/proxy-connection-test-service";
 
 /**
  * 设置页面只需要的同源 API 契约。接口不包含 Telegram、密码、恢复码或会话令牌，
@@ -9,6 +10,7 @@ import type { PublicSettingsPatch } from "./settings-form";
 export interface SettingsApiClient {
   getSettings(): Promise<AppSettings>;
   saveSettings(patch: PublicSettingsPatch): Promise<AppSettings>;
+  testProxy(settings: PublicSettingsPatch["proxy"]): Promise<ProxyConnectionTestResult>;
 }
 
 /**
@@ -58,6 +60,16 @@ export function createSettingsApiClient(request: typeof fetch = fetch, tracker?:
     /** 一次提交完整公开草稿，让地区与默认区在同一服务端校验中保持原子一致。 */
     async saveSettings(patch: PublicSettingsPatch): Promise<AppSettings> {
       return requestJson<AppSettings>("PATCH", patch);
+    },
+    /** 测试仅提交代理四字段，目标地址固定在服务端，浏览器不能把它扩展为任意探测请求。 */
+    async testProxy(settings: PublicSettingsPatch["proxy"]): Promise<ProxyConnectionTestResult> {
+      const finish = tracker?.begin();
+      try {
+        const response = await request("/api/settings/proxy/test", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify(settings) });
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        if (!response.ok) throw new SettingsApiError(payload.error ?? "代理连接测试未完成，请稍后重试。", response.status);
+        return payload as ProxyConnectionTestResult;
+      } finally { finish?.(); }
     },
   };
 }

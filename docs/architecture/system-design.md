@@ -34,6 +34,7 @@ postgres：PostgreSQL 17，不映射宿主 5432
 
 - `src/server/`：校验运行配置，装配 Hono/Fetch 应用、静态资源、PostgreSQL、调度器与优雅关停；不得吸收业务判断。
 - `src/routes/`：认证守卫、请求解析、输入约束和安全错误映射。
+- `src/server/network/`：唯一的代理 Agent、不可变设置快照、固定目标连接测试与一次直连回退边界；提供方、Telegram 和 Playwright 不自行读取代理地址。
 - `src/services/`：订阅确认、采集、通知、历史保留和业务规则。
 - `src/repositories/postgres/`：参数化 SQL、显式事务、行模型转换与 PostgreSQL 锁。
 - `src/providers/`：任天堂、汇率与 Telegram 外部边界；第三方价格源未经 ADR-002 准入时不得发请求。
@@ -61,6 +62,7 @@ postgres：PostgreSQL 17，不映射宿主 5432
 
 - Node 进程按 UTC 对齐每分钟检查日报和待投递事件，使用与六小时采集不同的 PostgreSQL advisory lock。
 - Telegram 只在 `TELEGRAM_BOT_TOKEN` 与 `TELEGRAM_CHAT_ID` 成对存在时装配。设置页不接收、不保存也不回显这两项秘密。
+- PostgreSQL 设置中的代理只支持无认证 HTTP、HTTPS、SOCKS5。代理读取失败安全退回关闭状态；读取型 HTTP 在传输失败时最多直连一次，Telegram 的真实发送不会在结果不明时重发，Playwright 回退前先关闭 page、context 与 browser。
 - 事件先以唯一业务键在 PostgreSQL 中预留，投递成功后从 `pending` 原子更新为 `delivered`；失败保留待重试状态，普通日志只记录脱敏类别。
 
 ## 5. 认证与秘密边界

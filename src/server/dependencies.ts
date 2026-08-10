@@ -58,10 +58,14 @@ import { SubscriptionDetailService } from "../services/subscription-detail-servi
 import { SubscriptionRegionCompletionService } from "../services/subscription-region-completion-service";
 import { SubscriptionService } from "../services/subscription-service";
 import { defaultFallbackSources, SubscriptionPreviewService } from "../services/subscription-preview-service";
-import { TelegramService } from "../services/telegram-service";
+import { ProxyConnectionTestService } from "../services/proxy-connection-test-service";
+import { ProxyTelegramService } from "../services/proxy-telegram-service";
+import { defaultProxySettings } from "../shared/proxy-settings";
 import type { AppDatabase } from "./database/types";
 import type { ServerDependencies } from "./app";
 import type { ServerConfig } from "./config";
+import { createOutboundNetwork } from "./network/outbound-network";
+import { createProxyBrowserConnectionProbe } from "./network/proxy-browser-probe";
 import type { SchedulerDependencies } from "./scheduler";
 
 /** 单个 API handler 只消费标准同源 Request；null 表示本模块未匹配，不能被当成空成功响应。 */
@@ -120,6 +124,13 @@ export function createServerDependencies(
     : auth;
   const settingsRepository = new PostgresSettingsRepository(database);
   const settings = new SettingsService(settingsRepository);
+  /** 代理唯一真值是 PostgreSQL 设置；读取异常安全退回关闭状态，不能因设置读取失败阻断业务。 */
+  const outboundNetwork = createOutboundNetwork({ settings: { async readProxySettings() {
+    try { return { ...((await settingsRepository.get())?.proxy ?? defaultProxySettings) }; }
+    catch { return { ...defaultProxySettings }; }
+  } } });
+  /** 每次外部 HTTP 请求先取得会话快照，提供方不能自行读取代理地址或绕过一次回退规则。 */
+  const outboundFetch: typeof fetch = async (input, init) => (await (await outboundNetwork.snapshot()).fetch(input, init));
   const dashboardRepository = new PostgresDashboardRepository(database);
   const dashboard = new DashboardService(dashboardRepository);
   const history = new HistoryService(new PostgresHistoryRepository(database));
@@ -128,25 +139,28 @@ export function createServerDependencies(
    * 同一个无状态 LiveCollectionRunner 同时交给手动刷新与六小时调度。
    * 两条入口仍由 HTTP 认证和 advisory lock 分别控制，绝不共享手动刷新时间记录或形成待执行队列。
    */
-  const liveCollection = createLiveCollectionRunner(database);
+  const liveCollection = createLiveCollectionRunner(database, outboundFetch);
   const refresh = new ManualRefreshService(
     new PostgresManualRefreshRepository(database),
     liveCollection,
   );
 
-  const officialPages = createOfficialNintendoProductPageResolver();
-  const officialSearch = createOfficialNintendoSearch();
-  const officialPriceIds = new OfficialPriceIdService(createNintendoPriceApiProvider());
+  const officialPages = createOfficialNintendoProductPageResolver(outboundFetch);
+  const officialSearch = createOfficialNintendoSearch(outboundFetch);
+  const officialPriceIds = new OfficialPriceIdService(createNintendoPriceApiProvider(outboundFetch));
   /**
    * Node 商品发现与保存前确认共享同一套本地关系依赖：每次实际批处理只启动一个 Chromium，
    * 最多三个根使用全新上下文串行核验。浏览器 launcher 不接收数据库、Telegram、HTTP 或调度器对象。
    */
+  // 同一个窄 launcher 只由 Node 装配拥有：关系核验读取一次设置快照，连接测试则只探测固定官方目标。
+  const browserLauncher = createLocalBrowserLauncher({ headless: true });
   const japaneseUpgradeRelations = createJapaneseUpgradeRelationService(
-    createOfficialJapaneseUpgradeRootSearch(),
+    createOfficialJapaneseUpgradeRootSearch(outboundFetch),
     createJapaneseUpgradeBrowserBatch(
-      createLocalBrowserLauncher({ headless: true }),
+      browserLauncher,
+      { readProxySettings: async () => (await settingsRepository.get())?.proxy ?? defaultProxySettings },
     ),
-    createNintendoOfficialPriceQuoteResolver(),
+    createNintendoOfficialPriceQuoteResolver(outboundFetch),
   );
   const discovery = new OfficialProductDiscoveryService(
     settingsRepository,
@@ -184,7 +198,14 @@ export function createServerDependencies(
         cookieSecure: config.cookieSecure,
         localDevelopmentAuthBypass: config.localDevelopmentAuthBypass,
       }),
-      (request) => handleSettingsRoute(request, routeSessions, settings),
+      // 认证旁路只替换 sessions；代理设置仍经同一严格路由校验，不能因本机开发而放宽无认证端点边界。
+      (request) => handleSettingsRoute(
+        request,
+        routeSessions,
+        settings,
+        true,
+        new ProxyConnectionTestService(outboundNetwork, createProxyBrowserConnectionProbe(browserLauncher)),
+      ),
       (request) => handleDashboardRoute(request, routeSessions, dashboard),
       (request) => handleManualRefreshRoute(request, routeSessions, refresh),
       (request) => handleHistoryRoute(request, routeSessions, history),
@@ -208,11 +229,11 @@ export function createServerDependencies(
   const notificationEvents = new PostgresNotificationEventRepository(database);
   const telegram = config.telegramBotToken === undefined
     ? undefined
-    : new TelegramService({
+    : new ProxyTelegramService({
       botToken: config.telegramBotToken,
       // 成对检查后 chat id 必然存在；不使用空字符串回退，避免把配置错误发送到外部 API。
       chatId: config.telegramChatId as string,
-    });
+    }, outboundNetwork);
   const scheduler: SchedulerDependencies = {
     database,
     async runMinute(scheduledAt): Promise<void> {
@@ -263,14 +284,14 @@ export function createServerDependencies(
  * 手动刷新继续复用真实 PostgreSQL 价格、汇率、健康与通知事件写入。
  * 仓储只接收领域 DTO 与参数化 SQL，外部页面、错误正文和秘密不会写入普通运行日志。
  */
-function createLiveCollectionRunner(database: AppDatabase): LiveCollectionRunner {
+function createLiveCollectionRunner(database: AppDatabase, fetcher: typeof fetch): LiveCollectionRunner {
   const prices = new PostgresPriceRepository(database);
   const rates = new PostgresExchangeRateRepository(database);
   const notifications = new PostgresNotificationEventRepository(database);
   return new LiveCollectionRunner({
     products: new PostgresCollectionRepository(database),
-    rates: new DailyCnyRateService(createFrankfurterExchangeRateProvider(), rates),
-    officialProviders: createOfficialProviderRegistry(),
+    rates: new DailyCnyRateService(createFrankfurterExchangeRateProvider(fetcher), rates),
+    officialProviders: createOfficialProviderRegistry(fetcher),
     collection: new CollectionService(new ProviderChain(), prices),
     health: new ProductHealthService(
       new PostgresProductHealthRepository(database),

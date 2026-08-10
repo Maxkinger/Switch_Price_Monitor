@@ -3,6 +3,7 @@ import type { AppDatabase } from "../src/server/database/types";
 import { createTestDatabase, resetTestSchema, POSTGRES_MIGRATION_DIRECTORY } from "./support/postgres";
 import { runMigrations } from "../src/server/database/migrations";
 import { PostgresSettingsRepository } from "../src/repositories/postgres/settings-repository";
+import { defaultProxySettings } from "../src/shared/proxy-settings";
 
 describe("PostgreSQL 设置读取仓储", () => {
   let database: AppDatabase;
@@ -39,6 +40,8 @@ describe("PostgreSQL 设置读取仓储", () => {
       dailyReportTime: "09:00",
       taxState: "OR",
       priceHistoryRetention: "forever",
+      // 迁移默认值只是关闭的代理草稿；读取设置不能因此创建任何外部连接。
+      proxy: defaultProxySettings,
       createdAt: "2026-07-16T00:00:00.000Z",
     });
   });
@@ -74,6 +77,8 @@ describe("PostgreSQL 设置读取仓储", () => {
       dailyReportTime: "08:30",
       taxState: "CA",
       priceHistoryRetention: "one-year",
+      // IPv6 在领域模型中保存为不带方括号的主机，连接器会在构造 URL 时按协议补回。
+      proxy: { enabled: true, protocol: "socks5", host: "::1", port: 10_801 },
       createdAt: "2026-07-16T00:00:00.000Z",
     }, "2026-07-17T00:00:00.000Z");
 
@@ -85,6 +90,7 @@ describe("PostgreSQL 设置读取仓储", () => {
       dailyReportTime: "08:30",
       taxState: "CA",
       priceHistoryRetention: "one-year",
+      proxy: { enabled: true, protocol: "socks5", host: "::1", port: 10_801 },
       createdAt: "2026-07-16T00:00:00.000Z",
     });
   });
@@ -103,6 +109,8 @@ describe("PostgreSQL 设置读取仓储", () => {
       dailyReportTime: "09:00",
       taxState: "OR",
       priceHistoryRetention: "forever",
+      // 本机开发旁路只创建关闭草稿，绝不自动连接任何代理或写入认证字段。
+      proxy: defaultProxySettings,
       createdAt: "2026-08-10T03:00:00.000Z",
     });
     await expect(database.query<{ count: string }>(

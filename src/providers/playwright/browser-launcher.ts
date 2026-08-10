@@ -1,5 +1,9 @@
 import { chromium } from "playwright";
 
+import { classifyProxyError } from "../../server/network/proxy-errors";
+import { validateProxySettings, type ProxySettings } from "../../shared/proxy-settings";
+import { BrowserProxyTransportError } from "./browser-errors";
+export { BrowserProxyTransportError, isBrowserProxyTransportError } from "./browser-errors";
 import type {
   BrowserLauncher,
   BrowserLike,
@@ -14,6 +18,7 @@ export interface LocalPlaywrightModule {
     launch(options: {
       headless: true;
       executablePath?: string;
+      proxy?: { server: string };
     }): Promise<BrowserLike>;
   };
 }
@@ -22,6 +27,17 @@ export interface LocalPlaywrightModule {
 export interface LocalBrowserLaunchOptions {
   executablePath?: string;
   headless: true;
+}
+
+/**
+ * 代理草稿只在此处转换为 Playwright 的 server 字段；用户名、密码和完整代理 URL 均不属于领域模型。
+ * IPv6 在 URL 表示中必须加方括号，但数据库和设置页继续保存裸主机，避免不同网络消费者产生不一致端点。
+ */
+export function toPlaywrightProxy(settings: ProxySettings | undefined): { server: string } | undefined {
+  if (settings === undefined || !settings.enabled) return undefined;
+  if (validateProxySettings(settings) !== null) throw new BrowserProxyTransportError("unknown-transport");
+  const host = settings.host.includes(":") ? `[${settings.host}]` : settings.host;
+  return { server: `${settings.protocol}://${host}:${settings.port}` };
 }
 
 /**
@@ -41,9 +57,16 @@ export function createLocalBrowserLauncher(
         executablePath: options.executablePath as string,
       };
   return {
-    async launch(): Promise<BrowserLike> {
-      // 这里是源码唯一允许触达 Playwright 的位置；异常原样交给关系 adapter 映射为固定业务失败，禁止在此记录正文。
-      return await playwrightModule.chromium.launch(launchOptions);
+    async launch(options = {}): Promise<BrowserLike> {
+      const proxy = toPlaywrightProxy(options.proxy);
+      try {
+        // 这里是源码唯一允许触达 Playwright 的位置；除明确代理 server 外不开放任何浏览器控制面。
+        return await playwrightModule.chromium.launch({ ...launchOptions, ...(proxy === undefined ? {} : { proxy }) });
+      } catch (error) {
+        // 只有已启用代理时的启动故障可被上层回退；直连 Chromium 故障保持原有安全降级语义。
+        if (proxy !== undefined) throw new BrowserProxyTransportError(classifyProxyError(error).category, error);
+        throw error;
+      }
     },
   };
 }

@@ -3,6 +3,7 @@ import {
   copyFile,
   mkdtemp,
   mkdir,
+  readdir,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -155,6 +156,10 @@ describe("PostgreSQL 初始 schema", () => {
       WHERE table_schema = 'public'
         AND (table_name, column_name) IN (
           ('settings', 'enabled_regions_json'),
+          ('settings', 'proxy_enabled'),
+          ('settings', 'proxy_protocol'),
+          ('settings', 'proxy_host'),
+          ('settings', 'proxy_port'),
           ('regional_products', 'enabled'),
           ('subscriptions', 'enabled'),
           ('exchange_rates', 'is_stale'),
@@ -186,6 +191,11 @@ describe("PostgreSQL 初始 schema", () => {
       { table_name: "regional_products", column_name: "enabled", data_type: "boolean", is_identity: "NO" },
       { table_name: "sessions", column_name: "expires_at", data_type: "timestamp with time zone", is_identity: "NO" },
       { table_name: "settings", column_name: "enabled_regions_json", data_type: "jsonb", is_identity: "NO" },
+      // 代理只持久化无认证端点和启用开关；原生类型约束避免 TEXT/JSON 误存后在网络边界出现隐式转换。
+      { table_name: "settings", column_name: "proxy_enabled", data_type: "boolean", is_identity: "NO" },
+      { table_name: "settings", column_name: "proxy_host", data_type: "text", is_identity: "NO" },
+      { table_name: "settings", column_name: "proxy_port", data_type: "integer", is_identity: "NO" },
+      { table_name: "settings", column_name: "proxy_protocol", data_type: "text", is_identity: "NO" },
       { table_name: "subscriptions", column_name: "enabled", data_type: "boolean", is_identity: "NO" },
     ]);
 
@@ -386,11 +396,15 @@ describe("PostgreSQL 迁移运行器", () => {
     await runMigrations(database, POSTGRES_MIGRATION_DIRECTORY);
     await runMigrations(database, POSTGRES_MIGRATION_DIRECTORY);
 
-    const result = await database.query<{ count: string }>(
-      "SELECT COUNT(*)::text AS count FROM schema_migrations",
+    // 迁移目录是版本集合的唯一权威来源；新增代理迁移后不能把固定数量误当成幂等性保证。
+    const expectedVersions = (await readdir(POSTGRES_MIGRATION_DIRECTORY, { withFileTypes: true }))
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".sql"))
+      .map((entry) => entry.name)
+      .sort();
+    const result = await database.query<{ version: string }>(
+      "SELECT version FROM schema_migrations ORDER BY version",
     );
-    // 当前包含不可变初始结构与目标价移除两版迁移；第二次启动不得重复记录任一版本。
-    expect(result.rows[0].count).toBe("2");
+    expect(result.rows.map((row) => row.version)).toEqual(expectedVersions);
   });
 
   it("已应用迁移的精确字节变化时以 SHA-256 不匹配阻止启动", async () => {
