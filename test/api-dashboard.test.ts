@@ -65,7 +65,8 @@ describe("dashboard HTTP route", () => {
         {
           subscriptionId: "subscription-overcooked-2",
           gameId: "game-overcooked-2",
-          nameZh: "胡闹厨房 2",
+          displayNameZhCn: "胡闹厨房 2",
+          nameZh: "旧中文候选",
           nameEn: "Overcooked! 2",
           enabled: true,
           regionalProductIds: ["product-overcooked-2-us"],
@@ -164,7 +165,8 @@ describe("dashboard HTTP route", () => {
 async function seedSubscription(): Promise<void> {
   // 直接构造已完成匹配和订阅确认的数据状态；事务防止夹具失败留下会影响读取断言的半成品。
   await database.transaction(async (transaction) => {
-    await transaction.query("INSERT INTO games (id, name_zh, name_en, product_type) VALUES ($1, $2, $3, $4)", ["game-overcooked-2", "胡闹厨房 2", "Overcooked! 2", "game"]);
+    // legacy name_zh 与新字段故意使用不同文本；若查询错误回退旧列，API 断言会得到“旧中文候选”而失败。
+    await transaction.query("INSERT INTO games (id, name_zh, name_en, product_type, display_name_zh_cn, display_name_source, display_name_confirmed_at) VALUES ($1, $2, $3, $4, $5, $6, $7)", ["game-overcooked-2", "旧中文候选", "Overcooked! 2", "game", "胡闹厨房 2", "manual", "2026-07-16T00:00:00.000Z"]);
     await transaction.query("INSERT INTO regional_products (id, game_id, region_code, currency, product_url, match_source) VALUES ($1, $2, $3, $4, $5, $6)", ["product-overcooked-2-us", "game-overcooked-2", "US", "USD", "https://example.test/us", "manual_selection"]);
     await transaction.query("INSERT INTO subscriptions (id, game_id, enabled, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)", ["subscription-overcooked-2", "game-overcooked-2", true, "2026-07-16T00:00:00.000Z", "2026-07-16T00:00:00.000Z"]);
     await transaction.query("INSERT INTO subscription_regions (subscription_id, regional_product_id) VALUES ($1, $2)", ["subscription-overcooked-2", "product-overcooked-2-us"]);

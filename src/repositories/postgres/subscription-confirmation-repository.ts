@@ -173,7 +173,10 @@ function isUniqueViolation(error: unknown): boolean {
   );
 }
 
-/** 游戏身份字段全部由确认服务重验后生成；规范化名称依赖数据库唯一索引提供并发最终裁决。 */
+/**
+ * 游戏身份字段与展示名称决议全部来自确认服务；normalized_name 依赖唯一索引提供并发最终裁决。
+ * name_zh 仅保留兼容副本，新读取模型必须直接使用 display_name_zh_cn，且来源与确认时刻在同一事务落库以保持审计一致。
+ */
 async function insertGame(
   transaction: SqlExecutor,
   input: ValidatedSubscriptionConfirmation,
@@ -181,11 +184,15 @@ async function insertGame(
 ): Promise<void> {
   await transaction.query(
     `INSERT INTO games (
-       id, name_zh, name_en, normalized_name, publisher, product_type, cover_url, created_at
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+       id, name_zh, display_name_zh_cn, display_name_source, display_name_confirmed_at,
+       name_en, normalized_name, publisher, product_type, cover_url, created_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
     [
       input.game.id,
       input.game.nameZh,
+      input.game.displayNameZhCn,
+      input.game.displayNameSource,
+      now,
       input.game.nameEn,
       input.game.normalizedName,
       input.game.publisher,

@@ -24,6 +24,36 @@ describe("PostgreSQL 订阅确认与永久删除事务", () => {
     await database.close();
   });
 
+  it("新订阅同时保存兼容中文字段与已确认展示名称元数据", async () => {
+    // 若 INSERT 仍只写 legacy name_zh，新读取 DTO 会得到 null；来源与确认时刻也必须同事务落库，避免名称看似存在却无法审计。
+    const repository = new PostgresSubscriptionConfirmationRepository(database);
+    await repository.createAtomically(
+      [confirmation("game-display-name", "subscription-display-name", "display name identity")],
+      fixedNow,
+    );
+
+    const stored = await database.query<{
+      nameZh: string;
+      displayNameZhCn: string | null;
+      displayNameSource: string | null;
+      displayNameConfirmedAt: Date | null;
+    }>(
+      `SELECT name_zh AS "nameZh",
+              display_name_zh_cn AS "displayNameZhCn",
+              display_name_source AS "displayNameSource",
+              display_name_confirmed_at AS "displayNameConfirmedAt"
+         FROM games
+        WHERE id = $1`,
+      ["game-display-name"],
+    );
+    expect(stored.rows).toEqual([{
+      nameZh: "合成游戏",
+      displayNameZhCn: "合成游戏",
+      displayNameSource: "manual",
+      displayNameConfirmedAt: new Date(fixedNow),
+    }]);
+  });
+
   it("新订阅在地区写入后故障时不留下任何游戏、地区商品或订阅", async () => {
     // 第三条语句前失败意味着游戏与首个地区 INSERT 已发送；只有真实同连接事务才能把两者一起回滚。
     const repository = new PostgresSubscriptionConfirmationRepository(
@@ -270,6 +300,8 @@ function confirmation(
     game: {
       id: gameId,
       nameZh: "合成游戏",
+      displayNameZhCn: "合成游戏",
+      displayNameSource: "manual",
       nameEn: "Synthetic Game",
       normalizedName,
       publisher: "Synthetic Publisher",

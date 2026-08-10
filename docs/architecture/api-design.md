@@ -5,7 +5,7 @@
 ## 1. 通用约束
 
 - Node.js 22 以同一 origin 提供 React 静态资源与 `/api/*`；不启用跨域 API。浏览器不直接访问任天堂、汇率、Telegram 或数据库。
-- 只有显式 `LOCAL_DEVELOPMENT_AUTH_BYPASS=true` 的本机开发进程才让认证状态返回 `{ initialized: true, authenticated: true }` 并由共享守卫直入；它强制监听 `127.0.0.1`、不读取 Cookie 或 PostgreSQL 会话，启动时只为空库写入公开默认设置，不生成认证材料。变量缺失或为 `false` 时所有接口恢复正常初始化与认证；旁路严禁部署到 Docker、NAS、局域网或公网。
+- 只有显式 `LOCAL_DEVELOPMENT_AUTH_BYPASS=true` 的本机开发进程才让认证状态返回 `{ initialized: true, authenticated: true }` 并由共享守卫直入；它强制监听 `127.0.0.1`、不读取 Cookie 或 PostgreSQL 会话，启动时只为空库写入公开默认设置，不生成认证材料。变量缺失或为 `false` 时普通管理接口恢复正常初始化与认证；旁路严禁部署到 Docker、NAS、局域网或公网。名称管理四个接口是高影响例外：批量回填与可复用词条会改变当前或未来游戏的展示名称，因此即使本机旁路开启也必须提供有效 `session` Cookie 并通过 PostgreSQL 会话校验。
 - 请求体在路由边界按受控字段和大小上限校验；未知 API 返回固定 `404`，超限返回 `413`。数据库、网络和浏览器异常只映射为安全摘要。
 - 会话 Cookie 始终为 `HttpOnly; SameSite=Strict`。`Secure` 由部署层显式 `COOKIE_SECURE` 决定，不能信任 `Forwarded` 或 `X-Forwarded-Proto` 自动推断。
 - 所有写入仍先校验，再由服务/仓储执行参数化 SQL 与显式事务；除显式本机旁路外必须执行会话校验。响应、CSV 和日志不得包含密码、恢复码、会话、数据库或 Telegram 秘密。
@@ -26,7 +26,11 @@
 | `POST /api/products/resolve-link` | 已登录 | 按地区官方主机和路径白名单解析单个 HTTPS 链接。 |
 | `POST /api/products/resolve-regions` | 已登录 | 按已保存启用地区解析跨区候选；必要时用本地 Playwright 处理最多三个日区升级包。只读，不创建订阅。 |
 | `POST /api/products/preview-sources` | 已登录 | 返回逐区官方价格 ID 状态和来源提示，不写业务数据。 |
-| `POST /api/products/confirm-subscriptions` | 已登录 | 保存前重新验证全部官方身份；一个 PostgreSQL 事务批量创建，任一失败零写入。 |
+| `POST /api/products/confirm-subscriptions` | 已登录 | 每项可附带修剪后 1–120 字符的 `displayNameZhCn`；路由只收窄 JSON 形状/长度，保存前仍重新验证官方身份并由词条优先级裁决。一个 PostgreSQL 事务批量创建，任一失败零写入。 |
+| `GET /api/game-names?status=pending` | 严格会话 | 返回仍缺少确认简体中文显示名的公开管理字段；不受本机开发认证旁路影响。 |
+| `POST /api/game-names/backfill` | 严格会话 | 仅用精确身份词条回填空名称，返回实际更新游戏 ID 与剩余数量；不覆盖已有人工名称。 |
+| `POST /api/game-names/suggestions` | 严格会话 | 按官方标题、发行商与商品类型的精确身份返回已确认词条或 `null`；候选键只用于 UI 关联，建议不创建游戏或词条。 |
+| `PATCH /api/game-names/:gameId` | 严格会话 | 为任一已存在游戏保存或更正 1–120 字符名称及受控来源/HTTPS 证据；复用范围只取其已保存的精确官方身份，只有管理员显式选择时才建立未来复用词条。 |
 | `POST /api/subscriptions` | 已登录 | 以已确认的游戏和地区商品创建或幂等打开既有订阅。 |
 | `GET /api/subscriptions/:id` | 已登录 | 返回脱敏订阅详情。 |
 | `PATCH /api/subscriptions/:id` | 已登录 | 更新启用状态或地区范围；地区商品必须属于同一游戏。 |
@@ -46,13 +50,20 @@
 - 日区升级包浏览器批次最多三个商品，共用一次本地浏览器但每项使用新 context/page；单项失败不影响其他候选，也不自动重试。浏览器不参与六小时采集、手动刷新、日报或历史查询。
 - 价格响应保留来源、原始货币、采集时间、过期状态与人民币汇率证据。官方 ID 不得跨区复用；第三方价格不得标记为官方或触发即时降价。
 
-## 4. 手动刷新和调度边界
+## 4. 简体中文名称边界
+
+- 名称目录身份由规范化官方标题、发行商和商品类型精确组成；浏览器的 `candidateKey` 只关联建议响应，不能成为目录键、游戏 ID 或订阅身份。
+- `POST /api/game-names/suggestions` 只返回已有已确认词条或 `null`，不创建词条、游戏或订阅。向导即使取得建议也必须提交每个选中商品的非空名称，最终确认服务会以重新读取的官方锚点重算身份。
+- `POST /api/products/confirm-subscriptions` 对缺失词条只接受服务端验证过的人工名称；未知名称不得调用在线翻译或抓取网页。仪表盘和详情 API 返回可空 `displayNameZhCn`，页面只可将 `null` 渲染为“待补充中文名称”。
+- 回填与人工更正会改变当前或未来游戏的展示名称，故四个名称管理接口在本机认证旁路下仍强制验证 `session` Cookie；路由响应只暴露固定中文错误，不返回旧名称、SQL、证据网页或会话细节。
+
+## 5. 手动刷新和调度边界
 
 `POST /api/refresh` 是同步管理员操作：认证成功后记录最近请求时间，直接调用与六小时任务共享的采集服务，等待本轮完成后返回。当前实现不做 15 分钟冷却，不创建 `queued/running` 状态，也不由调度器消费。
 
 自动任务不是 HTTP 端点。Node 进程使用 UTC 时钟和 PostgreSQL advisory lock 执行每分钟通知/日报与每六小时采集；未取得锁时立即跳过本轮。
 
-## 5. 错误和静态资源
+## 6. 错误和静态资源
 
 - 已知业务错误使用 `401/404/409/422/429` 和固定中文 `code/error`；未知数据库、网络、Telegram 或浏览器异常统一为不含内部细节的 `500`。
 - `GET/HEAD` 非 API 请求先在构建静态目录内安全解析；路径穿越、重复编码和越根符号链接被拒绝，安全的客户端路由才回退 `index.html`。

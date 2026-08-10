@@ -1,6 +1,6 @@
 # 需求追踪表
 
-最后更新：2026-08-01
+最后更新：2026-08-10
 
 状态区分“仓库实现”“M1 本地生产验收”和“外部验收”。历史 Cloudflare 生产证据不等于当前 Node/PostgreSQL 工作树的 M1、Docker Hub 或 NAS 证据。
 
@@ -14,6 +14,7 @@
 | FR-006 | 无认证代理设置与受控连接测试 | PostgreSQL 设置保存 HTTP/HTTPS/SOCKS5 协议、主机、端口；统一出站层、Telegram 与 Playwright 使用快照和一次回退规则；设置页测试不保存草稿 | [PRD](PRD.md)、[API](../architecture/api-design.md)、[数据模型](../architecture/data-model.md) |
 | FR-006 | 单管理员初始化、登录、锁定与恢复码 | 已实现；Cookie 为 `HttpOnly; SameSite=Strict`，`Secure` 由部署配置决定；NAS 初始化待验收 | [API](../architecture/api-design.md)、[数据模型](../architecture/data-model.md) |
 | FR-007 | 导航、仪表盘、地区/价格格式与版本 | 已实现当前页面；版本改为正式 Git 标签构建，不再自动修改 package 版本；NAS 页面待验收 | [PRD](PRD.md)、[Docker Hub 发布](../deployment/docker-hub-release.md) |
+| FR-007 | 简体中文游戏名、目录回填与新订阅确认 | 已实现：受控词条/人工覆盖、幂等回填、严格会话名称管理、仪表盘/详情待补充占位及向导建议与必填确认；真实运营词库审核待管理员持续维护 | [PRD](PRD.md)、[数据模型](../architecture/data-model.md)、[API](../architecture/api-design.md) |
 | FR-008 | 管理员 CSV 导出 | 已实现订阅、价格历史和采集日志三类白名单导出 | [API](../architecture/api-design.md)、[数据模型](../architecture/data-model.md) |
 | FR-009 | 连续失败与恢复通知 | PostgreSQL 健康状态、唯一事件和分钟投递已实现；真实来源失败/恢复与 Telegram 待验收 | [数据模型](../architecture/data-model.md)、[系统设计](../architecture/system-design.md) |
 | FR-010 | 永久删除与全局加载 | PostgreSQL 显式事务实现并由回滚测试覆盖；历史 Worker/D1 生产删除只作为历史证据 | [API](../architecture/api-design.md)、[质量](../quality/quality-and-acceptance.md) |

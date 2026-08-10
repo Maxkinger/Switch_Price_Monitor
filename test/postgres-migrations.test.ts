@@ -23,6 +23,7 @@ const expectedTables = [
   "admin_credentials",
   "exchange_rates",
   "fetch_logs",
+  "game_name_catalog",
   "games",
   "login_attempts",
   "manual_refresh_requests",
@@ -165,6 +166,9 @@ describe("PostgreSQL 初始 schema", () => {
           ('exchange_rates', 'is_stale'),
           ('regional_product_health', 'failure_notified'),
           ('games', 'created_at'),
+          ('games', 'display_name_zh_cn'),
+          ('games', 'display_name_source'),
+          ('games', 'display_name_confirmed_at'),
           ('sessions', 'expires_at'),
           ('price_snapshots', 'captured_at'),
           ('price_snapshots', 'id'),
@@ -182,6 +186,10 @@ describe("PostgreSQL 初始 schema", () => {
       { table_name: "exchange_rates", column_name: "is_stale", data_type: "boolean", is_identity: "NO" },
       { table_name: "fetch_logs", column_name: "id", data_type: "bigint", is_identity: "YES" },
       { table_name: "games", column_name: "created_at", data_type: "timestamp with time zone", is_identity: "NO" },
+      // 展示名称元数据必须保留为可空列：旧记录在词条回填前应明确处于 pending，不能把旧 name_zh 当成已确认真值。
+      { table_name: "games", column_name: "display_name_confirmed_at", data_type: "timestamp with time zone", is_identity: "NO" },
+      { table_name: "games", column_name: "display_name_source", data_type: "text", is_identity: "NO" },
+      { table_name: "games", column_name: "display_name_zh_cn", data_type: "text", is_identity: "NO" },
       { table_name: "notification_events", column_name: "id", data_type: "bigint", is_identity: "YES" },
       { table_name: "price_snapshots", column_name: "amount_minor", data_type: "integer", is_identity: "NO" },
       { table_name: "price_snapshots", column_name: "captured_at", data_type: "timestamp with time zone", is_identity: "NO" },
@@ -213,6 +221,29 @@ describe("PostgreSQL 初始 schema", () => {
     `);
     // 所有业务时间、过期时间、锁定时间和迁移时间都必须带时区；空结果可捕获任一列误退回 TEXT 或 TIMESTAMP。
     expect(nonTimestampTimeColumns.rows).toEqual([]);
+
+    const displayNameColumns = await database.query<{
+      column_name: string;
+      is_nullable: "YES" | "NO";
+    }>(`
+      SELECT column_name, is_nullable
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'games'
+        AND column_name = ANY($1::text[])
+      ORDER BY column_name
+    `, [[
+      "display_name_confirmed_at",
+      "display_name_source",
+      "display_name_zh_cn",
+    ]]);
+
+    // 旧 games 不得因新增展示元数据而被强制回填：三个列可空才能忠实表达尚无目录证据的 pending 状态。
+    expect(displayNameColumns.rows).toEqual([
+      { column_name: "display_name_confirmed_at", is_nullable: "YES" },
+      { column_name: "display_name_source", is_nullable: "YES" },
+      { column_name: "display_name_zh_cn", is_nullable: "YES" },
+    ]);
   });
 
   it("每个既有外键都拒绝不存在的父记录", async () => {

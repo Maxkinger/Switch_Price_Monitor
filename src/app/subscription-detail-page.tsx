@@ -4,7 +4,8 @@ import type { ConfirmedRegionalProduct, OfficialProductCandidate, RegionCode, Re
 import { ProductApiError, createProductApiClient, type RegionResolutionResponse } from "./api-client";
 import { DashboardApiError, type CompletedRefreshResult, type MissingRegionCompletionInput, type SubscriptionDetail, type SubscriptionUpdate } from "./dashboard-api-client";
 import { formatCnyFen, formatRegionalPrice, formatRegionName } from "./dashboard-view-model";
-import { displayChineseGameName } from "../shared/game-display-name";
+import { displayGameName } from "../shared/game-display-name";
+import { GameNameApiError, type SaveGameNameInput } from "./game-name-api-client";
 import { applyAutomaticMissingResolutions, immediateRefreshNotice, missingRegionPresentation } from "./dashboard-page-state";
 import { SubscriptionDeleteDialog } from "./subscription-delete-dialog";
 
@@ -18,13 +19,22 @@ interface DetailApi {
   deleteSubscriptions(subscriptionIds: string[]): Promise<{ deletedSubscriptionIds: string[] }>;
 }
 
+/** 详情页名称更正只取得单条名称写入能力；批量队列、目录回填和向导建议都留在各自独立页面。 */
+interface DetailGameNameApi {
+  saveGameName(gameId: string, input: SaveGameNameInput): Promise<unknown>;
+}
+
 /**
- * 单页订阅详情提供启用状态和已确认地区范围两种独立保存操作。
+ * 单页订阅详情提供中文名称、启用状态和已确认地区范围三种独立保存操作。
  * 页面不接受商品 ID 文本输入；地区复选框只来自服务端返回的已确认映射，商品客户端由应用壳共享以纳入全局加载状态。
  */
-export function SubscriptionDetailPage({ api, productApi, subscriptionId, onBack, onUnauthorized }: { api: DetailApi; productApi: ReturnType<typeof createProductApiClient>; subscriptionId: string; onBack: () => void; onUnauthorized: () => void }) {
+export function SubscriptionDetailPage({ api, gameNameApi, productApi, subscriptionId, onBack, onUnauthorized }: { api: DetailApi; gameNameApi: DetailGameNameApi; productApi: ReturnType<typeof createProductApiClient>; subscriptionId: string; onBack: () => void; onUnauthorized: () => void }) {
   const [detail, setDetail] = useState<SubscriptionDetail | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // 名称草稿与价格详情分开保存；失败时保留输入，成功时只能由 reload 的服务端结果重新建立两类状态。
+  const [gameNameDraft, setGameNameDraft] = useState("");
+  const [saveNameToCatalog, setSaveNameToCatalog] = useState(false);
+  const [isSavingGameName, setIsSavingGameName] = useState(false);
   const monitoredIds = useMemo(() => new Set(detail?.regions.filter((region) => region.monitored).map((region) => region.regionalProductId) ?? []), [detail]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [missingResolutions, setMissingResolutions] = useState<RegionResolutionResponse[]>([]);
@@ -39,7 +49,9 @@ export function SubscriptionDetailPage({ api, productApi, subscriptionId, onBack
   async function reload(): Promise<boolean> {
     try {
       const next = await api.getSubscription(subscriptionId);
-      setDetail(next); setSelectedIds(new Set(next.regions.filter((region) => region.monitored).map((region) => region.regionalProductId)));
+      setDetail(next);
+      setGameNameDraft(next.game.displayNameZhCn ?? "");
+      setSelectedIds(new Set(next.regions.filter((region) => region.monitored).map((region) => region.regionalProductId)));
       return true;
     } catch (error) {
       if (error instanceof DashboardApiError && error.status === 401) onUnauthorized();
@@ -55,6 +67,33 @@ export function SubscriptionDetailPage({ api, productApi, subscriptionId, onBack
     setNotice(null);
     try { await api.updateSubscription(subscriptionId, update); await reload(); setNotice(success); }
     catch (error) { if (error instanceof DashboardApiError && error.status === 401) onUnauthorized(); else setNotice(error instanceof DashboardApiError ? error.message : "保存未完成，请稍后重试。"); }
+  }
+
+  /**
+   * 中文名更正固定作为管理员 manual 确认，可选建立同一精确身份的复用词条；成功后必须读取完整详情，
+   * 不能在浏览器局部替换 game 名称并继续沿用可能已被并发更新的价格、地区或订阅状态。
+   */
+  async function saveDisplayName(): Promise<void> {
+    if (detail === null) return;
+    setIsSavingGameName(true);
+    setNotice(null);
+    try {
+      await gameNameApi.saveGameName(detail.game.id, {
+        displayNameZhCn: gameNameDraft,
+        source: "manual",
+        evidenceUrl: null,
+        saveToCatalog: saveNameToCatalog,
+      });
+      if (await reload()) {
+        setSaveNameToCatalog(false);
+        setNotice("中文名称已保存。");
+      }
+    } catch (error) {
+      if (error instanceof GameNameApiError && error.status === 401) onUnauthorized();
+      else setNotice(error instanceof GameNameApiError ? error.message : "中文名称暂时无法保存，请稍后重试。");
+    } finally {
+      setIsSavingGameName(false);
+    }
   }
 
   async function refreshNow(): Promise<void> {
@@ -137,8 +176,8 @@ export function SubscriptionDetailPage({ api, productApi, subscriptionId, onBack
   }
 
   if (!detail) return <p className="page-loading">正在读取订阅详情…</p>;
-  // 详情首行是管理员识别订阅的主标题；历史英文 nameZh 也在这里统一转为受控中文名，英文官方标题仍保留在副标题中用于核对。
-  const gameDisplayName = displayChineseGameName(detail.game.nameZh, detail.game.nameEn);
+  // 详情主标题只使用服务端确认的中文名；官方标题保留在副标题供核验，不能参与前端翻译或占位回退。
+  const gameDisplayName = displayGameName(detail.game.displayNameZhCn);
   return <section className="detail-page" aria-labelledby="detail-title">
     <button type="button" className="text-button" onClick={onBack}>← 返回仪表盘</button>
     <header className="detail-header"><div><h1 id="detail-title">{gameDisplayName}</h1><p>{detail.game.nameEn} · {detail.game.productType}</p></div><div><button className="secondary-button" type="button" onClick={() => void refreshNow()}>立即刷新</button><button className="primary-button" type="button" onClick={() => void save({ enabled: !detail.enabled }, detail.enabled ? "订阅已暂停。" : "订阅已启用。")}>{detail.enabled ? "暂停订阅" : "启用订阅"}</button></div></header>
@@ -146,6 +185,12 @@ export function SubscriptionDetailPage({ api, productApi, subscriptionId, onBack
     <section><h2>地区价格</h2><div className="detail-regions">{/* 本区现价和历史最低价必须同时带入地区代码，才能应用与仪表盘一致的官网文字；不能仅按币种猜测地区。 */}{detail.regions.map((region) => <article key={region.regionalProductId}><h3>{formatRegionName(region.regionCode)}</h3>{region.current ? <p><b>{formatRegionalPrice(region.current.amountMinor, region.currency, region.regionCode)}</b><small>{formatCnyFen(region.current.cnyFen)} · {region.current.source} · {region.current.capturedAt}{region.isStale ? " · 过期" : ""}</small></p> : <p>等待首笔价格</p>}<small>地区历史最低：{region.historicalLow ? `${formatRegionalPrice(region.historicalLow.amountMinor, region.currency, region.regionCode)}（${formatCnyFen(region.historicalLow.cnyFen)}）` : "暂无"}</small></article>)}</div></section>
     <section className="detail-management">
       <h2>管理订阅</h2>
+      <fieldset className="detail-game-name-form">
+        <legend>中文显示名称</legend>
+        <label><span>简体中文显示名称</span><input value={gameNameDraft} onChange={(event) => setGameNameDraft(event.target.value)} /></label>
+        <label><input type="checkbox" checked={saveNameToCatalog} onChange={(event) => setSaveNameToCatalog(event.target.checked)} />保存为可复用词条</label>
+        <button className="primary-button" type="button" disabled={isSavingGameName} onClick={() => void saveDisplayName()}>{isSavingGameName ? "保存中…" : "保存中文名称"}</button>
+      </fieldset>
       <fieldset>
         <legend>补全已启用地区</legend>
         <button className="secondary-button" type="button" disabled={isResolvingMissing} onClick={() => void resolveMissingRegions()}>{isResolvingMissing ? "解析中…" : "补全已启用地区"}</button>

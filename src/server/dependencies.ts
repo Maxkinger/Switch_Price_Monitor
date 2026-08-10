@@ -15,6 +15,7 @@ import { PostgresCollectionRepository } from "../repositories/postgres/collectio
 import { PostgresDashboardRepository } from "../repositories/postgres/dashboard-repository";
 import { PostgresExchangeRateRepository } from "../repositories/postgres/exchange-rate-repository";
 import { PostgresExportRepository } from "../repositories/postgres/export-repository";
+import { PostgresGameNameRepository } from "../repositories/postgres/game-name-repository";
 import { PostgresHistoryRepository } from "../repositories/postgres/history-repository";
 import { PostgresManualRefreshRepository } from "../repositories/postgres/manual-refresh-repository";
 import { PostgresNotificationEventRepository } from "../repositories/postgres/notification-event-repository";
@@ -28,6 +29,7 @@ import { PostgresSubscriptionRepository } from "../repositories/postgres/subscri
 import { handleAuthRoute } from "../routes/auth-routes";
 import { handleDashboardRoute } from "../routes/dashboard-routes";
 import { handleExportRoute } from "../routes/export-routes";
+import { handleGameNameRoute } from "../routes/game-name-routes";
 import { handleHistoryRoute } from "../routes/history-routes";
 import { handleManualRefreshRoute } from "../routes/manual-refresh-routes";
 import { handleProductRoute } from "../routes/product-routes";
@@ -38,6 +40,7 @@ import { CollectionService } from "../services/collection-service";
 import { DailyCnyRateService } from "../services/daily-cny-rate-service";
 import { DashboardService } from "../services/dashboard-service";
 import { ExportService } from "../services/export-service";
+import { GameNameService } from "../services/game-name-service";
 import { HistoryService } from "../services/history-service";
 import { createJapaneseUpgradeRelationService } from "../services/japanese-upgrade-relation-service";
 import { JapaneseSubscriptionConfirmationService } from "../services/japanese-subscription-confirmation-service";
@@ -170,6 +173,8 @@ export function createServerDependencies(
     japaneseUpgradeRelations,
   );
   const confirmationRepository = new PostgresSubscriptionConfirmationRepository(database);
+  // 同一名称服务实例负责确认阶段的精确词条决议；后续名称管理路由也必须复用该实例，避免不同仓储或优先级造成展示状态分叉。
+  const gameNames = new GameNameService(new PostgresGameNameRepository(database));
   const confirmation = new SubscriptionConfirmationService(
     confirmationRepository,
     officialPages,
@@ -177,6 +182,7 @@ export function createServerDependencies(
     settingsRepository,
     new JapaneseSubscriptionConfirmationService(officialSearch, officialPriceIds),
     japaneseUpgradeRelations,
+    gameNames,
     discovery,
   );
   const subscriptions = new SubscriptionService(new PostgresSubscriptionRepository(database));
@@ -207,6 +213,11 @@ export function createServerDependencies(
         new ProxyConnectionTestService(outboundNetwork, createProxyBrowserConnectionProbe(browserLauncher)),
       ),
       (request) => handleDashboardRoute(request, routeSessions, dashboard),
+      /**
+       * 名称管理复用确认流程同一服务实例，但会直接校验真实 AuthService，而不是 routeSessions 的本机开发旁路。
+       * 批量回填和可复用词条写入会持久改变多个当前/未来游戏的展示名称，必须在任何环境都要求有效 Cookie 会话。
+       */
+      (request) => handleGameNameRoute(request, auth, gameNames),
       (request) => handleManualRefreshRoute(request, routeSessions, refresh),
       (request) => handleHistoryRoute(request, routeSessions, history),
       (request) => handleExportRoute(request, routeSessions, exports),

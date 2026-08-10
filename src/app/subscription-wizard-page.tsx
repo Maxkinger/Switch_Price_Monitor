@@ -1,13 +1,16 @@
 import { useMemo, useRef, useState, type FormEvent } from "react";
 import { createProductApiClient, ProductApiError, type RegionResolutionResponse } from "./api-client";
+import { GameNameApiError, type GameNameSuggestionCandidate } from "./game-name-api-client";
 import {
   candidatePriceLabel,
   applyAutomaticRegionResolutions,
+  canConfirmChineseNames,
   canConfirmConfiguredRegions,
   createSubscriptionWizardState,
   hasNoOfficialCandidates,
   regionalConfirmationKey,
   setRegionalCandidate,
+  setChineseNameDraft,
   skipRegionalConfirmation,
   toggleCandidate,
   type CandidatePriceLabel,
@@ -22,6 +25,11 @@ import type {
   RegionalProductMatchSource,
   SubscriptionConfirmationResult,
 } from "../shared/domain";
+
+/** 向导仅需要已确认词条的建议读取能力；不能取得管理页的回填或人工保存权限，减少页面可发起的写操作范围。 */
+interface GameNameSuggestionApi {
+  suggestNames(candidates: GameNameSuggestionCandidate[]): Promise<{ suggestions: Array<{ candidateKey: string; displayNameZhCn: string | null }> }>;
+}
 
 /**
  * 地区标签仅用于 UI 文案与官方链接回退选择，绝不代表跨区业务范围。
@@ -244,7 +252,7 @@ function RegionalConfirmationPanel({
  * 已认证后的添加订阅向导。它只管理本次选择过程，最终写入前由后端重新验证每个官方链接并原子化创建订阅；
  * 共享商品客户端由应用壳传入，使搜索、核验和确认都计入全局加载状态，且刷新、取消或认证失效不会留下部分数据。
  */
-export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnType<typeof createProductApiClient>; onUnauthorized: () => void }) {
+export function SubscriptionWizardPage({ api, gameNameApi, onUnauthorized }: { api: ReturnType<typeof createProductApiClient>; gameNameApi: GameNameSuggestionApi; onUnauthorized: () => void }) {
   const [wizard, setWizard] = useState<SubscriptionWizardState>(() => createSubscriptionWizardState(emptySearchResult));
   const [query, setQuery] = useState("");
   const [fallbackRegion, setFallbackRegion] = useState<RegionCode>("US");
@@ -256,6 +264,8 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
    * 这样慢速本地 Playwright 核验的成功、失败和 finally 都不能覆盖后来搜索的地区结果或加载状态。
    */
   const regionResolutionGeneration = useRef(0);
+  /** 搜索代次同样保护异步目录建议，避免旧搜索迟到后为新结果预填错误中文名。 */
+  const nameSuggestionGeneration = useRef(0);
   const [resolutions, setResolutions] = useState<RegionResolutionResponse[]>([]);
   // 解析响应可能为空（例如仅启用默认区），因此单独记录已完成核验的默认区候选，不能以结果数组长度判断是否允许提交。
   const [resolvedCandidateKeys, setResolvedCandidateKeys] = useState<string[]>([]);
@@ -287,6 +297,42 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
     setIsResolvingRegions(false);
   }
 
+  /**
+   * 仅把服务端返回的已确认词条写入当前候选的空草稿；没有建议时保留空输入并要求管理员填写。
+   * 请求发送的标题、发行商和类型都只是查词典的体验参数，最终创建时服务端会以官方链接重新读取的锚点重算身份。
+   */
+  async function loadChineseNameSuggestion(candidate: OfficialProductCandidate, generation: number): Promise<void> {
+    const key = candidateKey(candidate);
+    try {
+      const response = await gameNameApi.suggestNames([{
+        candidateKey: key,
+        canonicalTitle: candidate.canonicalTitle,
+        publisher: candidate.publisher,
+        productType: candidate.productType,
+      }]);
+      if (nameSuggestionGeneration.current !== generation) return;
+      const suggestion = response.suggestions.find((entry) => entry.candidateKey === key)?.displayNameZhCn;
+      if (suggestion === null || suggestion === undefined) return;
+      setWizard((current) => {
+        // 管理员在慢速建议返回前已经输入的名称优先，不能被网络响应覆盖成目录词条。
+        if (nameSuggestionGeneration.current !== generation || current.chineseNameDrafts[key] !== undefined) return current;
+        return setChineseNameDraft(current, key, suggestion);
+      });
+    } catch (error) {
+      if (nameSuggestionGeneration.current !== generation) return;
+      if (error instanceof GameNameApiError && error.status === 401) onUnauthorized();
+      else setNotice(error instanceof GameNameApiError ? error.message : "中文名称建议暂时无法读取，请手动填写。");
+    }
+  }
+
+  /** 选择时异步读取精确目录建议；取消选择不删除草稿，以便管理员撤销误点后重新选择时不丢失已输入的中文名。 */
+  function handleToggleCandidate(candidate: OfficialProductCandidate): void {
+    const key = candidateKey(candidate);
+    const shouldLoadSuggestion = !wizard.selectedCandidateKeys.includes(key);
+    setWizard((current) => toggleCandidate(current, key));
+    if (shouldLoadSuggestion) void loadChineseNameSuggestion(candidate, nameSuggestionGeneration.current);
+  }
+
   /** 仅从当前官方搜索响应中派生已选项；旧搜索结果不会混进下一次批量确认。 */
   const selectedCandidates = useMemo(() => {
     if (wizard.searchResult.status !== "available") return [];
@@ -303,6 +349,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
     }
 
     invalidateRegionResolutionGeneration();
+    nameSuggestionGeneration.current += 1;
     setIsSearching(true);
     setNotice(null);
     setResults([]);
@@ -329,6 +376,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
     }
 
     invalidateRegionResolutionGeneration();
+    nameSuggestionGeneration.current += 1;
     setIsSearching(true);
     setNotice(null);
     try {
@@ -455,7 +503,8 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
       const skippedRegionCodes = resolutions
         .filter((resolution) => resolution.candidateKey === selectedKey)
         .flatMap((resolution) => wizard.skippedRegionalKeys.includes(regionalConfirmationKey(selectedKey, resolution.regionCode)) ? [resolution.regionCode] : []);
-      return { selected, regions, skippedRegionCodes };
+      // 本地 trim 仅防止因前端状态异常提交首尾空白；服务端会在官方身份重验后再次验证并决定词条或人工名称的实际落库规则。
+      return { selected, displayNameZhCn: (wizard.chineseNameDrafts[selectedKey] ?? "").trim(), regions, skippedRegionCodes };
     });
   }
 
@@ -551,7 +600,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
             <div className="candidate-grid">
               {wizard.searchResult.candidates.map((candidate) => {
                 const key = candidateKey(candidate);
-                return <CandidateCard key={key} candidate={candidate} selected={wizard.selectedCandidateKeys.includes(key)} onToggle={() => setWizard((current) => toggleCandidate(current, key))} />;
+                return <CandidateCard key={key} candidate={candidate} selected={wizard.selectedCandidateKeys.includes(key)} onToggle={() => handleToggleCandidate(candidate)} />;
               })}
             </div>
             <div className="candidate-actions">
@@ -559,7 +608,7 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
                 {isResolvingRegions ? "匹配中…" : "核验其他地区"}
               </button>
               <button className="secondary-button" type="button" onClick={handlePreviewSources} disabled={selectedCandidates.length === 0}>预览价格来源</button>
-              <button className="primary-button" type="button" onClick={handleConfirmSubscriptions} disabled={wizard.submitState === "submitting" || selectedCandidates.some((candidate) => !resolvedCandidateKeys.includes(candidateKey(candidate))) || !canConfirmConfiguredRegions(wizard, selectedCandidates, resolutions)}>
+              <button className="primary-button" type="button" onClick={handleConfirmSubscriptions} disabled={wizard.submitState === "submitting" || selectedCandidates.some((candidate) => !resolvedCandidateKeys.includes(candidateKey(candidate))) || !canConfirmConfiguredRegions(wizard, selectedCandidates, resolutions) || !canConfirmChineseNames(wizard, selectedCandidates)}>
                 {wizard.submitState === "submitting" ? "确认中…" : "确认订阅"}
               </button>
             </div>
@@ -595,6 +644,28 @@ export function SubscriptionWizardPage({ api, onUnauthorized }: { api: ReturnTyp
             onToggleCandidateExpansion={(key) => setExpandedRegionalKeys((current) => current.includes(key) ? current.filter((entry) => entry !== key) : [...current, key])}
           />
         ))}
+
+        {selectedCandidates.length > 0 ? (
+          <section className="regional-confirmation" aria-labelledby="chinese-name-confirmation-title">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">第三步</p>
+                <h2 id="chinese-name-confirmation-title">确认简体中文显示名称</h2>
+                <p>目录建议仅用于预填；未命中时必须手动填写，最终仍以服务器复核的官方商品身份为准。</p>
+              </div>
+            </div>
+            <div className="regional-confirmation__options">
+              {selectedCandidates.map((selected) => {
+                const key = candidateKey(selected);
+                const inputId = `chinese-name-${key}`;
+                return <label className="regional-option" key={key} htmlFor={inputId}>
+                  <span>{selected.canonicalTitle} 的简体中文显示名称</span>
+                  <input id={inputId} value={wizard.chineseNameDrafts[key] ?? ""} onChange={(event) => setWizard((current) => setChineseNameDraft(current, key, event.target.value))} required />
+                </label>;
+              })}
+            </div>
+          </section>
+        ) : null}
 
         {Object.entries(wizard.sourcePreviews).map(([key, preview]) => (
           <section className="source-preview" key={key}>

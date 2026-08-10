@@ -23,6 +23,10 @@ const nodePostgresApiTests = [
  */
 export default defineConfig({
   test: {
+    // 所有 PostgreSQL 项目都精确连接同一个一次性 public schema；项目级 fileParallelism 只能约束各自项目内部，
+    // 不能阻止 core 与 postgres/API 项目同时 DROP SCHEMA。全局单 worker 使迁移、重置与读取严格串行，
+    // 避免把测试隔离故障误判为业务回归，也确保破坏性 SQL 永远只作用于已校验的临时库。
+    maxWorkers: 1,
     projects: [
       {
         test: {

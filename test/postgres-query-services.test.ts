@@ -34,6 +34,8 @@ describe("PostgreSQL 仪表盘、历史与导出查询服务", () => {
     expect(overview.subscriptions[0]).toEqual({
       subscriptionId: "subscription-query",
       gameId: "game-query",
+      // 仪表盘读取模型现在明确投影可空的服务端中文展示名；旧 nameZh 仅保留兼容与管理候选，不得被页面当作已确认名称回退。
+      displayNameZhCn: null,
       nameZh: "查询测试",
       nameEn: "Query Test",
       enabled: true,
@@ -79,6 +81,7 @@ describe("PostgreSQL 仪表盘、历史与导出查询服务", () => {
     expect(overview.subscriptions[1]).toMatchObject({
       subscriptionId: "subscription-disabled",
       gameId: "game-disabled",
+      displayNameZhCn: null,
       nameZh: "停用查询",
       nameEn: "Disabled Query",
       enabled: false,

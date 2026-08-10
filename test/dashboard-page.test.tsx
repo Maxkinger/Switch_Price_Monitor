@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createProductApiClient } from "../src/app/api-client";
+import { gameNameManagementPath } from "../src/app/app-navigation";
 import { DashboardPage } from "../src/app/dashboard-page";
 import { SubscriptionDetailPage } from "../src/app/subscription-detail-page";
 import type { DashboardOverview, SubscriptionDetail } from "../src/app/dashboard-api-client";
@@ -21,7 +22,7 @@ const overviewWithSubscription: DashboardOverview = {
   subscriptions: [{
     subscriptionId: "subscription-overcooked-2",
     gameId: "game-overcooked-2",
-    nameZh: "胡闹厨房 2",
+    displayNameZhCn: "胡闹厨房 2",
     nameEn: "Overcooked! 2",
     enabled: true,
     regionalProductIds: ["product-overcooked-2-us"],
@@ -52,7 +53,7 @@ const overviewWithoutSubscription: DashboardOverview = {
 /** 详情删除测试只保留页面渲染所需的最小订阅模型，避免把真实网络、官方商品链接或价格采集逻辑带入 DOM 用例。 */
 const subscriptionDetail: SubscriptionDetail = {
   subscriptionId: "subscription-overcooked-2",
-  game: { id: "game-overcooked-2", nameZh: "胡闹厨房 2", nameEn: "Overcooked! 2", productType: "game" },
+  game: { id: "game-overcooked-2", displayNameZhCn: "胡闹厨房 2", nameEn: "Overcooked! 2", productType: "game" },
   enabled: true,
   regions: [{
     regionalProductId: "product-overcooked-2-us",
@@ -80,7 +81,7 @@ const localizedOverview: DashboardOverview = {
   subscriptions: [{
     subscriptionId: "subscription-overcooked-2-switch-2-edition",
     gameId: "game-overcooked-2-switch-2-edition",
-    nameZh: "胡闹厨房 2 Nintendo Switch 2 Edition",
+    displayNameZhCn: "胡闹厨房 2 Nintendo Switch 2 Edition",
     nameEn: "Overcooked! 2 – Nintendo Switch 2 Edition",
     enabled: true,
     regionalProductIds: ["overcooked-us", "overcooked-mx", "overcooked-jp", "overcooked-br", "overcooked-hk"],
@@ -102,7 +103,7 @@ const localizedOverview: DashboardOverview = {
  */
 const localizedSubscriptionDetail: SubscriptionDetail = {
   subscriptionId: "subscription-overcooked-2-switch-2-edition",
-  game: { id: "game-overcooked-2-switch-2-edition", nameZh: "胡闹厨房 2 Nintendo Switch 2 Edition", nameEn: "Overcooked! 2 – Nintendo Switch 2 Edition", productType: "upgrade_pack" },
+  game: { id: "game-overcooked-2-switch-2-edition", displayNameZhCn: "胡闹厨房 2 Nintendo Switch 2 Edition", nameEn: "Overcooked! 2 – Nintendo Switch 2 Edition", productType: "upgrade_pack" },
   enabled: true,
   regions: localizedOverview.subscriptions[0].regions.map((region) => ({
     ...region,
@@ -146,6 +147,24 @@ describe("仪表盘订阅硬删除", () => {
 
     expect(await screen.findByText("最近采集：2026-07-18 08:00:00（Asia/Shanghai）")).toBeTruthy();
     expect(screen.getByText("下次日报：2026-07-19 09:00:00（Asia/Shanghai）")).toBeTruthy();
+  });
+
+  it("navigates to the independent game-name management page without changing dashboard price state", async () => {
+    const user = userEvent.setup();
+    const onNavigate = vi.fn();
+    const api = {
+      getDashboard: vi.fn(async () => overviewWithSubscription),
+      refreshNow: vi.fn(),
+      deleteSubscriptions: vi.fn(),
+    };
+
+    render(<DashboardPage api={api} onNavigate={onNavigate} onUnauthorized={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "管理中文名称" }));
+
+    expect(onNavigate).toHaveBeenCalledWith(gameNameManagementPath());
+    // 导航入口不能触发价格刷新或第二次仪表盘读取，名称队列由目标页面自行加载。
+    expect(api.getDashboard).toHaveBeenCalledTimes(1);
+    expect(api.refreshNow).not.toHaveBeenCalled();
   });
 
   it("sends deletion only after confirmation and then re-reads the dashboard", async () => {
@@ -192,7 +211,7 @@ describe("订阅详情硬删除", () => {
       deleteSubscriptions: vi.fn(async () => ({ deletedSubscriptionIds: ["subscription-overcooked-2"] })),
     };
 
-    render(<SubscriptionDetailPage api={api} productApi={{} as ReturnType<typeof createProductApiClient>} subscriptionId="subscription-overcooked-2" onBack={onBack} onUnauthorized={vi.fn()} />);
+    render(<SubscriptionDetailPage api={api} gameNameApi={{ saveGameName: vi.fn() }} productApi={{} as ReturnType<typeof createProductApiClient>} subscriptionId="subscription-overcooked-2" onBack={onBack} onUnauthorized={vi.fn()} />);
 
     await user.click(await screen.findByRole("button", { name: "删除订阅" }));
     expect(api.deleteSubscriptions).not.toHaveBeenCalled();
@@ -257,7 +276,7 @@ describe("地区中文名与官网价格文字", () => {
       deleteSubscriptions: vi.fn(),
     };
 
-    const { container } = render(<SubscriptionDetailPage api={api} productApi={{} as ReturnType<typeof createProductApiClient>} subscriptionId="subscription-overcooked-2-switch-2-edition" onBack={vi.fn()} onUnauthorized={vi.fn()} />);
+    const { container } = render(<SubscriptionDetailPage api={api} gameNameApi={{ saveGameName: vi.fn() }} productApi={{} as ReturnType<typeof createProductApiClient>} subscriptionId="subscription-overcooked-2-switch-2-edition" onBack={vi.fn()} onUnauthorized={vi.fn()} />);
 
     expect(await screen.findByText("美国区")).toBeTruthy();
     expect(screen.getAllByText("$ 39.99")).toHaveLength(2);
@@ -266,29 +285,33 @@ describe("地区中文名与官网价格文字", () => {
     expect(screen.getByText("香港区")).toBeTruthy();
     expect(screen.getByText("HKD 198")).toBeTruthy();
     expect(screen.queryByText("US · USD")).toBeNull();
-    // 详情管理区只保留地区补全、监控范围和不可逆删除三组操作；精确图例集合避免已移除表单被悄然重新渲染。
-    expect([...container.querySelectorAll(".detail-management fieldset legend")].map((legend) => legend.textContent)).toEqual(["补全已启用地区", "监控地区", "危险操作"]);
+    // 详情管理区保留中文名称、地区补全、监控范围和不可逆删除四组操作；精确图例集合避免任一表单被悄然移除或重复渲染。
+    expect([...container.querySelectorAll(".detail-management fieldset legend")].map((legend) => legend.textContent)).toEqual(["中文显示名称", "补全已启用地区", "监控地区", "危险操作"]);
   });
 });
 
-/** 历史订阅可能在中文名规则上线前把美区官方英文标题写入 nameZh；页面必须在展示层修正，避免管理员看到英文主标题。 */
+/**
+ * 服务端尚未补齐中文名时，两个页面都必须显示同一固定占位，不能用旧 `nameZh` 或官方标题推断。
+ * 该用例会在页面错误继续读取旧字段、或任一页面回退显示英文名称时失败。
+ */
 describe("中文游戏名展示", () => {
   afterEach(() => {
     // 每个页面用例都清理异步读取后的 DOM，避免相同英文标题在不同页面之间互相污染断言。
     cleanup();
   });
 
-  it("shows Chinese game names on dashboard cards even when stored nameZh is English", async () => {
-    const englishOverview: DashboardOverview = {
+  it("uses the server display name for both dashboard headings and selection labels", async () => {
+    const confirmedOverview: DashboardOverview = {
       ...localizedOverview,
       subscriptions: [{
         ...localizedOverview.subscriptions[0],
-        nameZh: "Overcooked! 2 – Nintendo Switch 2 Edition",
+        // 夹具故意保留英文官方标题，证明无障碍名称只消费已确认中文字段。
+        displayNameZhCn: "胡闹厨房 2 Nintendo Switch 2 Edition",
         nameEn: "Overcooked! 2 – Nintendo Switch 2 Edition",
       }],
     };
     const api = {
-      getDashboard: vi.fn(async () => englishOverview),
+      getDashboard: vi.fn(async () => confirmedOverview),
       refreshNow: vi.fn(),
       deleteSubscriptions: vi.fn(),
     };
@@ -300,17 +323,18 @@ describe("中文游戏名展示", () => {
     expect(screen.queryByRole("heading", { name: "Overcooked! 2 – Nintendo Switch 2 Edition" })).toBeNull();
   });
 
-  it("shows the Chinese game name as the first line on the subscription detail page", async () => {
-    const englishDetail: SubscriptionDetail = {
+  it("shows the fixed placeholder as the first detail heading when no Chinese name is confirmed", async () => {
+    const pendingDetail: SubscriptionDetail = {
       ...localizedSubscriptionDetail,
       game: {
         ...localizedSubscriptionDetail.game,
-        nameZh: "Overcooked! 2 – Nintendo Switch 2 Edition",
+        // null 是服务端对未补齐名称的唯一信号；不得将 nameEn 或日文官方标题作为主标题。
+        displayNameZhCn: null,
         nameEn: "Overcooked! 2 – Nintendo Switch 2 Edition",
       },
     };
     const api = {
-      getSubscription: vi.fn(async () => englishDetail),
+      getSubscription: vi.fn(async () => pendingDetail),
       refreshNow: vi.fn(),
       updateSubscription: vi.fn(),
       resolveMissingRegions: vi.fn(),
@@ -318,9 +342,49 @@ describe("中文游戏名展示", () => {
       deleteSubscriptions: vi.fn(),
     };
 
-    render(<SubscriptionDetailPage api={api} productApi={{} as ReturnType<typeof createProductApiClient>} subscriptionId="subscription-overcooked-2-switch-2-edition" onBack={vi.fn()} onUnauthorized={vi.fn()} />);
+    render(<SubscriptionDetailPage api={api} gameNameApi={{ saveGameName: vi.fn() }} productApi={{} as ReturnType<typeof createProductApiClient>} subscriptionId="subscription-overcooked-2-switch-2-edition" onBack={vi.fn()} onUnauthorized={vi.fn()} />);
 
-    expect(await screen.findByRole("heading", { name: "胡闹厨房 2 Nintendo Switch 2 Edition" })).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "待补充中文名称" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Overcooked! 2 – Nintendo Switch 2 Edition" })).toBeNull();
+  });
+
+  it("saves the Chinese name and re-reads the whole detail instead of locally patching price regions", async () => {
+    const user = userEvent.setup();
+    const updatedDetail: SubscriptionDetail = {
+      ...subscriptionDetail,
+      game: { ...subscriptionDetail.game, displayNameZhCn: "胡闹厨房！2" },
+      // 第二次读取故意改变价格，证明页面使用服务端完整结果，而不是只改 detail.game 名称。
+      regions: [{ ...subscriptionDetail.regions[0], current: { ...subscriptionDetail.regions[0].current!, amountMinor: 1299 } }],
+    };
+    const api = {
+      getSubscription: vi.fn()
+        .mockResolvedValueOnce(subscriptionDetail)
+        .mockResolvedValueOnce(updatedDetail),
+      refreshNow: vi.fn(),
+      updateSubscription: vi.fn(),
+      resolveMissingRegions: vi.fn(),
+      completeMissingRegions: vi.fn(),
+      deleteSubscriptions: vi.fn(),
+    };
+    const gameNameApi = {
+      saveGameName: vi.fn(async () => ({ gameId: "game-overcooked-2", displayNameZhCn: "胡闹厨房！2", source: "manual" as const })),
+    };
+
+    render(<SubscriptionDetailPage api={api} gameNameApi={gameNameApi} productApi={{} as ReturnType<typeof createProductApiClient>} subscriptionId="subscription-overcooked-2" onBack={vi.fn()} onUnauthorized={vi.fn()} />);
+    const input = await screen.findByLabelText("简体中文显示名称");
+    await user.clear(input);
+    await user.type(input, "胡闹厨房！2");
+    await user.click(screen.getByRole("checkbox", { name: "保存为可复用词条" }));
+    await user.click(screen.getByRole("button", { name: "保存中文名称" }));
+
+    await waitFor(() => expect(api.getSubscription).toHaveBeenCalledTimes(2));
+    expect(gameNameApi.saveGameName).toHaveBeenCalledWith("game-overcooked-2", {
+      displayNameZhCn: "胡闹厨房！2",
+      source: "manual",
+      evidenceUrl: null,
+      saveToCatalog: true,
+    });
+    expect(await screen.findByRole("heading", { name: "胡闹厨房！2" })).toBeTruthy();
+    expect(screen.getByText("$ 12.99")).toBeTruthy();
   });
 });

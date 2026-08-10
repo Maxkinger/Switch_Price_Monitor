@@ -6,7 +6,7 @@ import type {
   RegionCode,
   SubscriptionConfirmationResult,
 } from "../shared/domain";
-import { resolveChineseGameName } from "../shared/game-display-name";
+import { gameNameIdentityKey } from "../shared/game-name-identity";
 import type { OfficialNintendoProductPageResolver } from "../providers/official-nintendo-product-page";
 import {
   type ValidatedConfirmedRegion,
@@ -14,6 +14,11 @@ import {
   type SubscriptionConfirmationStore,
 } from "../repositories/ports";
 import type { OfficialPriceIdResolution, OfficialPriceIdService } from "./official-price-id-service";
+import {
+  GameNameValidationError,
+  type GameNameService,
+  type ResolvedGameDisplayName,
+} from "./game-name-service";
 import {
   hasHighConfidenceLocalizedIdentity,
   hasSameOfficialIdentity,
@@ -34,6 +39,9 @@ type JapaneseCandidateResolver = Pick<JapaneseSubscriptionConfirmationService, "
 
 /** 日区升级关系服务的保存前窄接口；确认服务只消费整批结论，不接触 Browser、根搜索或报价请求细节。 */
 type JapaneseUpgradeVerifier = Pick<JapaneseUpgradeRelationService, "verifyForConfirmation">;
+
+/** 名称服务的保存前窄接口；确认流程只请求精确身份的最终展示决议，不获得词条管理或历史回填能力。 */
+type ConfirmedGameNameResolver = Pick<GameNameService, "resolveForConfirmedGame">;
 
 /** 本次确认请求的升级证据仅存于内存 Map，键同时包含锚点、日区 URL 与来源，不能跨商品或跨请求复用。 */
 type JapaneseUpgradeVerificationMap = Map<string, JapaneseUpgradeConfirmationResult>;
@@ -75,6 +83,7 @@ export class SubscriptionConfirmationService {
     private readonly settings: EnabledRegionSettingsReader,
     private readonly japanese: JapaneseCandidateResolver,
     private readonly japaneseUpgrades: JapaneseUpgradeVerifier,
+    private readonly gameNames: ConfirmedGameNameResolver,
     private readonly automaticVerifier: AutomaticRegionalCandidateVerifier = unavailableAutomaticRegionalCandidateVerifier,
     private readonly createId: () => string = () => crypto.randomUUID(),
   ) {}
@@ -85,12 +94,23 @@ export class SubscriptionConfirmationService {
    */
   public async confirm(inputs: ConfirmedSubscriptionInput[], now: string): Promise<SubscriptionConfirmationResult[]> {
     if (inputs.length === 0) throw new SubscriptionConfirmationError("请至少确认一个商品订阅。");
-    // 关系根搜索会使用锚点标题与发行商，故必须先从官方页面重建默认区锚点；否则浏览器可保留真实 URL 却篡改文本，引导到另一游戏的日区根。
-    const verifiedAnchors = await Promise.all(inputs.map((input) => this.resolveAnchorBeforeUpgradeVerification(input.selected)));
+    // 关系根搜索会使用锚点标题与发行商，故非日区升级包必须先从官方来源重建；JP 默认升级包暂时只作为关系 Map 的查找锚点，不能进入最终游戏身份。
+    const relationshipAnchors = await Promise.all(inputs.map((input) => this.resolveAnchorBeforeUpgradeVerification(input.selected)));
     // 日区升级关系仍先于设置仓储与既有订阅查询整批复核；超过三项或任一外部失败都不能让数据库进入部分确认流程。
-    const upgradeItems = collectJapaneseUpgradeConfirmationItems(inputs, verifiedAnchors);
+    const upgradeItems = collectJapaneseUpgradeConfirmationItems(inputs, relationshipAnchors);
     const verifiedUpgrades = await this.japaneseUpgrades.verifyForConfirmation(upgradeItems);
-    const validated = await Promise.all(inputs.map((input, index) => this.validate(input, verifiedAnchors[index], verifiedUpgrades)));
+    // JP 默认升级包必须在关系批处理签发后替换浏览器锚点；其它路径已经由上一步官方重建，保持同一候选即可。
+    const verifiedAnchors = inputs.map((input, index) => this.resolveAnchorAfterUpgradeVerification(
+      input,
+      relationshipAnchors[index],
+      verifiedUpgrades,
+    ));
+    const validated = await Promise.all(inputs.map((input, index) => this.validate(
+      input,
+      verifiedAnchors[index],
+      relationshipAnchors[index],
+      verifiedUpgrades,
+    )));
     const normalizedNames = validated.map((input) => input.game.normalizedName);
     if (new Set(normalizedNames).size !== normalizedNames.length) {
       throw new SubscriptionConfirmationError("同一批次不能重复确认同一游戏。");
@@ -112,6 +132,31 @@ export class SubscriptionConfirmationService {
   private async resolveAnchorBeforeUpgradeVerification(candidate: OfficialProductCandidate): Promise<OfficialProductCandidate> {
     if (candidate.regionCode === "JP" && candidate.productType === "upgrade-pack") return candidate;
     return this.resolveOfficialCandidate(candidate, candidate, "manual_selection", new Map());
+  }
+
+  /**
+   * JP 默认区升级包没有可在 Browser 关系核验前独立重建的普通解析路径，因此必须从本批关系服务的精确签发结果取得最终锚点。
+   * 查找键仍使用关系服务实际接收的预验证锚点与默认区地区项；签发 candidate 才能进入名称目录、去重键和游戏持久化。
+   */
+  private resolveAnchorAfterUpgradeVerification(
+    input: ConfirmedSubscriptionInput,
+    relationshipAnchor: OfficialProductCandidate,
+    verifiedUpgrades: JapaneseUpgradeVerificationMap,
+  ): OfficialProductCandidate {
+    if (relationshipAnchor.regionCode !== "JP" || relationshipAnchor.productType !== "upgrade-pack") {
+      return relationshipAnchor;
+    }
+    const selectedRegion = input.regions.find((region) => (
+      region.regionCode === relationshipAnchor.regionCode
+      && region.productUrl === relationshipAnchor.productUrl
+      && region.productType === "upgrade-pack"
+    ));
+    if (selectedRegion === undefined) throw new SubscriptionConfirmationError("默认区商品必须在确认地区中保留一次。");
+    return this.readVerifiedJapaneseUpgrade({
+      anchor: relationshipAnchor,
+      candidate: selectedRegion,
+      matchSource: selectedRegion.matchSource,
+    }, verifiedUpgrades);
   }
 
   /**
@@ -142,14 +187,20 @@ export class SubscriptionConfirmationService {
   private async validate(
     input: ConfirmedSubscriptionInput,
     selected: OfficialProductCandidate,
+    relationshipAnchor: OfficialProductCandidate,
     verifiedUpgrades: JapaneseUpgradeVerificationMap,
   ): Promise<UnidentifiedValidatedSubscription> {
     if (!Array.isArray(input.regions) || input.regions.length === 0) throw new SubscriptionConfirmationError("每个游戏至少确认一个地区商品。");
     if (!Array.isArray(input.skippedRegionCodes)) throw new SubscriptionConfirmationError("跳过地区设置无效。");
     const settings = await this.settings.get();
     if (!settings) throw new SubscriptionConfirmationError("应用尚未完成初始化。");
-    // `selected` 已在 Browser 关系验证前由官方来源重建；这里复用同一瞬时锚点，防止两阶段使用不同标题或发行商判断同一批关系。
-    const regions = await Promise.all(input.regions.map((region) => this.validateRegion(region, selected, verifiedUpgrades)));
+    // selected 始终是最终官方候选；relationshipAnchor 仅保留关系 Map 原始键，绝不能参与后续游戏身份、名称目录或持久化字段。
+    const regions = await Promise.all(input.regions.map((region) => this.validateRegion(
+      region,
+      selected,
+      relationshipAnchor,
+      verifiedUpgrades,
+    )));
     if (new Set(regions.map((region) => region.regionCode)).size !== regions.length) {
       throw new SubscriptionConfirmationError("每个游戏在每区只能确认一个商品。");
     }
@@ -157,12 +208,28 @@ export class SubscriptionConfirmationService {
     if (selectedRegions.length !== 1) throw new SubscriptionConfirmationError("默认区商品必须在确认地区中保留一次。");
     this.validateConfiguredRegionCoverage(settings.enabledRegions, selected.regionCode, regions, input.skippedRegionCodes);
 
+    // identityKey 只取服务器刚重验的官方锚点；浏览器提交的 selected 文本和中文候选均不得参与词条查找或既有订阅去重。
+    const normalizedName = gameNameIdentityKey(selected);
+    let resolvedName: ResolvedGameDisplayName;
+    try {
+      resolvedName = await this.gameNames.resolveForConfirmedGame(normalizedName, input.displayNameZhCn ?? null);
+    } catch (error) {
+      // 只把名称服务明确标记的表单边界转换为 422 领域错误；数据库或词条仓储故障不得伪装成可重试的管理员输入问题。
+      if (error instanceof GameNameValidationError) throw new SubscriptionConfirmationError(error.message);
+      throw error;
+    }
+    if (resolvedName.displayNameZhCn === null || resolvedName.source === "pending") {
+      throw new SubscriptionConfirmationError("请确认简体中文游戏名称。");
+    }
+
     return {
       game: {
-        // 中文名仅来自受控本地词表；未确认的游戏保持官方标题，避免保存阶段调用翻译、AI 或第三方服务污染商品身份。
-        nameZh: resolveChineseGameName(selected.canonicalTitle) ?? selected.canonicalTitle,
+        // legacy nameZh 同步保存最终名称只为兼容旧消费者；新读取 DTO 必须直接投影 displayNameZhCn，不能回退推断旧列。
+        nameZh: resolvedName.displayNameZhCn,
+        displayNameZhCn: resolvedName.displayNameZhCn,
+        displayNameSource: resolvedName.source,
         nameEn: selected.canonicalTitle,
-        normalizedName: normalizedGameName(selected),
+        normalizedName,
         publisher: selected.publisher,
         productType: selected.productType,
         coverUrl: selected.coverUrl,
@@ -206,13 +273,7 @@ export class SubscriptionConfirmationService {
   ): Promise<OfficialProductCandidate> {
     if (candidate.regionCode === "JP") {
       if (candidate.productType === "upgrade-pack") {
-        const verification = verifiedUpgrades.get(japaneseUpgradeConfirmationKey({ anchor, candidate, matchSource }));
-        if (matchSource === "automatic" && verification?.status === "verified-automatic") return verification.candidate;
-        if (matchSource === "manual_link" && verification?.status === "verified-manual") return verification.candidate;
-        // 自动候选要求重新运行完整关系发现；人工链接只接受关系服务明确签发的 verified-manual，手动候选卡不能绕过该规则。
-        throw new SubscriptionConfirmationError(matchSource === "automatic"
-          ? "日区升级包自动匹配已失效，请重新核验其他地区。"
-          : "日区升级包官方链接无法确认，请重新核验。");
+        return this.readVerifiedJapaneseUpgrade({ anchor, candidate, matchSource }, verifiedUpgrades);
       }
       const verifiedJapanese = await this.japanese.resolve(anchor, candidate, matchSource);
       if (!verifiedJapanese) throw new SubscriptionConfirmationError("日区官方商品确认暂时失败，请重新核验其他地区后再试。");
@@ -224,16 +285,34 @@ export class SubscriptionConfirmationService {
   }
 
   /**
+   * 关系签发状态与来源必须严格对应：automatic 不能借人工结论通过，manual_link 也不能复用自动结果。
+   * 该读取同时服务 JP 默认锚点提升和单区验证，避免两处对同一 Map 产生不同信任规则。
+   */
+  private readVerifiedJapaneseUpgrade(
+    item: JapaneseUpgradeConfirmationItem,
+    verifiedUpgrades: JapaneseUpgradeVerificationMap,
+  ): OfficialProductCandidate {
+    const verification = verifiedUpgrades.get(japaneseUpgradeConfirmationKey(item));
+    if (item.matchSource === "automatic" && verification?.status === "verified-automatic") return verification.candidate;
+    if (item.matchSource === "manual_link" && verification?.status === "verified-manual") return verification.candidate;
+    // 手动候选卡不能绕过 Browser 关系复核；错误文案继续按管理员选择路径区分，保持既有 API 契约。
+    throw new SubscriptionConfirmationError(item.matchSource === "automatic"
+      ? "日区升级包自动匹配已失效，请重新核验其他地区。"
+      : "日区升级包官方链接无法确认，请重新核验。");
+  }
+
+  /**
    * 单区候选需通过官方重读、按来源分级的身份比较与本区价格 ID 二次验证后才可进入原子仓储事务。
    * 浏览器提供的 `matchSource` 只表达管理员/系统的审计路径，不能替代官方 URL 重验，也不能影响最终写入的官方字段。
    */
   private async validateRegion(
     region: ConfirmedRegionalProduct,
     selected: OfficialProductCandidate,
+    relationshipAnchor: OfficialProductCandidate,
     verifiedUpgrades: JapaneseUpgradeVerificationMap,
   ): Promise<UnidentifiedValidatedRegion> {
     if (!isMatchSource(region.matchSource)) throw new SubscriptionConfirmationError("地区商品匹配来源无效。");
-    const verified = await this.resolveOfficialCandidate(selected, region, region.matchSource, verifiedUpgrades);
+    const verified = await this.resolveOfficialCandidate(relationshipAnchor, region, region.matchSource, verifiedUpgrades);
     if (!hasConfirmedRegionIdentity(selected, verified, region.matchSource)) throw new SubscriptionConfirmationError("地区商品与默认区商品身份不一致。");
     if (region.matchSource === "automatic" && verified.regionCode !== "JP") {
       // 非日区详情相同只证明商品本身存在，不能证明它仍是跨区唯一候选；写入前必须复跑官方发现规则并绑定同一 URL。
@@ -304,16 +383,6 @@ function hasConfirmedRegionIdentity(
   return matchSource === "automatic"
     ? hasSameOfficialIdentity(anchor, verified) || hasHighConfidenceLocalizedIdentity(anchor, verified)
     : anchor.productType === verified.productType;
-}
-
-/** 规范化身份保留标题、可空发行商和类型，避免仅按名称把同名 DLC、本体或不同发行商商品合并。 */
-export function normalizedGameName(candidate: Pick<OfficialProductCandidate, "canonicalTitle" | "publisher" | "productType">): string {
-  return [normalize(candidate.canonicalTitle), candidate.publisher === null ? "" : normalize(candidate.publisher), candidate.productType].join("|");
-}
-
-/** 只用于身份比较与去重，不修改官方展示标题；Unicode 小写规则使不同语言标题的规范化行为稳定可预期。 */
-function normalize(value: string): string {
-  return value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
 }
 
 /** 仅把重新验证成功的本区官方 ID 写入地区商品；其他地区明确保存 null，不能跨区复用 ID。 */

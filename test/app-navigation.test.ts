@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { dashboardPath, readAppRoute, settingsPath, subscriptionDetailPath } from "../src/app/app-navigation";
+import { dashboardPath, gameNameManagementPath, readAppRoute, settingsPath, subscriptionDetailPath } from "../src/app/app-navigation";
 
-/** 路由纯函数测试确保浏览器前进/返回只解释本站三种已实现页面，未知路径安全回到仪表盘。 */
+/** 路由纯函数测试确保浏览器前进/返回只解释本站已实现的仪表盘、订阅、名称管理和设置页面，未知路径安全回到仪表盘。 */
 describe("app navigation", () => {
   it("maps a subscription URL and creates stable dashboard and detail paths", () => {
     // 订阅 ID 可能含 URL 编码字符；读取时必须解码，生成时必须编码，避免地址栏内容被误切分为额外路径。
@@ -23,5 +23,12 @@ describe("app navigation", () => {
     expect(readAppRoute("/settings")).toEqual({ kind: "settings" });
     expect(settingsPath()).toBe("/settings");
     expect(readAppRoute("/settings/telegram")).toEqual({ kind: "dashboard" });
+  });
+
+  it("maps the exact game-name management URL and rejects nested management paths", () => {
+    // 名称管理是单独的受认证页面；只接受固定路径，避免把游戏 ID 或官方标题误塞进浏览器地址。
+    expect(gameNameManagementPath()).toBe("/game-names");
+    expect(readAppRoute("/game-names")).toEqual({ kind: "game-names" });
+    expect(readAppRoute("/game-names/game-kirby")).toEqual({ kind: "dashboard" });
   });
 });

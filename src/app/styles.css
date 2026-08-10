@@ -848,9 +848,36 @@ button:focus-visible {
 .detail-management label { display: grid; gap: 5px; color: #5e493d; font-size: 14px; }
 .detail-management label:has(input[type="checkbox"]) { display: flex; align-items: center; gap: 8px; }
 .detail-management input[type="checkbox"] { min-width: auto; padding: 0; }
+/* 中文名更正的主操作贴合内容宽度，避免在详情卡内被误认为同时保存地区或启用状态。 */
+.detail-game-name-form .primary-button { justify-self: start; }
 /* 详情危险区固定在管理操作末尾，并以边框和文案说明不可恢复性，避免与普通保存动作视觉混同。 */
 .detail-danger-zone { border-color: #e5b19e !important; background: #fff5ef; }
 .detail-danger-zone p { margin: 0; color: #7b4b3d; line-height: 1.55; }
+
+/* 名称管理页沿用详情页阅读宽度，但队列状态完全独立，不能借用仪表盘统计或价格卡片布局。 */
+.game-name-page { width: min(980px, 100%); margin: 0 auto; }
+.game-name-header { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.game-name-header h1, .game-name-header p, .game-name-queue h2, .game-name-queue p, .game-name-card h3, .game-name-card p { margin: 0; }
+.game-name-header h1 { color: #2d211c; font-size: clamp(30px, 4vw, 42px); letter-spacing: -.035em; }
+.game-name-header p { margin-top: 8px; color: #705d52; line-height: 1.55; }
+.game-name-queue { margin-top: 24px; border: 1px solid #ead9ca; border-radius: 18px; padding: 24px; background: #fffdf9; box-shadow: 0 15px 34px rgb(77 48 29 / 7%); }
+.game-name-queue__heading { display: flex; align-items: end; justify-content: space-between; gap: 14px; border-bottom: 1px solid #f0e2d6; padding-bottom: 16px; }
+.game-name-queue__heading h2 { color: #422d22; }
+.game-name-queue__heading p { margin-top: 7px; color: #765f51; font-size: 14px; line-height: 1.5; }
+.game-name-queue__heading > span { flex: 0 0 auto; border-radius: 999px; padding: 7px 10px; color: #7a4427; background: #fff0df; font-size: 13px; font-weight: 700; }
+.game-name-list { display: grid; gap: 14px; margin-top: 18px; }
+.game-name-empty { padding: 26px 0 3px; color: #705d52; text-align: center; }
+.game-name-card { border: 1px solid #ead9ca; border-radius: 14px; padding: 18px; background: #fffaf4; }
+.game-name-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.game-name-card h3 { color: #36251d; font-size: 18px; }
+.game-name-card header p { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 8px; }
+.game-name-card header p span, .game-name-card header small { border-radius: 999px; padding: 5px 8px; color: #735848; background: #f7e5d4; font-size: 12px; }
+.game-name-card header small { flex: 0 0 auto; color: #765f51; background: #f2e8df; }
+/* 每行名称草稿、复用选择和保存动作分列；窄屏再降为单列，避免中文长名称挤压原生复选框。 */
+.game-name-card__form { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: end; gap: 12px; margin-top: 17px; }
+.game-name-card__form > label:first-child { display: grid; gap: 7px; color: #645248; font-size: 14px; font-weight: 700; }
+.game-name-catalog-choice { display: flex; align-items: center; gap: 7px; min-height: 43px; color: #5e493d; font-size: 14px; }
+.game-name-catalog-choice input { min-width: auto; padding: 0; accent-color: #a7562b; }
 
 /* 详情补全按服务端三态分组：自动结果仅作只读草稿提示，候选与链接操作不会在视觉上混为一条不透明状态。 */
 .missing-region-option {
@@ -900,5 +927,5 @@ button:focus-visible {
 }
 
 .page-loading { padding: 30px; color: #705d52; }
-@media (max-width: 820px) { .monitor-app { grid-template-columns: 1fr; } .monitor-nav { grid-template-columns: repeat(4, auto); align-items: center; overflow-x: auto; border-right: 0; border-bottom: 1px solid #ead9ca; padding: 12px; } .monitor-nav strong { margin: 0 10px 0 0; white-space: nowrap; } .monitor-nav__version { margin-top: 0; padding: 6px 12px; white-space: nowrap; } .dashboard-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .summary-regions, .detail-regions { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 560px) { .monitor-main { padding: 20px 14px 40px; } .monitor-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); } .monitor-nav strong { grid-column: 1 / -1; } .dashboard-header, .detail-header { align-items: flex-start; flex-direction: column; } .dashboard-stats, .summary-regions, .detail-regions { grid-template-columns: 1fr; } }
+@media (max-width: 820px) { .monitor-app { grid-template-columns: 1fr; } .monitor-nav { grid-template-columns: repeat(4, auto); align-items: center; overflow-x: auto; border-right: 0; border-bottom: 1px solid #ead9ca; padding: 12px; } .monitor-nav strong { margin: 0 10px 0 0; white-space: nowrap; } .monitor-nav__version { margin-top: 0; padding: 6px 12px; white-space: nowrap; } .dashboard-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } .summary-regions, .detail-regions { grid-template-columns: repeat(2, minmax(0, 1fr)); } .game-name-card__form { grid-template-columns: 1fr; align-items: stretch; } .game-name-card__form .primary-button { justify-self: start; } }
+@media (max-width: 560px) { .monitor-main { padding: 20px 14px 40px; } .monitor-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); } .monitor-nav strong { grid-column: 1 / -1; } .dashboard-header, .detail-header, .game-name-header, .game-name-queue__heading, .game-name-card > header { align-items: flex-start; flex-direction: column; } .dashboard-stats, .summary-regions, .detail-regions { grid-template-columns: 1fr; } .game-name-queue { padding: 18px; } }

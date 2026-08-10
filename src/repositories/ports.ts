@@ -30,6 +30,84 @@ export interface SettingsStore extends SettingsReader {
 }
 
 /**
+ * 经人工或受控公开来源确认的简体中文展示名称词条。
+ * `identityKey` 必须是 games.normalized_name 的精确值而非模糊化标题；词条只决定展示文本，不能修改官方商品身份、发行商或商品类型。
+ */
+export interface GameNameCatalogEntry {
+  identityKey: string;
+  displayNameZhCn: string;
+  source: "publisher" | "mainland-platform" | "hk-reference" | "manual";
+  evidenceUrl: string | null;
+  confirmedAt: string;
+}
+
+/**
+ * 游戏级展示名称状态让旧记录显式保留 pending，而不是回退把历史 name_zh 当作确认事实。
+ * 服务必须保持 confirmed 与非空展示名、pending 与 null 的业务对应；端口保留可空字段以准确表示数据库回填前后的旧记录。
+ */
+export interface GameDisplayName {
+  displayNameZhCn: string | null;
+  state: "confirmed" | "pending";
+}
+
+/**
+ * 待人工处理的游戏连接订阅与精确身份所需的公开字段，供管理页面辨认同名但不同发行商或类型的商品。
+ * identityKey 为 null 时只能等待后续官方身份补齐，legacyNameZh 仅作管理候选，绝不可直接当成已确认展示名称。
+ */
+export interface PendingGameName {
+  gameId: string;
+  subscriptionId: string;
+  identityKey: string | null;
+  officialTitle: string;
+  publisher: string | null;
+  productType: ProductType;
+  legacyNameZh: string;
+}
+
+/**
+ * 名称保存只需读取游戏存在性及经官方确认的精确 identityKey，不携带现有中文名、订阅、价格或认证数据。
+ * `identityKey` 为 null 表示游戏存在但尚未取得可安全复用的官方身份；无论展示名是否已确认，都必须返回该状态供详情页纠错。
+ */
+export interface GameNameIdentityTarget {
+  identityKey: string | null;
+}
+
+/**
+ * 管理员确认名称时的受控写入命令；saveToCatalog 仅在 identityKey 已精确复核时才允许建立跨游戏复用词条。
+ * evidenceUrl 保留可审计公开证据，confirmedAt 由服务统一给出，避免客户端伪造确认状态或把历史候选升级为真值。
+ */
+export interface GameNameSaveInput {
+  gameId: string;
+  identityKey: string;
+  displayNameZhCn: string;
+  source: GameNameCatalogEntry["source"];
+  evidenceUrl: string | null;
+  saveToCatalog: boolean;
+  confirmedAt: string;
+}
+
+/**
+ * 目录回填结果只公开实际更新的游戏与剩余待确认数量，避免服务依赖 PostgreSQL 行数或把词条证据暴露到无关调用方。
+ * remainingCount 使调度或管理界面能继续提示 pending，而不会把没有目录命中的旧名称误显示为确认成功。
+ */
+export interface GameNameBackfillResult {
+  updatedGameIds: string[];
+  remainingCount: number;
+}
+
+/**
+ * 名称存储端口隔离 PostgreSQL 词条、游戏身份查询与回填细节，服务层只能按精确身份读取、列出待处理记录、执行受控回填或保存完整审计词条。
+ * `now` 由服务层传入以确保确认时刻可测且一致；适配器不得根据旧 name_zh 自动生成或覆盖任何已确认展示名称。
+ */
+export interface GameNameStore {
+  findCatalogEntry(identityKey: string): Promise<GameNameCatalogEntry | null>;
+  findGameIdentity(gameId: string): Promise<GameNameIdentityTarget | null>;
+  listPending(): Promise<PendingGameName[]>;
+  applyCatalogBackfill(now: string): Promise<GameNameBackfillResult>;
+  saveGameName(input: GameNameSaveInput): Promise<void>;
+}
+
+/**
  * 首次初始化在服务层完成 PBKDF2 派生后才进入仓储；端口只接收哈希、随机盐和受控设置，
  * 从而不让数据库适配器接触管理员明文密码或一次性恢复码。
  */
@@ -196,6 +274,8 @@ export interface ValidatedSubscriptionConfirmation {
   game: {
     id: string;
     nameZh: string;
+    displayNameZhCn: string;
+    displayNameSource: "catalog" | "manual";
     nameEn: string;
     normalizedName: string;
     publisher: string | null;
@@ -319,6 +399,7 @@ export interface SubscriptionDetail {
   game: {
     id: string;
     nameZh: string;
+    displayNameZhCn: string | null;
     nameEn: string;
     productType: string;
   };

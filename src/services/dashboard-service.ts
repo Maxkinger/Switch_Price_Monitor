@@ -31,6 +31,8 @@ export interface DashboardAllRegionHistoricalLow extends DashboardPrice {
 export interface DashboardSubscription {
   subscriptionId: string;
   gameId: string;
+  /** 已确认的简体中文展示名直接来自 games 新列；旧记录保持 null，服务与浏览器均不得从 nameZh 猜测回填。 */
+  displayNameZhCn: string | null;
   nameZh: string;
   nameEn: string;
   enabled: boolean;

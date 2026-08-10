@@ -145,8 +145,21 @@ function readConfirmedSubscription(value: unknown): ConfirmedSubscriptionInput {
   if (new Set(regions.map((region) => region.regionCode)).size !== regions.length) {
     throw new ProductPreviewRequestError("每个游戏在每区只能确认一个商品。");
   }
+  // 路由只收窄可选名称的形状和 1..120 上限，阻止巨型或空白 JSON 进入确认事务；词条命中、官方锚点和人工覆盖优先级仍由名称服务统一裁决。
+  const displayNameZhCn = value.displayNameZhCn === undefined
+    ? undefined
+    : readSubmittedDisplayName(value.displayNameZhCn);
   const skippedRegionCodes = readSkippedRegionCodes(value.skippedRegionCodes);
-  return { selected, regions, skippedRegionCodes };
+  return { selected, displayNameZhCn, regions, skippedRegionCodes };
+}
+
+/** 浏览器候选只允许修剪后 1..120 字符；非字符串、空白和超长值不能进入官方确认事务，也不能参与随后身份或词条键计算。 */
+function readSubmittedDisplayName(value: unknown): string {
+  if (typeof value !== "string") throw new ProductPreviewRequestError("简体中文游戏名称无效。");
+  if (value.trim().length === 0 || value.trim().length > 120) {
+    throw new ProductPreviewRequestError("简体中文游戏名称长度应为 1 到 120 个字符。");
+  }
+  return value;
 }
 
 /**

@@ -13,6 +13,7 @@ import { PostgresSettingsRepository } from "./settings-repository";
 interface SubscriptionRow {
   subscriptionId: string;
   gameId: string;
+  displayNameZhCn: string | null;
   nameZh: string;
   nameEn: string;
   enabled: boolean;
@@ -57,6 +58,7 @@ export class PostgresDashboardRepository implements DashboardReader {
       this.database.query<SubscriptionRow>(
         `SELECT subscriptions.id AS "subscriptionId",
                 subscriptions.game_id AS "gameId",
+                games.display_name_zh_cn AS "displayNameZhCn",
                 games.name_zh AS "nameZh",
                 games.name_en AS "nameEn",
                 subscriptions.enabled,

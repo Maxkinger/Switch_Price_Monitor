@@ -36,6 +36,27 @@ describe("dashboard API client", () => {
     expect(request).toHaveBeenCalledWith("/api/refresh", expect.objectContaining({ method: "POST", credentials: "same-origin" }));
   });
 
+  it("preserves the nullable server-confirmed Chinese display name in dashboard data", async () => {
+    // 服务端 null 明确表示尚待人工补充；客户端必须保留该信号，不能从英文 nameEn 或历史 nameZh 推导展示名。
+    const request = vi.fn(async () => Response.json({
+      stats: { monitoredSubscriptionCount: 1, availableRegionPriceCount: 0, lastCapturedAt: null, timezone: null, nextDailyReportAt: null },
+      subscriptions: [{
+        subscriptionId: "subscription-pending-name",
+        gameId: "game-pending-name",
+        displayNameZhCn: null,
+        nameEn: "Overcooked! 2",
+        enabled: true,
+        regionalProductIds: [],
+        allRegionHistoricalLow: null,
+        regions: [],
+      }],
+    })) as unknown as typeof fetch;
+
+    const overview = await createDashboardApiClient(request).getDashboard();
+
+    expect(overview.subscriptions[0]?.displayNameZhCn).toBeNull();
+  });
+
   it("preserves a refresh cooldown timestamp without retaining an API response body", async () => {
     // 429 只给页面显示下一可请求时间，错误对象不能保留可能含敏感内容的原始 JSON 或 Response 实例。
     const request = vi.fn(async () => Response.json(

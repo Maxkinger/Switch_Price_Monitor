@@ -4,12 +4,18 @@ import {
   type AtomicLoginAttempt,
   type AtomicLoginAttemptResult,
   type AuthRepository,
+  type GameDisplayName,
+  type GameNameBackfillResult,
+  type GameNameCatalogEntry,
+  type GameNameSaveInput,
+  type GameNameStore,
   type ExistingSubscriptionConfirmation,
   type ExistingSubscriptionRegionCompletion,
   type HashedAdminSetup,
   type LoginAttemptRecord,
   type NotificationEventReservation,
   type NotificationEventStore,
+  type PendingGameName,
   type PendingNotificationEvent,
   type PasswordCredential,
   type PasswordResetWrite,
@@ -23,6 +29,116 @@ import {
 } from "../../src/repositories/ports";
 import type { ProductHealthState } from "../../src/services/price-rules";
 import type { OfficialProductCandidate } from "../../src/shared/domain";
+
+/** 内存名称记录在待确认字段外保留来源，方便服务测试验证词条回填绝不覆盖人工确认。 */
+interface InMemoryGameNameRecord extends PendingGameName {
+  displayNameZhCn: string | null;
+  displayNameSource: "catalog" | "manual" | null;
+  confirmedAt: string | null;
+}
+
+/**
+ * 简体中文名称服务的内存端口替身。它实现精确 identityKey、空名称回填和人工覆盖的领域结果，
+ * 但不模拟 PostgreSQL 并发、约束或 SQL；这些数据库保证由 game-name-repository 集成测试负责。
+ */
+export class InMemoryGameNameStore implements GameNameStore {
+  private readonly catalog = new Map<string, GameNameCatalogEntry>();
+  private readonly games = new Map<string, InMemoryGameNameRecord>();
+
+  /** 写入经夹具明确确认的词条副本，避免测试随后篡改传入对象而绕过服务的只读查询边界。 */
+  public seedCatalog(entry: GameNameCatalogEntry): void {
+    this.catalog.set(entry.identityKey, { ...entry });
+  }
+
+  /** 添加没有中文确认名称的游戏；相同 ID 直接拒绝，避免不可能的夹具覆盖掩盖待办数量错误。 */
+  public seedPending(item: PendingGameName): void {
+    this.seedRecord(item, null, null, null);
+  }
+
+  /** 添加已有人工确认的游戏，用于证明新词条只作用于未来空名称记录而不篡改具体复核结果。 */
+  public seedConfirmedManual(
+    item: PendingGameName & { displayNameZhCn: string; confirmedAt: string },
+  ): void {
+    this.seedRecord(item, item.displayNameZhCn, "manual", item.confirmedAt);
+  }
+
+  public async findCatalogEntry(identityKey: string): Promise<GameNameCatalogEntry | null> {
+    const entry = this.catalog.get(identityKey);
+    return entry === undefined ? null : { ...entry };
+  }
+
+  /**
+   * 名称保存按游戏 ID 查询时必须同时看见 pending 与已确认记录；只返回 identityKey，
+   * 防止详情页纠错路径把旧中文展示名或订阅字段重新当成可被浏览器修改的输入。
+   */
+  public async findGameIdentity(gameId: string): Promise<{ identityKey: string | null } | null> {
+    const game = this.games.get(gameId);
+    return game === undefined ? null : { identityKey: game.identityKey };
+  }
+
+  public async listPending(): Promise<PendingGameName[]> {
+    return [...this.games.values()]
+      .filter((game) => game.displayNameZhCn === null)
+      .map(({ displayNameZhCn: _displayNameZhCn, displayNameSource: _displayNameSource, confirmedAt: _confirmedAt, ...item }) => ({ ...item }));
+  }
+
+  public async applyCatalogBackfill(_now: string): Promise<GameNameBackfillResult> {
+    const updatedGameIds: string[] = [];
+    for (const game of this.games.values()) {
+      if (game.displayNameZhCn !== null || game.identityKey === null) continue;
+      const entry = this.catalog.get(game.identityKey);
+      if (entry === undefined) continue;
+      game.displayNameZhCn = entry.displayNameZhCn;
+      game.displayNameSource = "catalog";
+      game.confirmedAt = entry.confirmedAt;
+      updatedGameIds.push(game.gameId);
+    }
+    return {
+      updatedGameIds,
+      remainingCount: [...this.games.values()].filter((game) => game.displayNameZhCn === null).length,
+    };
+  }
+
+  public async saveGameName(input: GameNameSaveInput): Promise<void> {
+    const game = this.games.get(input.gameId);
+    if (game === undefined) throw new Error("名称测试替身找不到游戏");
+    if (input.saveToCatalog) {
+      this.catalog.set(input.identityKey, {
+        identityKey: input.identityKey,
+        displayNameZhCn: input.displayNameZhCn,
+        source: input.source,
+        evidenceUrl: input.evidenceUrl,
+        confirmedAt: input.confirmedAt,
+      });
+    }
+    game.displayNameZhCn = input.displayNameZhCn;
+    game.displayNameSource = "manual";
+    game.confirmedAt = input.confirmedAt;
+  }
+
+  /** 返回副本供断言审计当前游戏的最终状态，调用方不能通过该辅助方法改写下一轮服务输入。 */
+  public inspectGame(gameId: string): (GameDisplayName & { source: "catalog" | "manual" | null }) | null {
+    const game = this.games.get(gameId);
+    return game === undefined
+      ? null
+      : {
+          displayNameZhCn: game.displayNameZhCn,
+          state: game.displayNameZhCn === null ? "pending" : "confirmed",
+          source: game.displayNameSource,
+        };
+  }
+
+  /** 夹具只接受一次游戏 ID，确保待办、回填与覆盖的行为观察来自服务而非静默覆盖的测试数据。 */
+  private seedRecord(
+    item: PendingGameName,
+    displayNameZhCn: string | null,
+    displayNameSource: "catalog" | "manual" | null,
+    confirmedAt: string | null,
+  ): void {
+    if (this.games.has(item.gameId)) throw new Error("名称测试夹具包含重复游戏 ID");
+    this.games.set(item.gameId, { ...item, displayNameZhCn, displayNameSource, confirmedAt });
+  }
+}
 
 /**
  * 认证业务测试专用的内存状态。它只保存端口允许的哈希、盐和会话摘要，不保存明文密码、恢复码或 Cookie，
@@ -375,10 +491,20 @@ export class InMemorySubscriptionConfirmationStore implements SubscriptionConfir
     return { games: records.length, products: regionalCount, subscriptions: records.length, regions: regionalCount };
   }
 
-  /** 中文展示名与官方英文身份来自服务提交 DTO；返回副本避免断言修改持久状态。 */
-  public firstGameNames(): { nameZh: string; nameEn: string } | null {
+  /** 新旧中文展示字段、来源与官方英文身份均来自服务提交 DTO；返回副本避免断言修改持久状态。 */
+  public firstGameNames(): {
+    nameZh: string;
+    nameEn: string;
+    displayNameZhCn: string;
+    displayNameSource: "catalog" | "manual";
+  } | null {
     const first = this.recordsBySubscriptionId.values().next().value as StoredConfirmation | undefined;
-    return first === undefined ? null : { nameZh: first.confirmation.game.nameZh, nameEn: first.confirmation.game.nameEn };
+    return first === undefined ? null : {
+      nameZh: first.confirmation.game.nameZh,
+      nameEn: first.confirmation.game.nameEn,
+      displayNameZhCn: first.confirmation.game.displayNameZhCn,
+      displayNameSource: first.confirmation.game.displayNameSource,
+    };
   }
 
   /** 只读取某订阅已绑定的地区商品 ID，用于确认幂等命中不会偷偷补区或替换原关联。 */

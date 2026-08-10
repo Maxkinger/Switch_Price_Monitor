@@ -1,7 +1,7 @@
 # 数据模型（PostgreSQL 17）
 
 状态：仓库实现完成；全新 NAS 数据库初始化待验收
-最后更新：2026-08-01
+最后更新：2026-08-10
 
 ## 1. 设计原则
 
@@ -20,7 +20,8 @@
 | `admin_credentials` | 单一管理员密码哈希、恢复码校验值和初始化状态；不保存明文。 |
 | `sessions` | 会话令牌摘要、过期与撤销状态；原始令牌只存在于 Cookie。 |
 | `login_attempts` | 登录失败计数与锁定时间；并发更新使用单条原子 upsert，成功登录清除状态。 |
-| `games` | 逻辑商品主档；规范化名称的非空值唯一，避免并发重复创建。 |
+| `games` | 逻辑商品主档；规范化名称的非空值唯一，避免并发重复创建。`display_name_zh_cn`、来源和确认时刻是仅影响展示的游戏级人工/目录结果，绝不参与官方身份、URL、价格 ID 或价格快照计算；旧 `name_zh` 仅作兼容与管理候选。 |
+| `game_name_catalog` | 已确认简体中文名称词条；主键是规范化官方标题、发行商和商品类型组成的精确身份。名称修剪后限制为 1–120 字符，来源枚举为发行商、中国大陆平台、香港参考或人工确认，可选证据仅保存 HTTPS URL 与确认时刻。 |
 | `regional_products` | 本区官方 URL、币种、独立官方价格 ID、匹配来源、商品校验元数据与启用状态；价格 ID 不得跨区复用。 |
 | `subscriptions` | 单一逻辑商品的监控状态和通知选项；停用为软操作。 |
 | `price_snapshots` | 不可变的金额、币种、口径、人民币换算、汇率、来源、采集时间和有效状态。 |
@@ -35,12 +36,14 @@
 ```text
 games 1 ── * regional_products
 games 1 ── * subscriptions
+game_name_catalog 1 ── * games（仅通过精确 `normalized_name` 目录回填；单游戏 `manual` 覆盖优先）
 regional_products 1 ── * price_snapshots / fetch_logs
 regional_products 1 ── 1 regional_product_health
 subscriptions / regional_products ── * notification_events
 ```
 
 - 批量确认在一个 PostgreSQL 事务中验证并写入商品、地区商品、订阅与地区目标；任一官方身份或 SQL 失败均零写入。
+- 中文名称目录回填只更新 `display_name_zh_cn IS NULL` 且精确身份命中的游戏；重复回填不覆盖游戏级 `manual` 覆盖，人工名称保存可在同一事务中选择性 upsert 未来复用词条。
 - 永久删除先锁定并验证全部目标，再在同一事务删除订阅专属数据；设置、汇率、认证和未选择订阅不受影响。
 - 自动采集与每次已认证手动刷新共享采集服务，但互不排队。每次手动请求同步执行并更新最近时间。
 - 即时降价只比较官方成功快照，并由通知事件的唯一业务键确保同一事件只投递一次。
@@ -57,4 +60,4 @@ subscriptions / regional_products ── * notification_events
 
 首次 PostgreSQL 数据目录必须为空。只读 init hook 用容器内部 bootstrap 角色创建普通应用数据库所有者并转移数据库与 `public` schema 所有权；重复执行或错误非空目录必须失败，不能隐式修复。
 
-备份采用 PostgreSQL 17 custom archive、原子临时文件与每库单调序号。恢复只允许 app 停止、普通 app 角色拥有的独立空库；成功后验证迁移账本、当前迁移定义的 16 张 public 表精确集合，以及管理员只能为 0 行或唯一 `id=1`。详细合同见 [PostgreSQL 备份恢复](../deployment/postgres-backup-restore.md)。
+备份采用 PostgreSQL 17 custom archive、原子临时文件与每库单调序号。恢复只允许 app 停止、普通 app 角色拥有的独立空库；成功后验证迁移账本、当前迁移定义的 17 张 public 表精确集合，以及管理员只能为 0 行或唯一 `id=1`。详细合同见 [PostgreSQL 备份恢复](../deployment/postgres-backup-restore.md)。

@@ -118,6 +118,9 @@ function seedUsOnlySubscription(): void {
       game: {
         id: "game-overcooked",
         nameZh: "胡闹厨房 2",
+        // 地区补全不得改写已确认名称；夹具显式携带来源，确保新端口字段不会被补全流程遗漏或覆盖。
+        displayNameZhCn: "胡闹厨房 2",
+        displayNameSource: "manual",
         nameEn: "Overcooked! 2",
         normalizedName: "overcooked! 2|team17|game",
         publisher: "Team17",

@@ -8,6 +8,7 @@ import type {
 interface SubscriptionRow {
   subscriptionId: string;
   gameId: string;
+  displayNameZhCn: string | null;
   nameZh: string;
   nameEn: string;
   productType: string;
@@ -41,6 +42,7 @@ export class PostgresSubscriptionDetailRepository implements SubscriptionDetailR
     const subscriptionResult = await this.database.query<SubscriptionRow>(
       `SELECT subscriptions.id AS "subscriptionId",
               games.id AS "gameId",
+              games.display_name_zh_cn AS "displayNameZhCn",
               games.name_zh AS "nameZh",
               games.name_en AS "nameEn",
               games.product_type AS "productType",
@@ -98,6 +100,7 @@ export class PostgresSubscriptionDetailRepository implements SubscriptionDetailR
       game: {
         id: subscription.gameId,
         nameZh: subscription.nameZh,
+        displayNameZhCn: subscription.displayNameZhCn,
         nameEn: subscription.nameEn,
         productType: subscription.productType,
       },

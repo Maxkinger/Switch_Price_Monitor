@@ -58,6 +58,11 @@ export interface ConfirmedRegionalProduct extends OfficialProductCandidate {
  */
 export interface ConfirmedSubscriptionInput {
   selected: OfficialProductCandidate;
+  /**
+   * 管理员在确认页提交的简体中文名称候选；它只有在 Node 重新验证 selected 官方锚点且精确词条未命中后才可成为 manual 展示名，
+   * 不能替代官方标题、发行商、商品类型或参与 identityKey 计算。
+   */
+  displayNameZhCn?: string;
   regions: ConfirmedRegionalProduct[];
   /**
    * 管理员明确不监控的已启用地区。空数组表示所有启用地区均已有官方确认映射；

@@ -20,6 +20,11 @@ export interface SubscriptionWizardState {
   query: string;
   searchResult: OfficialSearchResult;
   selectedCandidateKeys: string[];
+  /**
+   * 每个默认区候选的中文名草稿按稳定候选键隔离保存。该字段只是浏览器体验状态：
+   * 服务端仍会用官方链接重新确认身份，并且只在精确词条未命中时才接受非空草稿，避免中文文案反向影响商品身份。
+   */
+  chineseNameDrafts: Record<string, string>;
   regionalConfirmations: Record<string, OfficialProductCandidate>;
   /** 自动与人工来源必须随候选保存，最终确认才能携带审计来源；该 UI 字段不会取代 Node 服务对官方链接的重验。 */
   regionalConfirmationSources: Record<string, RegionalProductMatchSource>;
@@ -38,12 +43,35 @@ export function createSubscriptionWizardState(searchResult: OfficialSearchResult
     query: "",
     searchResult,
     selectedCandidateKeys: [],
+    chineseNameDrafts: {},
     regionalConfirmations: {},
     regionalConfirmationSources: {},
     skippedRegionalKeys: [],
     sourcePreviews: {},
     submitState: "idle",
   };
+}
+
+/**
+ * 以默认区候选键写入一款商品的中文名称草稿。不能按数组位置或官方标题存储，
+ * 因为批量选择时同标题不同类型、或搜索结果排序变化都会让名称错配到另一款游戏。
+ */
+export function setChineseNameDraft(state: SubscriptionWizardState, selectedCandidateKey: string, displayNameZhCn: string): SubscriptionWizardState {
+  return {
+    ...state,
+    chineseNameDrafts: {
+      ...state.chineseNameDrafts,
+      [selectedCandidateKey]: displayNameZhCn,
+    },
+  };
+}
+
+/**
+ * 新订阅必须为每项选择提供非空中文名；即使目录建议命中，也通过同一草稿路径提交，
+ * 使浏览器没有“建议即已确认”的旁路。trim 只用于前端禁用门禁，最终长度、目录优先级和人工覆盖仍由 Node 服务裁决。
+ */
+export function canConfirmChineseNames(state: SubscriptionWizardState, selectedCandidates: OfficialProductCandidate[]): boolean {
+  return selectedCandidates.every((candidate) => (state.chineseNameDrafts[selectedCandidateKey(candidate)] ?? "").trim().length > 0);
 }
 
 /**
@@ -129,6 +157,11 @@ export function toggleCandidate(state: SubscriptionWizardState, candidateKey: st
     ? state.selectedCandidateKeys.filter((key) => key !== candidateKey)
     : [...state.selectedCandidateKeys, candidateKey];
   return { ...state, selectedCandidateKeys };
+}
+
+/** 默认区候选键只用于当前向导关联名称和地区草稿，正式身份仍由服务端用官方标题、发行商和类型计算。 */
+function selectedCandidateKey(candidate: Pick<OfficialProductCandidate, "regionCode" | "productUrl">): string {
+  return `${candidate.regionCode}:${candidate.productUrl}`;
 }
 
 /**

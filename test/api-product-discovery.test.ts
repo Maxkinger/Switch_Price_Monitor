@@ -196,6 +196,28 @@ describe("product discovery HTTP routes", () => {
     expect(confirm).toHaveBeenCalledWith([input], expect.any(String));
   });
 
+  it.each([
+    { displayNameZhCn: 42, message: "简体中文游戏名称无效。" },
+    { displayNameZhCn: "名".repeat(121), message: "简体中文游戏名称长度应为 1 到 120 个字符。" },
+  ])("rejects malformed submitted Chinese names before confirmation: $message", async ({ displayNameZhCn, message }) => {
+    // 路由只负责 JSON 形状和最大长度，既防止巨型请求进入服务端，也不在此依据浏览器标题作目录匹配；官方锚点与词条优先级仍留给确认服务。
+    const confirm = vi.fn(async () => []);
+    const cookie = await initializeAndLogin();
+    const input = { ...confirmedSubscription(), displayNameZhCn };
+
+    const response = await handleProductRoute(
+      request("/api/products/confirm-subscriptions", { subscriptions: [input] }, cookie),
+      sessions(),
+      fixedPreview(),
+      { searchDefaultRegion: async () => ({ status: "available" as const, candidates: [] }), resolveOfficialLink: async () => candidate(), resolveRegions: async () => [] },
+      { confirm },
+    );
+
+    expect(response?.status).toBe(422);
+    await expect(response?.json()).resolves.toEqual({ code: "VALIDATION_ERROR", error: message });
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
   it("maps the final Japanese upgrade reverification limit to the same safe validation response", async () => {
     // 保存前关系服务与发现阶段共享三项上限；确认端点必须沿用受控 422，不能把配额错误误报成 500 或暴露 Browser 内部信息。
     const discovery = {

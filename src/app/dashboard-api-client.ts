@@ -23,7 +23,8 @@ export interface DashboardRegion {
 export interface DashboardSubscription {
   subscriptionId: string;
   gameId: string;
-  nameZh: string;
+  /** 服务端目录或人工确认的简体中文展示名；null 必须由页面显示统一待补充文案，不能回退推断官方标题。 */
+  displayNameZhCn: string | null;
   nameEn: string;
   enabled: boolean;
   regionalProductIds: string[];
@@ -47,7 +48,8 @@ export interface DashboardOverview {
 /** 订阅详情只含管理员安全展示和编辑所需字段，不会透出商品链接、会话或通知配置。 */
 export interface SubscriptionDetail {
   subscriptionId: string;
-  game: { id: string; nameZh: string; nameEn: string; productType: string };
+  /** 详情游戏对象仅携带已确认中文名和供管理员核对的官方标题；浏览器不负责翻译或纠正名称。 */
+  game: { id: string; displayNameZhCn: string | null; nameEn: string; productType: string };
   enabled: boolean;
   regions: Array<DashboardRegion & { monitored: boolean }>;
 }

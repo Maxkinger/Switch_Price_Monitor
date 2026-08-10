@@ -37,7 +37,9 @@ describe("subscription detail HTTP route", () => {
       subscriptionId: "subscription-overcooked-2",
       game: {
         id: "game-overcooked-2",
-        nameZh: "胡闹厨房 2",
+        // 兼容字段保留旧候选，但管理员界面必须直接消费下方已确认的新字段，不能从 nameZh 回退推断。
+        nameZh: "旧中文候选",
+        displayNameZhCn: "胡闹厨房 2",
         nameEn: "Overcooked! 2",
         productType: "game",
       },
@@ -116,7 +118,8 @@ async function seedSubscriptionDetail(): Promise<void> {
   // 夹具明确覆盖一个已监控、有快照且采集失败的美区，以及一个已确认但未监控、从未采集的日区。
   // 这能验证详情页的编辑边界不会要求浏览器再次发现或伪造地区商品标识。
   await database.transaction(async (transaction) => {
-    await transaction.query("INSERT INTO games (id, name_zh, name_en, product_type, created_at) VALUES ($1, $2, $3, $4, $5)", ["game-overcooked-2", "胡闹厨房 2", "Overcooked! 2", "game", "2026-07-16T00:00:00.000Z"]);
+    // 旧 name_zh 与已确认展示字段故意不同，确保详情读取不会把 legacy 候选提升为已确认中文名。
+    await transaction.query("INSERT INTO games (id, name_zh, name_en, product_type, display_name_zh_cn, display_name_source, display_name_confirmed_at, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", ["game-overcooked-2", "旧中文候选", "Overcooked! 2", "game", "胡闹厨房 2", "manual", "2026-07-16T00:00:00.000Z", "2026-07-16T00:00:00.000Z"]);
     await transaction.query("INSERT INTO regional_products (id, game_id, region_code, currency, product_url, match_source, enabled, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", ["product-overcooked-2-us", "game-overcooked-2", "US", "USD", "https://example.test/us/overcooked-2", "manual_selection", true, "2026-07-16T00:00:00.000Z"]);
     await transaction.query("INSERT INTO regional_products (id, game_id, region_code, currency, product_url, match_source, enabled, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)", ["product-overcooked-2-jp", "game-overcooked-2", "JP", "JPY", "https://example.test/jp/overcooked-2", "manual_selection", true, "2026-07-16T00:00:00.000Z"]);
     await transaction.query("INSERT INTO subscriptions (id, game_id, enabled, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)", ["subscription-overcooked-2", "game-overcooked-2", true, "2026-07-16T00:00:00.000Z", "2026-07-16T00:00:00.000Z"]);

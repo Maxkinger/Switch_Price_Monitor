@@ -3,9 +3,14 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createServerApp, type ServerDependencies } from "../src/server/app";
-import { createApiDispatcher } from "../src/server/dependencies";
+import { createApiDispatcher, createServerDependencies } from "../src/server/dependencies";
 import { handleAuthRoute } from "../src/routes/auth-routes";
+import { handleGameNameRoute } from "../src/routes/game-name-routes";
+import type { SessionReader } from "../src/routes/auth-guard";
 import type { AuthService } from "../src/services/auth-service";
+import { GameNameService } from "../src/services/game-name-service";
+import type { AppDatabase, SqlExecutor, SqlResult } from "../src/server/database/types";
+import { InMemoryGameNameStore } from "./support/in-memory-business-stores";
 
 const temporaryDirectories: string[] = [];
 
@@ -76,6 +81,51 @@ describe("Node HTTP Fetch 应用", () => {
     expect(calls).toEqual([request, request, request]);
     expect(response?.status).toBe(203);
     await expect(response?.text()).resolves.toBe("matched");
+  });
+
+  it("名称管理 handler 注册在认证路由之后并由 Node 应用保留其 401 JSON", async () => {
+    const staticDirectory = await createStaticFixture();
+    const sessions: SessionReader = { authenticate: async () => false };
+    const names = new GameNameService(new InMemoryGameNameStore());
+    const app = createServerApp(
+      { staticDirectory, maximumBodyBytes: 1024 },
+      {
+        // 认证路由先获得同一 Request；它不匹配名称路径时返回 null，随后名称守卫必须生成 401，不能落到通用 API 404。
+        dispatchApi: createApiDispatcher([
+          (request) => handleAuthRoute(request, {
+            auth: {} as AuthService,
+            sessions,
+            cookieSecure: false,
+          }),
+          (request) => handleGameNameRoute(request, sessions, names),
+        ]),
+      },
+    );
+
+    const response = await app.fetch(new Request("http://localhost/api/game-names?status=pending"));
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ code: "UNAUTHORIZED", error: "请先登录。" });
+  });
+
+  it("本机开发认证旁路不会放行名称管理的伪造 Cookie", async () => {
+    /**
+     * 数据库替身只实现真实 AuthService 所需的会话存在查询；若装配误把 routeSessions 旁路传给名称路由，
+     * 伪造 Cookie 会继续进入名称查询并触发替身的禁止 SQL 错误，响应因此不会是预期 401。
+     */
+    const dependencies = createServerDependencies(new InvalidSessionOnlyDatabase(), {
+      cookieSecure: false,
+      telegramBotToken: undefined,
+      telegramChatId: undefined,
+      localDevelopmentAuthBypass: true,
+    });
+
+    const response = await dependencies.http.dispatchApi(new Request("http://localhost/api/game-names?status=pending", {
+      headers: { cookie: "session=forged-development-token" },
+    }));
+
+    expect(response?.status).toBe(401);
+    await expect(response?.json()).resolves.toEqual({ code: "UNAUTHORIZED", error: "请先登录。" });
   });
 
   it("未知 API 使用固定 JSON 404 而不回退 React 页面", async () => {
@@ -255,6 +305,31 @@ describe("Node HTTP Fetch 应用", () => {
     expect(cookie.includes(" Secure;")).toBe(expectedSecure);
   });
 });
+
+/**
+ * 装配回归的最小数据库只允许验证无效会话；任何名称、设置或外部流程查询都直接失败，
+ * 从而证明 401 来自真实认证短路，而不是测试替身意外为后续业务提供了空成功结果。
+ */
+class InvalidSessionOnlyDatabase implements AppDatabase {
+  public async query<Row>(sql: string): Promise<SqlResult<Row>> {
+    if (sql.includes("FROM sessions")) {
+      return { rows: [{ valid: false } as Row], rowCount: 1 };
+    }
+    throw new Error("名称管理严格认证前不应执行其他数据库查询");
+  }
+
+  public async transaction<T>(_work: (transaction: SqlExecutor) => Promise<T>): Promise<T> {
+    throw new Error("名称管理严格认证前不应开启事务");
+  }
+
+  public async withAdvisoryLock<T>(_key: bigint, _work: (connection: SqlExecutor) => Promise<T>): Promise<T | undefined> {
+    throw new Error("名称管理严格认证前不应取得调度锁");
+  }
+
+  public async close(): Promise<void> {
+    // 该替身没有连接池或句柄；保留空 close 以符合生产数据库生命周期端口。
+  }
+}
 
 /** 创建包含唯一 SPA 入口的隔离静态根；文件内容不含任何真实前端或凭据。 */
 async function createStaticFixture(): Promise<string> {

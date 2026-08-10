@@ -5,8 +5,10 @@ import {
   applyAutomaticRegionResolutions,
   candidatePriceLabel,
   canConfirmConfiguredRegions,
+  canConfirmChineseNames,
   createSubscriptionWizardState,
   hasNoOfficialCandidates,
+  setChineseNameDraft,
   setRegionalCandidate,
   skipRegionalConfirmation,
   toggleCandidate,
@@ -25,6 +27,31 @@ describe("subscription wizard state", () => {
 
     expect(second.selectedCandidateKeys).toEqual(["US:overcooked", "US:kirby"]);
     expect(toggleCandidate(second, "US:overcooked").selectedCandidateKeys).toEqual(["US:kirby"]);
+  });
+
+  it("keeps Chinese-name drafts independent for each selected default-region candidate", () => {
+    // 中文显示名只是一轮向导中的管理员候选，不能以标题或数组下标作键；否则批量订阅两款商品时，后一项输入会覆盖前一项并把错误名称交给服务端复核。
+    const initial = createSubscriptionWizardState({ status: "available", candidates: [overcooked(), kirby()] });
+    const overcookedKey = `US:${overcooked().productUrl}`;
+    const kirbyKey = `US:${kirby().productUrl}`;
+    const first = setChineseNameDraft(initial, overcookedKey, "胡闹厨房 2");
+    const next = setChineseNameDraft(first, kirbyKey, "星之卡比 探索发现");
+
+    expect(next.chineseNameDrafts).toEqual({
+      [overcookedKey]: "胡闹厨房 2",
+      [kirbyKey]: "星之卡比 探索发现",
+    });
+  });
+
+  it("requires every selected candidate to have a nonblank Chinese-name draft before confirmation", () => {
+    // 目录建议仅改善输入体验，未命中词条时仍必须显式填写。这里锁定前端门禁，避免浏览器把空值发送到原子订阅确认并让整批请求在服务端才失败。
+    const selected = [overcooked(), kirby()];
+    const initial = createSubscriptionWizardState({ status: "available", candidates: selected });
+    const onlyFirst = setChineseNameDraft(initial, `US:${overcooked().productUrl}`, "胡闹厨房 2");
+    const complete = setChineseNameDraft(onlyFirst, `US:${kirby().productUrl}`, "  星之卡比 探索发现  ");
+
+    expect(canConfirmChineseNames(onlyFirst, selected)).toBe(false);
+    expect(canConfirmChineseNames(complete, selected)).toBe(true);
   });
 
   it("shows a struck regular price, sale price and discount only when the verified sale is lower", () => {

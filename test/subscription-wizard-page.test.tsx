@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { type RegionResolutionResponse, createProductApiClient } from "../src/app/api-client";
+import { type GameNameSuggestionCandidate, createGameNameApiClient } from "../src/app/game-name-api-client";
 import { SubscriptionWizardPage } from "../src/app/subscription-wizard-page";
 import type { OfficialProductCandidate } from "../src/shared/domain";
 
@@ -38,6 +39,15 @@ const remainingJapaneseCandidate: OfficialProductCandidate = {
   publisher: "Another Publisher",
 };
 
+/** 第二个默认区候选模拟目录未命中，专门验证批量选择时两个中文草稿不会互相覆盖。 */
+const kirbyCandidate: OfficialProductCandidate = {
+  ...usCandidate,
+  productUrl: "https://www.nintendo.com/us/store/products/kirby-and-the-forgotten-land-switch/",
+  canonicalTitle: "Kirby and the Forgotten Land",
+  publisher: "Nintendo",
+  currentPriceMinor: 5999,
+};
+
 /** 每个 DOM 用例都提供完整的同源客户端表面，未调用的方法显式桩化以防测试偶然触发真实请求。 */
 function wizardApi(resolutions: RegionResolutionResponse[]): ReturnType<typeof createProductApiClient> {
   return {
@@ -47,6 +57,11 @@ function wizardApi(resolutions: RegionResolutionResponse[]): ReturnType<typeof c
     previewSources: vi.fn(async () => []),
     confirmSubscriptions: vi.fn(async () => []),
   };
+}
+
+/** 名称建议客户端只暴露向导所需方法；它返回的空值必须保留为必填输入，不能被浏览器自行翻译或猜测。 */
+function nameSuggestionApi(suggestions: Array<{ candidateKey: string; displayNameZhCn: string | null }>): Pick<ReturnType<typeof createGameNameApiClient>, "suggestNames"> {
+  return { suggestNames: vi.fn(async (_candidates: GameNameSuggestionCandidate[]) => ({ suggestions })) };
 }
 
 describe("添加订阅向导的跨区候选折叠", () => {
@@ -67,7 +82,7 @@ describe("添加订阅向导的跨区候选折叠", () => {
       featuredCandidateCount: 1,
     }]);
 
-    render(<SubscriptionWizardPage api={api} onUnauthorized={vi.fn()} />);
+    render(<SubscriptionWizardPage api={api} gameNameApi={nameSuggestionApi([])} onUnauthorized={vi.fn()} />);
 
     await user.type(screen.getByRole("textbox", { name: "游戏名称" }), "Overcooked! 2");
     await user.click(screen.getByRole("button", { name: "搜索官方商品" }));
@@ -80,6 +95,40 @@ describe("添加订阅向导的跨区候选折叠", () => {
     await user.click(screen.getByRole("button", { name: "显示更多官方候选（1）" }));
 
     await waitFor(() => expect(screen.getByRole("button", { name: /Unrelated Nintendo Switch 2 Edition/ })).toBeTruthy());
+  });
+
+  it("prefills a catalog Chinese name, keeps a second draft required, and submits both independent drafts", async () => {
+    // 一项建议命中、一项未命中覆盖“体验预填但不可绕过确认”的边界；最终只断言同源产品客户端收到的载荷，不模拟服务端把浏览器标题当作身份事实。
+    const user = userEvent.setup();
+    const api = wizardApi([]);
+    vi.mocked(api.searchProducts).mockResolvedValue({ status: "available", candidates: [usCandidate, kirbyCandidate] });
+    const names = nameSuggestionApi([
+      { candidateKey: `US:${usCandidate.productUrl}`, displayNameZhCn: "胡闹厨房 2" },
+      { candidateKey: `US:${kirbyCandidate.productUrl}`, displayNameZhCn: null },
+    ]);
+
+    render(<SubscriptionWizardPage api={api} gameNameApi={names} onUnauthorized={vi.fn()} />);
+
+    await user.type(screen.getByRole("textbox", { name: "游戏名称" }), "two games");
+    await user.click(screen.getByRole("button", { name: "搜索官方商品" }));
+    await user.click(await screen.findByRole("button", { name: /Overcooked! 2 – Nintendo Switch 2 Edition/ }));
+    await user.click(screen.getByRole("button", { name: /Kirby and the Forgotten Land/ }));
+    await user.click(screen.getByRole("button", { name: "核验其他地区" }));
+
+    const overcookedName = await screen.findByRole("textbox", { name: "Overcooked! 2 – Nintendo Switch 2 Edition 的简体中文显示名称" });
+    const kirbyName = screen.getByRole("textbox", { name: "Kirby and the Forgotten Land 的简体中文显示名称" });
+    expect((overcookedName as HTMLInputElement).value).toBe("胡闹厨房 2");
+    expect((kirbyName as HTMLInputElement).value).toBe("");
+    expect((screen.getByRole("button", { name: "确认订阅" }) as HTMLButtonElement).disabled).toBe(true);
+
+    await user.type(kirbyName, "星之卡比 探索发现");
+    expect((screen.getByRole("button", { name: "确认订阅" }) as HTMLButtonElement).disabled).toBe(false);
+    await user.click(screen.getByRole("button", { name: "确认订阅" }));
+
+    expect(api.confirmSubscriptions).toHaveBeenCalledWith([
+      expect.objectContaining({ selected: usCandidate, displayNameZhCn: "胡闹厨房 2" }),
+      expect.objectContaining({ selected: kirbyCandidate, displayNameZhCn: "星之卡比 探索发现" }),
+    ]);
   });
 
   it("retries Japanese regional discovery after a safe manual-link message and renders the automatic candidate", async () => {
@@ -100,7 +149,7 @@ describe("添加订阅向导的跨区候选折叠", () => {
       // 第二次请求保持 pending，证明按钮会在本地浏览器重试尚未结算时禁用，不能被连续点击并发消耗 Chromium 资源。
       .mockReturnValueOnce(retryPending);
 
-    render(<SubscriptionWizardPage api={api} onUnauthorized={vi.fn()} />);
+    render(<SubscriptionWizardPage api={api} gameNameApi={nameSuggestionApi([])} onUnauthorized={vi.fn()} />);
 
     await user.type(screen.getByRole("textbox", { name: "游戏名称" }), "Overcooked! 2");
     await user.click(screen.getByRole("button", { name: "搜索官方商品" }));
@@ -143,7 +192,7 @@ describe("添加订阅向导的跨区候选折叠", () => {
       .mockReturnValueOnce(staleRetry)
       .mockReturnValueOnce(freshResolution);
 
-    render(<SubscriptionWizardPage api={api} onUnauthorized={vi.fn()} />);
+    render(<SubscriptionWizardPage api={api} gameNameApi={nameSuggestionApi([])} onUnauthorized={vi.fn()} />);
 
     await user.type(screen.getByRole("textbox", { name: "游戏名称" }), "Overcooked! 2");
     await user.click(screen.getByRole("button", { name: "搜索官方商品" }));

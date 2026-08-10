@@ -7,7 +7,8 @@ import {
   type JapaneseUpgradeRelationService,
 } from "../src/services/japanese-upgrade-relation-service";
 import { SubscriptionConfirmationService } from "../src/services/subscription-confirmation-service";
-import { InMemorySubscriptionConfirmationStore } from "./support/in-memory-business-stores";
+import { GameNameService } from "../src/services/game-name-service";
+import { InMemoryGameNameStore, InMemorySubscriptionConfirmationStore } from "./support/in-memory-business-stores";
 
 // 工厂函数位于 describe 外部，故当前用例端口保存在模块作用域；beforeEach 始终替换实例，禁止状态跨用例复用。
 let confirmationStore: InMemorySubscriptionConfirmationStore;
@@ -81,6 +82,67 @@ describe("subscription confirmation service", () => {
     await expect(counts()).resolves.toEqual({ games: 0, products: 0, subscriptions: 0, regions: 0 });
   });
 
+  it("uses the relationship-signed candidate for a Japanese default upgrade identity and name decision", async () => {
+    /**
+     * 目标变异是确认服务再次以浏览器 selected 计算 identityKey：那会命中“浏览器伪造目录名称”，或在没有该词条时采用人工候选。
+     * 关系服务签发的官方标题、发行商与固定字面量词条均独立给出，测试不复用生产身份键算法计算期望。
+     */
+    const spoofedSelected: OfficialProductCandidate = {
+      regionCode: "JP",
+      productUrl: "https://store-jp.nintendo.com/item/software/D70010000106252/",
+      canonicalTitle: "Browser Spoof Upgrade Pack",
+      publisher: "Browser Spoof Publisher",
+      productType: "upgrade-pack",
+      currency: "JPY",
+      coverUrl: "https://browser.invalid/spoof.jpg",
+      currentPriceMinor: 1,
+      regularPriceMinor: 2,
+    };
+    const officialCandidate: OfficialProductCandidate = {
+      ...spoofedSelected,
+      canonicalTitle: "Overcooked! 2 Nintendo Switch 2 Edition Upgrade Pack",
+      publisher: "Team17",
+      coverUrl: "https://assets.nintendo.com/official-upgrade.jpg",
+      currentPriceMinor: 1000,
+      regularPriceMinor: null,
+    };
+    const selectedRegion = { ...spoofedSelected, matchSource: "manual_link" as const };
+    const verificationItem = { anchor: spoofedSelected, candidate: spoofedSelected, matchSource: "manual_link" as const };
+    const input: ConfirmedSubscriptionInput = {
+      selected: spoofedSelected,
+      displayNameZhCn: "浏览器人工候选名称",
+      regions: [selectedRegion],
+      skippedRegionCodes: [],
+    };
+    const names = createNameService([
+      { identityKey: "browser spoof upgrade pack|browser spoof publisher|upgrade-pack", displayNameZhCn: "浏览器伪造目录名称" },
+      { identityKey: "overcooked! 2 nintendo switch 2 edition upgrade pack|team17|upgrade-pack", displayNameZhCn: "胡闹厨房 2 Nintendo Switch 2 Edition 升级包" },
+    ]);
+    const japaneseUpgrades = {
+      verifyForConfirmation: vi.fn().mockResolvedValue(new Map([
+        [japaneseUpgradeConfirmationKey(verificationItem), { status: "verified-manual" as const, candidate: officialCandidate }],
+      ])),
+    };
+    const service = new SubscriptionConfirmationService(
+      confirmationStore,
+      { resolve: async () => null },
+      { resolve: async () => ({ status: "official-available" as const, officialPriceId: "70010000106252" }) },
+      { get: async () => ({ enabledRegions: ["JP" as const] }) },
+      { resolve: async () => null },
+      japaneseUpgrades,
+      names,
+    );
+
+    await expect(service.confirm([input], now)).resolves.toEqual([expect.objectContaining({ status: "created" })]);
+    expect(japaneseUpgrades.verifyForConfirmation).toHaveBeenCalledExactlyOnceWith([verificationItem]);
+    expect(confirmationStore.firstGameNames()).toEqual({
+      nameZh: "胡闹厨房 2 Nintendo Switch 2 Edition 升级包",
+      nameEn: "Overcooked! 2 Nintendo Switch 2 Edition Upgrade Pack",
+      displayNameZhCn: "胡闹厨房 2 Nintendo Switch 2 Edition 升级包",
+      displayNameSource: "catalog",
+    });
+  });
+
   it("uses the freshly resolved default-region anchor for Japanese upgrade relation verification", async () => {
     // 浏览器可保留真实美区 URL 却篡改标题和发行商；若关系服务先消费该文本，manual_link 的同类型规则可能把另一游戏的日区升级包错误绑定到真实订阅。
     const actualAnchor = japaneseUpgradeCase("actual-game-2", "70050000064985").input.selected;
@@ -119,6 +181,7 @@ describe("subscription confirmation service", () => {
       { get: async () => ({ enabledRegions: ["US" as const, "JP" as const] }) },
       { resolve: async () => null },
       japaneseUpgrades,
+      createNameService([{ identityKey: "actual-game-2 nintendo switch 2 edition upgrade pack|nintendo test publisher|upgrade-pack", displayNameZhCn: "实际游戏 2 升级包" }]),
     );
 
     await expect(service.confirm([input], now)).rejects.toThrow("日区升级包官方链接无法确认，请重新核验。");
@@ -165,8 +228,68 @@ describe("subscription confirmation service", () => {
 
     await expect(service.confirm([overcookedSubscription()], now)).resolves.toEqual([expect.objectContaining({ status: "created" })]);
 
-    // 中文展示名用于管理页和日报；英文名继续保留官方标题，供跨区补全和采集身份复核使用。
-    expect(confirmationStore.firstGameNames()).toEqual({ nameZh: "胡闹厨房 2", nameEn: "Overcooked! 2" });
+    // 中文展示名与来源进入新字段；兼容 nameZh 同步保留相同文本，英文名继续保存服务器重读的官方标题用于身份复核。
+    expect(confirmationStore.firstGameNames()).toEqual({
+      nameZh: "胡闹厨房 2",
+      nameEn: "Overcooked! 2",
+      displayNameZhCn: "胡闹厨房 2",
+      displayNameSource: "catalog",
+    });
+  });
+
+  it("prefers an exact catalog name after rebuilding the official identity on the server", async () => {
+    // 若确认服务使用浏览器标题、发行商或商品类型计算词条键，篡改候选会绕过服务器重读后的 Team17 精确词条并错误采用人工候选。
+    const input: ConfirmedSubscriptionInput = {
+      ...overcookedSubscription(),
+      selected: { ...overcookedUs(), canonicalTitle: "Browser Spoof", publisher: "Browser Publisher" },
+      displayNameZhCn: "浏览器候选名称",
+    };
+    const names = createNameService([{ identityKey: "overcooked! 2|team17|game", displayNameZhCn: "胡闹厨房 2" }]);
+    const service = createService(allFixtureCandidates(), ["US", "JP"], names);
+
+    await expect(service.confirm([input], now)).resolves.toEqual([expect.objectContaining({ status: "created" })]);
+    expect(confirmationStore.firstGameNames()).toMatchObject({
+      displayNameZhCn: "胡闹厨房 2",
+      displayNameSource: "catalog",
+      nameEn: "Overcooked! 2",
+    });
+  });
+
+  it("rejects a new subscription when neither the catalog nor the administrator confirms a Chinese name", async () => {
+    // 若 pending 状态仍可写入，新游戏会把旧 name_zh 或官方英文标题误当成已确认中文展示事实，后续读取也无法区分待处理记录。
+    const service = createService(allFixtureCandidates(), ["US", "JP"], new GameNameService(new InMemoryGameNameStore()));
+
+    await expect(service.confirm([overcookedSubscription()], now)).rejects.toThrow("请确认简体中文游戏名称。");
+    await expect(counts()).resolves.toEqual({ games: 0, products: 0, subscriptions: 0, regions: 0 });
+  });
+
+  it("stores a trimmed administrator candidate as a manual name only after official anchor verification", async () => {
+    // 人工名称只补充展示文本；官方重读仍决定英文标题、发行商、类型和 identityKey，不能让该文本替代或修改任天堂商品身份。
+    const input: ConfirmedSubscriptionInput = {
+      ...overcookedSubscription(),
+      displayNameZhCn: "  胡闹厨房 2 人工确认  ",
+    };
+    const service = createService(allFixtureCandidates(), ["US", "JP"], new GameNameService(new InMemoryGameNameStore()));
+
+    await expect(service.confirm([input], now)).resolves.toEqual([expect.objectContaining({ status: "created" })]);
+    expect(confirmationStore.firstGameNames()).toEqual({
+      nameZh: "胡闹厨房 2 人工确认",
+      nameEn: "Overcooked! 2",
+      displayNameZhCn: "胡闹厨房 2 人工确认",
+      displayNameSource: "manual",
+    });
+  });
+
+  it("rejects an overlong browser-submitted Chinese name before persistence", async () => {
+    // 即使精确词条已经存在，非法浏览器字段也必须被稳定拒绝；否则不同请求会因目录状态不同而绕过同一 120 字符边界。
+    const input: ConfirmedSubscriptionInput = {
+      ...overcookedSubscription(),
+      displayNameZhCn: "名".repeat(121),
+    };
+    const service = createService(allFixtureCandidates());
+
+    await expect(service.confirm([input], now)).rejects.toThrow("中文显示名称长度应为 1 到 120 个字符。");
+    await expect(counts()).resolves.toEqual({ games: 0, products: 0, subscriptions: 0, regions: 0 });
   });
 
   it("returns an existing logical game subscription without replacing its confirmed regions", async () => {
@@ -260,6 +383,7 @@ function createHongKongBundleService(automaticVerifier: { verifyAutomaticRegiona
     { resolve: async () => null },
     // 港区用例不包含日区升级包；空 Map 证明新依赖不会改变非日区 automatic 的独立唯一性门禁。
     { verifyForConfirmation: async () => new Map() },
+    createNameService([{ identityKey: "overcooked! 2 - gourmet edition|team17|bundle", displayNameZhCn: "胡闹厨房 2：美食家版" }]),
     automaticVerifier,
   );
 }
@@ -290,6 +414,7 @@ function createServiceWithJapaneseUpgradeVerifier(
     { get: async () => ({ enabledRegions: ["US" as const, "JP" as const] }) },
     japaneseResolver,
     japaneseUpgrades,
+    createNameService([{ identityKey: "overcooked! 2|team17|game", displayNameZhCn: "胡闹厨房 2" }]),
   );
 }
 
@@ -329,6 +454,8 @@ function japaneseUpgradeCase(
   };
   const input: ConfirmedSubscriptionInput = {
     selected: anchor,
+    // 动态升级包没有目录夹具；人工候选只决定展示文本，身份仍由上方服务器重验后的 anchor 计算。
+    displayNameZhCn: `${slug} 中文确认名`,
     regions: [
       { ...anchor, matchSource: "manual_selection" },
       { ...candidate, matchSource },
@@ -339,7 +466,14 @@ function japaneseUpgradeCase(
 }
 
 /** 使用平台中立端口保存服务提交 DTO；官方页面与日区价格 ID 使用固定验证结果，使测试只覆盖最终确认业务规则。 */
-function createService(candidates: OfficialProductCandidate[], enabledRegions: Array<"US" | "JP"> = ["US", "JP"]): SubscriptionConfirmationService {
+function createService(
+  candidates: OfficialProductCandidate[],
+  enabledRegions: Array<"US" | "JP"> = ["US", "JP"],
+  names: GameNameService = createNameService([
+    { identityKey: "overcooked! 2|team17|game", displayNameZhCn: "胡闹厨房 2" },
+    { identityKey: "kirby and the forgotten land|nintendo|game", displayNameZhCn: "星之卡比 探索发现" },
+  ]),
+): SubscriptionConfirmationService {
   return new SubscriptionConfirmationService(
     confirmationStore,
     {
@@ -356,7 +490,25 @@ function createService(candidates: OfficialProductCandidate[], enabledRegions: A
     { resolve: async (_anchor, candidate) => candidates.find((option) => option.regionCode === "JP" && option.productUrl === candidate.productUrl) ?? null },
     // 普通游戏夹具没有日区升级包；显式空批次依赖锁定构造参数顺序，避免 automatic verifier 被错位注入。
     { verifyForConfirmation: async () => new Map() },
+    names,
   );
+}
+
+/**
+ * 名称服务夹具只写入测试显式给出的精确身份键，不从浏览器标题、发行商或类型重新推导期望值；
+ * 这样身份键算法错误会让确认服务真实 miss，而不会被测试与生产共享的计算逻辑同步掩盖。
+ */
+function createNameService(entries: Array<{ identityKey: string; displayNameZhCn: string }>): GameNameService {
+  const store = new InMemoryGameNameStore();
+  for (const entry of entries) {
+    store.seedCatalog({
+      ...entry,
+      source: "manual",
+      evidenceUrl: null,
+      confirmedAt: "2026-08-10T00:00:00.000Z",
+    });
+  }
+  return new GameNameService(store);
 }
 
 /** 默认区的用户选择也必须被最终服务重新解析；`manual_selection` 表示管理员从官方候选卡明确选择该商品。 */
@@ -474,6 +626,9 @@ async function seedExistingOvercooked(now: string): Promise<void> {
       game: {
         id: "game-overcooked",
         nameZh: "Overcooked! 2",
+        // 既有夹具代表已人工确认记录；新增字段只满足当前端口状态，不改变本用例验证的幂等地区边界。
+        displayNameZhCn: "胡闹厨房 2",
+        displayNameSource: "manual",
         nameEn: "Overcooked! 2",
         normalizedName: "overcooked! 2|team17|game",
         publisher: "Team17",

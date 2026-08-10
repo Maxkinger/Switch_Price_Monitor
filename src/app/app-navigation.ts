@@ -6,6 +6,7 @@ export type AppRoute =
   | { kind: "dashboard" }
   | { kind: "subscription-new" }
   | { kind: "subscription-detail"; subscriptionId: string }
+  | { kind: "game-names" }
   | { kind: "settings" };
 
 /** 仪表盘为认证后的稳定首页；保留单独函数避免组件散落字符串路径。 */
@@ -23,6 +24,11 @@ export function settingsPath(): string {
   return "/settings";
 }
 
+/** 名称队列使用固定管理路径，不把游戏 ID、官方标题或搜索条件放入地址栏。 */
+export function gameNameManagementPath(): string {
+  return "/game-names";
+}
+
 /**
  * 将内部订阅标识编码进单段路径。编码防止包含斜杠或空格的未来标识被解释为多个 URL 段，
  * 而 ID 的权限和存在性仍由 Node 会话守卫与参数化查询负责。
@@ -38,6 +44,7 @@ export function subscriptionDetailPath(subscriptionId: string): string {
 export function readAppRoute(pathname: string): AppRoute {
   if (pathname === "/" || pathname === "/dashboard") return { kind: "dashboard" };
   if (pathname === "/subscriptions/new") return { kind: "subscription-new" };
+  if (pathname === "/game-names") return { kind: "game-names" };
   if (pathname === "/settings") return { kind: "settings" };
   const match = pathname.match(/^\/subscriptions\/([^/]+)$/);
   if (!match) return { kind: "dashboard" };
