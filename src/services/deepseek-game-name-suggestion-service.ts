@@ -85,7 +85,9 @@ export class DeepSeekGameNameSuggestionService {
           messages: [
             {
               role: "system",
-              content: "只为已确认的任天堂商品提供常用简体中文名称建议。区分本体、DLC、升级包、季票和合集；没有把握时返回 null，不得声称人工确认或编造来源。返回 JSON 数组。",
+              // 固定提示词只让模型产出可由管理员核验的中文草稿：商品版本后缀属于官方身份的一部分，
+              // 不能因翻译而丢失；“建议”也绝不等同于官方确认、外部检索结果或可直接持久化的数据。
+              content: "为已确认的任天堂商品给出常用简体中文名称建议。已知或可合理翻译的名称应返回文本；保留本体、DLC、升级包、季票、合集以及 Nintendo Switch 2 Edition 等版本后缀。只有确实无法判断时返回 null；不得声称官方确认、编造来源或返回 JSON 之外的文字。",
             },
             {
               role: "user",

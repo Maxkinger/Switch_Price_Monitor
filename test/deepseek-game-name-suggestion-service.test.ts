@@ -27,7 +27,45 @@ function configuredReader(apiKey = "test-key", model = "deepseek-v4-flash") {
   return { getCredentials: async (): Promise<AiProviderCredentials> => ({ apiKey, model, apiBaseUrl: "https://api.deepseek.com" }) };
 }
 
+/**
+ * 从受控请求体中读取固定系统提示词，用于锁定模型可见的业务边界；测试只检查本地序列化结果，
+ * 不访问真实 DeepSeek，避免把契约回归变成依赖密钥、网络或供应商状态的不稳定集成测试。
+ */
+function readSystemPrompt(request: ReturnType<typeof vi.fn<typeof globalThis.fetch>>): string {
+  const [, init] = request.mock.calls[0] ?? [];
+  const payload = JSON.parse(String(init?.body)) as { messages: Array<{ role: string; content: string }> };
+  return payload.messages.find((message) => message.role === "system")?.content ?? "";
+}
+
 describe("DeepSeek 中文游戏名称建议服务", () => {
+  it("请求常用简体中文名称并保留 Nintendo Switch 2 Edition 后缀", async () => {
+    // 此例覆盖英文正式商品名与 Switch 2 版本后缀：模型建议可以是常用中文译名，但不得把影响商品身份的版本说明删掉或误称官方已确认。
+    const request = vi.fn<typeof globalThis.fetch>().mockResolvedValue(modelResponse(JSON.stringify({ suggestions: [{
+      candidateKey: "candidate-1",
+      displayNameZhCn: "潜水员戴夫 Nintendo Switch 2 Edition",
+      confidence: "medium",
+    }] })));
+    const service = new DeepSeekGameNameSuggestionService(configuredReader(), request);
+
+    await expect(service.suggest([{
+      candidateKey: "candidate-1",
+      canonicalTitle: "DAVE THE DIVER Nintendo Switch 2 Edition",
+      publisher: "Mintrocket",
+      productType: "game",
+    }])).resolves.toEqual([{
+      candidateKey: "candidate-1",
+      displayNameZhCn: "潜水员戴夫 Nintendo Switch 2 Edition",
+      confidence: "medium",
+    }]);
+
+    const systemPrompt = readSystemPrompt(request);
+    expect(systemPrompt).toContain("常用简体中文名称");
+    expect(systemPrompt).toContain("Nintendo Switch 2 Edition");
+    expect(systemPrompt).toContain("只有确实无法判断时返回 null");
+    expect(systemPrompt).toContain("不得声称官方确认");
+    expect(systemPrompt).toContain("返回 JSON 之外的文字");
+  });
+
   it("配置缺失时在请求前返回专用错误且绝不外发", async () => {
     // 配置可能被管理员刚删除、密文被篡改或主密钥不可用；此时必须在构造 HTTP 请求前停止，不能把空 Authorization 发送到供应商。
     const request = vi.fn<typeof globalThis.fetch>();

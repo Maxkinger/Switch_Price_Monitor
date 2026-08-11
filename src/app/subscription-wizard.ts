@@ -149,14 +149,28 @@ export function hasNoOfficialCandidates(searchResult: OfficialSearchResult, subm
 }
 
 /**
- * 点击整张候选卡时只切换该候选键。数组保留用户点击顺序，既便于批量确认按可预期顺序展示，
- * 也避免单选逻辑在用户选择第二款游戏时意外清掉第一款游戏。
+ * 选择一张候选卡，或再次选择当前卡以取消选择。`selectedCandidateKeys` 保留数组仅为兼容既有确认载荷，
+ * 其长度只能是零或一；任何依赖候选键的名称草稿、地区确认、跳过决定和来源预览都必须整体清空，
+ * 防止前一商品的 AI 中文名或官方地区链接被提交到新商品，造成商品身份与审计来源错配。
+ */
+export function selectCandidate(state: SubscriptionWizardState, candidateKey: string): SubscriptionWizardState {
+  return {
+    ...state,
+    selectedCandidateKeys: state.selectedCandidateKeys[0] === candidateKey ? [] : [candidateKey],
+    chineseNameDrafts: {},
+    regionalConfirmations: {},
+    regionalConfirmationSources: {},
+    skippedRegionalKeys: [],
+    sourcePreviews: {},
+  };
+}
+
+/**
+ * 兼容尚未完成接线的既有页面调用；该过渡入口只委托单选转换，绝不能恢复旧有的多选集合语义，
+ * 因为地区确认和中文名称仍会携带具体商品身份。页面在 Task 2 直接改用 `selectCandidate` 后可移除此别名。
  */
 export function toggleCandidate(state: SubscriptionWizardState, candidateKey: string): SubscriptionWizardState {
-  const selectedCandidateKeys = state.selectedCandidateKeys.includes(candidateKey)
-    ? state.selectedCandidateKeys.filter((key) => key !== candidateKey)
-    : [...state.selectedCandidateKeys, candidateKey];
-  return { ...state, selectedCandidateKeys };
+  return selectCandidate(state, candidateKey);
 }
 
 /** 默认区候选键只用于当前向导关联名称和地区草稿，正式身份仍由服务端用官方标题、发行商和类型计算。 */
