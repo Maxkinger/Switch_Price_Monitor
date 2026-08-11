@@ -4,11 +4,11 @@
 
 ## 1. 通用约束
 
-- Node.js 22 以同一 origin 提供 React 静态资源与 `/api/*`；不启用跨域 API。浏览器不直接访问任天堂、汇率、Telegram 或数据库。
-- 只有显式 `LOCAL_DEVELOPMENT_AUTH_BYPASS=true` 的本机开发进程才让认证状态返回 `{ initialized: true, authenticated: true }` 并由共享守卫直入；它强制监听 `127.0.0.1`、不读取 Cookie 或 PostgreSQL 会话，启动时只为空库写入公开默认设置，不生成认证材料。变量缺失或为 `false` 时普通管理接口恢复正常初始化与认证；旁路严禁部署到 Docker、NAS、局域网或公网。名称管理四个接口是高影响例外：批量回填与可复用词条会改变当前或未来游戏的展示名称，因此即使本机旁路开启也必须提供有效 `session` Cookie 并通过 PostgreSQL 会话校验。
+- Node.js 22 以同一 origin 提供 React 静态资源与 `/api/*`；不启用跨域 API。浏览器不直接访问任天堂、DeepSeek、汇率、Telegram 或数据库。
+- 只有显式 `LOCAL_DEVELOPMENT_AUTH_BYPASS=true` 的本机开发进程才让认证状态返回 `{ initialized: true, authenticated: true }` 并由共享守卫直入；它强制监听 `127.0.0.1`、不读取 Cookie 或 PostgreSQL 会话，启动时只为空库写入公开默认设置，不生成认证材料。该受限模式同时覆盖名称管理五个接口，便于本机验证回填、更正和待确认 AI 建议；变量缺失或为 `false` 时所有管理接口恢复正常初始化与真实 Cookie/会话认证。旁路严禁部署到 Docker、NAS、局域网或公网。
 - 请求体在路由边界按受控字段和大小上限校验；未知 API 返回固定 `404`，超限返回 `413`。数据库、网络和浏览器异常只映射为安全摘要。
 - 会话 Cookie 始终为 `HttpOnly; SameSite=Strict`。`Secure` 由部署层显式 `COOKIE_SECURE` 决定，不能信任 `Forwarded` 或 `X-Forwarded-Proto` 自动推断。
-- 所有写入仍先校验，再由服务/仓储执行参数化 SQL 与显式事务；除显式本机旁路外必须执行会话校验。响应、CSV 和日志不得包含密码、恢复码、会话、数据库或 Telegram 秘密。
+- 所有写入仍先校验，再由服务/仓储执行参数化 SQL 与显式事务；除显式本机旁路外必须执行会话校验。响应、CSV 和日志不得包含密码、恢复码、会话、数据库、DeepSeek API Key 或 Telegram 秘密。
 
 ## 2. 接口清单
 
@@ -27,10 +27,11 @@
 | `POST /api/products/resolve-regions` | 已登录 | 按已保存启用地区解析跨区候选；必要时用本地 Playwright 处理最多三个日区升级包。只读，不创建订阅。 |
 | `POST /api/products/preview-sources` | 已登录 | 返回逐区官方价格 ID 状态和来源提示，不写业务数据。 |
 | `POST /api/products/confirm-subscriptions` | 已登录 | 每项可附带修剪后 1–120 字符的 `displayNameZhCn`；路由只收窄 JSON 形状/长度，保存前仍重新验证官方身份并由词条优先级裁决。一个 PostgreSQL 事务批量创建，任一失败零写入。 |
-| `GET /api/game-names?status=pending` | 严格会话 | 返回仍缺少确认简体中文显示名的公开管理字段；不受本机开发认证旁路影响。 |
-| `POST /api/game-names/backfill` | 严格会话 | 仅用精确身份词条回填空名称，返回实际更新游戏 ID 与剩余数量；不覆盖已有人工名称。 |
-| `POST /api/game-names/suggestions` | 严格会话 | 按官方标题、发行商与商品类型的精确身份返回已确认词条或 `null`；候选键只用于 UI 关联，建议不创建游戏或词条。 |
-| `PATCH /api/game-names/:gameId` | 严格会话 | 为任一已存在游戏保存或更正 1–120 字符名称及受控来源/HTTPS 证据；复用范围只取其已保存的精确官方身份，只有管理员显式选择时才建立未来复用词条。 |
+| `GET /api/game-names?status=pending` | 已登录（受限本机旁路例外） | 返回仍缺少确认简体中文显示名的公开管理字段；仅显式回环本机旁路可免 Cookie。 |
+| `POST /api/game-names/backfill` | 已登录（受限本机旁路例外） | 仅用精确身份词条回填空名称，返回实际更新游戏 ID 与剩余数量；不覆盖已有人工名称。 |
+| `POST /api/game-names/suggestions` | 已登录（受限本机旁路例外） | 按官方标题、发行商与商品类型的精确身份返回已确认词条或 `null`；候选键只用于 UI 关联，建议不创建游戏或词条。 |
+| `POST /api/game-names/ai-suggestions` | 已登录（受限本机旁路例外） | 仅将标题、可空发行商、商品类型和不含 URL 的短批内候选键发送给已配置的 DeepSeek；返回同数目的待确认建议及置信度，不创建或更新游戏、词条或订阅。未配置 Key 固定返回 `503 AI_NOT_CONFIGURED` 与“AI 名称建议尚未配置。”。 |
+| `PATCH /api/game-names/:gameId` | 已登录（受限本机旁路例外） | 为任一已存在游戏保存或更正 1–120 字符名称及受控来源/HTTPS 证据；复用范围只取其已保存的精确官方身份，只有管理员显式选择时才建立未来复用词条。 |
 | `POST /api/subscriptions` | 已登录 | 以已确认的游戏和地区商品创建或幂等打开既有订阅。 |
 | `GET /api/subscriptions/:id` | 已登录 | 返回脱敏订阅详情。 |
 | `PATCH /api/subscriptions/:id` | 已登录 | 更新启用状态或地区范围；地区商品必须属于同一游戏。 |
@@ -54,8 +55,9 @@
 
 - 名称目录身份由规范化官方标题、发行商和商品类型精确组成；浏览器的 `candidateKey` 只关联建议响应，不能成为目录键、游戏 ID 或订阅身份。
 - `POST /api/game-names/suggestions` 只返回已有已确认词条或 `null`，不创建词条、游戏或订阅。向导即使取得建议也必须提交每个选中商品的非空名称，最终确认服务会以重新读取的官方锚点重算身份。
-- `POST /api/products/confirm-subscriptions` 对缺失词条只接受服务端验证过的人工名称；未知名称不得调用在线翻译或抓取网页。仪表盘和详情 API 返回可空 `displayNameZhCn`，页面只可将 `null` 渲染为“待补充中文名称”。
-- 回填与人工更正会改变当前或未来游戏的展示名称，故四个名称管理接口在本机认证旁路下仍强制验证 `session` Cookie；路由响应只暴露固定中文错误，不返回旧名称、SQL、证据网页或会话细节。
+- `POST /api/game-names/ai-suggestions` 接受 1–10 项服务端收窄后的官方公开字段；候选键限制为 1–64 字符，官方标题为 1–200 字符，可空发行商非空时为 1–120 字符，三者均拒绝 C0/C1 控制字符且不能重复候选键。10 秒超时、网络或供应商失败固定返回 `503 AI_UNAVAILABLE` 与“AI 名称建议暂时不可用。”；结构异常、未知或重复响应键、低置信度和非法名称均按该候选降级为 `null`。DeepSeek API Key 只留在服务器进程，prompt 与供应商响应正文不记录、不返回浏览器。
+- `POST /api/products/confirm-subscriptions` 对缺失词条只接受服务端验证过的管理员确认文本；AI 建议只是浏览器草稿，不能自动保存、发布或建立词条，未知名称也不得调用在线翻译或抓取网页。仪表盘和详情 API 返回可空 `displayNameZhCn`，页面只可将 `null` 渲染为“待补充中文名称”。
+- 回填与人工更正会改变当前或未来游戏的展示名称，故五个名称管理接口在旁路关闭时强制验证 `session` Cookie；唯一免 Cookie 情形是进程已显式开启并由 Node 强制绑定回环的本机开发旁路。路由响应只暴露固定中文错误，不返回旧名称、SQL、证据网页、供应商正文或会话细节。
 
 ## 5. 手动刷新和调度边界
 

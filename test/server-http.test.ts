@@ -108,10 +108,10 @@ describe("Node HTTP Fetch 应用", () => {
     await expect(response.json()).resolves.toEqual({ code: "UNAUTHORIZED", error: "请先登录。" });
   });
 
-  it("本机开发认证旁路不会放行名称管理的伪造 Cookie", async () => {
+  it("本机开发认证旁路允许名称管理读取而不要求 Cookie", async () => {
     /**
-     * 数据库替身只实现真实 AuthService 所需的会话存在查询；若装配误把 routeSessions 旁路传给名称路由，
-     * 伪造 Cookie 会继续进入名称查询并触发替身的禁止 SQL 错误，响应因此不会是预期 401。
+     * 替身同时提供空的名称队列与无效真实会话结果。若装配遗漏本机旁路参数，路由会优先执行真实会话校验并返回 401；
+     * 只有旁路已传入且名称查询确实执行时，才能得到不携带 Cookie 的 200 空队列，证明本机完整管理流程不会误跳登录页。
      */
     const dependencies = createServerDependencies(new InvalidSessionOnlyDatabase(), {
       cookieSecure: false,
@@ -120,12 +120,32 @@ describe("Node HTTP Fetch 应用", () => {
       localDevelopmentAuthBypass: true,
     });
 
-    const response = await dependencies.http.dispatchApi(new Request("http://localhost/api/game-names?status=pending", {
-      headers: { cookie: "session=forged-development-token" },
+    const response = await dependencies.http.dispatchApi(new Request("http://localhost/api/game-names?status=pending"));
+
+    expect(response?.status).toBe(200);
+    await expect(response?.json()).resolves.toEqual({ games: [] });
+  });
+
+  it("本机开发旁路下未配置 AI 仍仅返回固定只读 503", async () => {
+    /**
+     * 该装配级合同同时约束两件事：本机回环旁路必须到达名称路由，且缺少私有 Key 时不得构造外部客户端、
+     * 降级为目录写入或泄漏配置细节；503 是管理员可恢复的固定状态，而非认证失败或通用 500。
+     */
+    const dependencies = createServerDependencies(new InvalidSessionOnlyDatabase(), {
+      cookieSecure: false,
+      telegramBotToken: undefined,
+      telegramChatId: undefined,
+      localDevelopmentAuthBypass: true,
+    });
+
+    const response = await dependencies.http.dispatchApi(new Request("http://localhost/api/game-names/ai-suggestions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ candidates: [] }),
     }));
 
-    expect(response?.status).toBe(401);
-    await expect(response?.json()).resolves.toEqual({ code: "UNAUTHORIZED", error: "请先登录。" });
+    expect(response?.status).toBe(503);
+    await expect(response?.json()).resolves.toEqual({ code: "AI_NOT_CONFIGURED", error: "AI 名称建议尚未配置。" });
   });
 
   it("未知 API 使用固定 JSON 404 而不回退 React 页面", async () => {
@@ -307,13 +327,16 @@ describe("Node HTTP Fetch 应用", () => {
 });
 
 /**
- * 装配回归的最小数据库只允许验证无效会话；任何名称、设置或外部流程查询都直接失败，
- * 从而证明 401 来自真实认证短路，而不是测试替身意外为后续业务提供了空成功结果。
+ * 装配回归的最小数据库只允许验证无效会话和读取空名称队列；任何设置或外部流程查询都直接失败，
+ * 从而区分“本机旁路正确进入名称读取”与“误用真实会话导致 401”，又不让替身伪造其他业务成功。
  */
 class InvalidSessionOnlyDatabase implements AppDatabase {
   public async query<Row>(sql: string): Promise<SqlResult<Row>> {
     if (sql.includes("FROM sessions")) {
       return { rows: [{ valid: false } as Row], rowCount: 1 };
+    }
+    if (sql.includes("FROM games")) {
+      return { rows: [], rowCount: 0 };
     }
     throw new Error("名称管理严格认证前不应执行其他数据库查询");
   }

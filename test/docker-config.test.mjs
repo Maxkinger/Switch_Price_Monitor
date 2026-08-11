@@ -166,8 +166,9 @@ contractTest("生产服务具备健康依赖、重启、init、非 root 与持�
   assert.equal(compose.volumes, undefined);
 });
 
-contractTest("生产 bootstrap 管理角色与普通应用角色严格分离", () => {
+contractTest("生产 bootstrap 管理角色、普通应用角色与可选 AI 秘密严格分离", () => {
   const compose = parseCompose("docker-compose.prod.yml");
+  const source = readAsset("docker-compose.prod.yml");
   const appEnvironment = compose.services.app.environment;
   const databaseEnvironment = compose.services.postgres.environment;
   const example = parseEnvExample(readAsset(".env.example"));
@@ -176,6 +177,12 @@ contractTest("生产 bootstrap 管理角色与普通应用角色严格分离", (
   assert.equal(appEnvironment.COOKIE_SECURE, "false");
   assert.equal(appEnvironment.TELEGRAM_BOT_TOKEN, "");
   assert.equal(appEnvironment.TELEGRAM_CHAT_ID, "");
+  // Compose 只从私有环境按变量名注入可选 AI 配置；fixture 是公开假值，源码中出现其值即表示把秘密写死进部署资产。
+  assert.equal(appEnvironment.DEEPSEEK_API_KEY, fixtureEnvironment.DEEPSEEK_API_KEY);
+  assert.equal(appEnvironment.DEEPSEEK_MODEL, fixtureEnvironment.DEEPSEEK_MODEL);
+  assert.match(source, /DEEPSEEK_API_KEY:\s*["']?\$\{DEEPSEEK_API_KEY:-\}["']?/u);
+  assert.match(source, /DEEPSEEK_MODEL:\s*["']?\$\{DEEPSEEK_MODEL:-deepseek-v4-flash\}["']?/u);
+  assert.doesNotMatch(source, new RegExp(fixtureEnvironment.DEEPSEEK_API_KEY, "u"));
   assert.equal(databaseEnvironment.POSTGRES_DB, fixtureEnvironment.POSTGRES_DB);
   assert.equal(databaseEnvironment.POSTGRES_USER, fixtureEnvironment.POSTGRES_USER);
   assert.equal(databaseEnvironment.POSTGRES_PASSWORD, fixtureEnvironment.POSTGRES_PASSWORD);
@@ -322,6 +329,8 @@ contractTest(".env.example 提供固定版本和全部安全占位而不携带�
     "COOKIE_SECURE",
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_CHAT_ID",
+    "DEEPSEEK_API_KEY",
+    "DEEPSEEK_MODEL",
     "BACKUP_DIR",
     "BACKUP_RETENTION",
     "MAXIMUM_BODY_BYTES",
@@ -336,6 +345,8 @@ contractTest(".env.example 提供固定版本和全部安全占位而不携带�
   assert.equal(example.COOKIE_SECURE, "false");
   assert.equal(example.TELEGRAM_BOT_TOKEN, "");
   assert.equal(example.TELEGRAM_CHAT_ID, "");
+  assert.equal(example.DEEPSEEK_API_KEY, "");
+  assert.equal(example.DEEPSEEK_MODEL, "deepseek-v4-flash");
   assert.notEqual(example.POSTGRES_USER, example.APP_DATABASE_USER);
   assert.notEqual(example.POSTGRES_PASSWORD, example.APP_DATABASE_PASSWORD);
   assert.match(example.POSTGRES_PASSWORD, /replace|替换/i);
@@ -439,6 +450,9 @@ const fixtureEnvironment = {
   COOKIE_SECURE: "false",
   TELEGRAM_BOT_TOKEN: "",
   TELEGRAM_CHAT_ID: "",
+  // 仅用于 Compose 插值的公开假值；不得复制到 YAML 源码或作为真实服务凭据使用。
+  DEEPSEEK_API_KEY: "fixture-deepseek-key-not-secret",
+  DEEPSEEK_MODEL: "deepseek-v4-flash",
   MAXIMUM_BODY_BYTES: "1048576",
   SHUTDOWN_GRACE_MS: "10000",
 };

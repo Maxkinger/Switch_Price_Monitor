@@ -31,6 +31,16 @@ export interface GameNameSuggestionCandidate {
   productType: GameNameProductType;
 }
 
+/**
+ * AI 端点返回的数据已经由服务端过滤为可展示的最小形态。low 置信度必须没有名称，
+ * 浏览器只能把非空名称作为待确认草稿，不能将模型输出解释成已经保存或已经核验的目录词条。
+ */
+export interface AiGameNameSuggestion {
+  candidateKey: string;
+  displayNameZhCn: string | null;
+  confidence: "high" | "medium" | "low";
+}
+
 /** 管理员保存命令明确区分当前游戏覆盖和可复用目录词条，证据链接只允许由服务端最终校验。 */
 export interface SaveGameNameInput {
   displayNameZhCn: string;
@@ -51,7 +61,8 @@ export class GameNameApiError extends Error {
 }
 
 /**
- * 创建四个 Task 4 同源名称端点的无状态客户端。浏览器只携带 HttpOnly Cookie 的 same-origin 凭据，
+ * 创建五个同源名称端点的无状态客户端，覆盖待补充读取、回填、目录建议、AI 建议与人工保存。
+ * 浏览器只携带 HttpOnly Cookie 的 same-origin 凭据，
  * 不读取会话、不访问公开证据站，也不根据官方标题自行翻译或生成中文名称。
  */
 export function createGameNameApiClient(request: typeof fetch = fetch, tracker?: ApiRequestTracker) {
@@ -87,6 +98,11 @@ export function createGameNameApiClient(request: typeof fetch = fetch, tracker?:
     /** 批量建议只包裹候选数组，服务端会逐字段重建并重新计算官方身份键。 */
     async suggestNames(candidates: GameNameSuggestionCandidate[]): Promise<{ suggestions: Array<{ candidateKey: string; displayNameZhCn: string | null }> }> {
       return requestJson("/api/game-names/suggestions", "POST", { candidates });
+    },
+
+    /** AI 建议只读取本批官方公开身份字段，不会保存名称、创建游戏或绕过管理员最终确认。 */
+    async suggestAiNames(candidates: GameNameSuggestionCandidate[]): Promise<{ suggestions: AiGameNameSuggestion[] }> {
+      return requestJson<{ suggestions: AiGameNameSuggestion[] }>("/api/game-names/ai-suggestions", "POST", { candidates });
     },
 
     /** 单条保存对 gameId 做单段编码；中文名、来源与复用选择由服务端再次校验后才可写入。 */

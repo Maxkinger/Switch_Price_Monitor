@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState, type FormEvent } from "react";
 import { createProductApiClient, ProductApiError, type RegionResolutionResponse } from "./api-client";
-import { GameNameApiError, type GameNameSuggestionCandidate } from "./game-name-api-client";
+import { GameNameApiError, type AiGameNameSuggestion, type GameNameSuggestionCandidate } from "./game-name-api-client";
 import {
   candidatePriceLabel,
   applyAutomaticRegionResolutions,
@@ -29,6 +29,7 @@ import type {
 /** 向导仅需要已确认词条的建议读取能力；不能取得管理页的回填或人工保存权限，减少页面可发起的写操作范围。 */
 interface GameNameSuggestionApi {
   suggestNames(candidates: GameNameSuggestionCandidate[]): Promise<{ suggestions: Array<{ candidateKey: string; displayNameZhCn: string | null }> }>;
+  suggestAiNames(candidates: GameNameSuggestionCandidate[]): Promise<{ suggestions: AiGameNameSuggestion[] }>;
 }
 
 /**
@@ -266,6 +267,11 @@ export function SubscriptionWizardPage({ api, gameNameApi, onUnauthorized }: { a
   const regionResolutionGeneration = useRef(0);
   /** 搜索代次同样保护异步目录建议，避免旧搜索迟到后为新结果预填错误中文名。 */
   const nameSuggestionGeneration = useRef(0);
+  /**
+   * AI 批次使用独立递增序号生成不含 URL 的瞬时关联键；序号只存在浏览器内存，
+   * 既避免不同并发批次复用键，也不会把地区商品地址、游戏 ID 或订阅身份交给外部模型。
+   */
+  const aiSuggestionBatchSequence = useRef(0);
   const [resolutions, setResolutions] = useState<RegionResolutionResponse[]>([]);
   // 解析响应可能为空（例如仅启用默认区），因此单独记录已完成核验的默认区候选，不能以结果数组长度判断是否允许提交。
   const [resolvedCandidateKeys, setResolvedCandidateKeys] = useState<string[]>([]);
@@ -273,6 +279,11 @@ export function SubscriptionWizardPage({ api, gameNameApi, onUnauthorized }: { a
   const [expandedRegionalKeys, setExpandedRegionalKeys] = useState<string[]>([]);
   const [manualLinks, setManualLinks] = useState<Record<string, string>>({});
   const [pendingLinkKey, setPendingLinkKey] = useState<string | null>(null);
+  /**
+   * 该集合只记录本次浏览器草稿确实由 AI 写入的候选键，既不保存模型文本也不参与确认载荷。
+   * 管理员编辑输入框会立即移除标记，避免把人工覆写错误标成尚待确认的 AI 建议。
+   */
+  const [aiSuggestedCandidateKeys, setAiSuggestedCandidateKeys] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [results, setResults] = useState<SubscriptionConfirmationResult[]>([]);
 
@@ -325,6 +336,60 @@ export function SubscriptionWizardPage({ api, gameNameApi, onUnauthorized }: { a
     }
   }
 
+  /**
+   * 地区核验成功后，至多向 AI 端点发送十个当前已选的官方候选，符合服务端提示词成本和超时上限。
+   * 代次与候选键双重守卫拒绝旧搜索、已取消选择或管理员已编辑的迟到响应；结果仅写入独立草稿，绝不触发保存。
+   */
+  async function loadAiChineseNameSuggestions(candidates: OfficialProductCandidate[], generation: number): Promise<void> {
+    const requestedCandidates = candidates.slice(0, 10);
+    if (requestedCandidates.length === 0) return;
+    const batchSequence = aiSuggestionBatchSequence.current + 1;
+    aiSuggestionBatchSequence.current = batchSequence;
+    /**
+     * 外发键只表达当前批次内的位置；真实 UI 键保留在本地 Map 中，响应必须先命中该 Map 才能回写草稿。
+     * 使用闭包而非组件全局对象可让多个并发批次各自映射，旧搜索仍由 generation 守卫统一失效。
+     */
+    const uiKeyByAiKey = new Map<string, string>();
+    const aiCandidates = requestedCandidates.map((candidate, index) => {
+      const aiKey = `ai-${batchSequence}-${index + 1}`;
+      uiKeyByAiKey.set(aiKey, candidateKey(candidate));
+      return {
+        candidateKey: aiKey,
+        canonicalTitle: candidate.canonicalTitle,
+        publisher: candidate.publisher,
+        productType: candidate.productType,
+      };
+    });
+    try {
+      const response = await gameNameApi.suggestAiNames(aiCandidates);
+      if (nameSuggestionGeneration.current !== generation) return;
+      setWizard((current) => {
+        if (nameSuggestionGeneration.current !== generation) return current;
+        const requestedKeys = new Set(requestedCandidates.map((candidate) => candidateKey(candidate)));
+        const namesToPrefill = response.suggestions.flatMap((suggestion) => {
+          const uiKey = uiKeyByAiKey.get(suggestion.candidateKey);
+          // 只有键尚不存在才代表管理员从未编辑；空字符串或全空白仍是编辑意图，最终确认会另行 trim 校验，不能被 AI 覆盖。
+          if (
+            uiKey === undefined
+            || !requestedKeys.has(uiKey)
+            || !current.selectedCandidateKeys.includes(uiKey)
+            || current.chineseNameDrafts[uiKey] !== undefined
+            || suggestion.displayNameZhCn === null
+          ) return [];
+          return [{ uiKey, displayNameZhCn: suggestion.displayNameZhCn }];
+        });
+        if (namesToPrefill.length === 0) return current;
+        setAiSuggestedCandidateKeys((keys) => [...new Set([...keys, ...namesToPrefill.map((suggestion) => suggestion.uiKey)])]);
+        return namesToPrefill.reduce((next, suggestion) => setChineseNameDraft(next, suggestion.uiKey, suggestion.displayNameZhCn), current);
+      });
+    } catch (error) {
+      if (nameSuggestionGeneration.current !== generation) return;
+      // 401 必须交由认证壳卸载旧页面；503、超时和网络错误只给出脱敏提示，地区结果和人工确认保持可用。
+      if (error instanceof GameNameApiError && error.status === 401) onUnauthorized();
+      else setNotice(error instanceof GameNameApiError ? error.message : "AI 中文名称建议暂时无法读取，请手动填写。");
+    }
+  }
+
   /** 选择时异步读取精确目录建议；取消选择不删除草稿，以便管理员撤销误点后重新选择时不丢失已输入的中文名。 */
   function handleToggleCandidate(candidate: OfficialProductCandidate): void {
     const key = candidateKey(candidate);
@@ -360,6 +425,7 @@ export function SubscriptionWizardPage({ api, gameNameApi, onUnauthorized }: { a
       setResolvedCandidateKeys([]);
       setManualLinks({});
       setExpandedRegionalKeys([]);
+      setAiSuggestedCandidateKeys([]);
     } catch (error) {
       handleProductError(error, "官方搜索暂时不可用，请稍后重试。");
     } finally {
@@ -386,6 +452,7 @@ export function SubscriptionWizardPage({ api, gameNameApi, onUnauthorized }: { a
       setResolvedCandidateKeys([]);
       setManualLinks({});
       setExpandedRegionalKeys([]);
+      setAiSuggestedCandidateKeys([]);
     } catch (error) {
       handleProductError(error, "官方链接核验未完成，请稍后重试。");
     } finally {
@@ -412,6 +479,7 @@ export function SubscriptionWizardPage({ api, gameNameApi, onUnauthorized }: { a
       setResolvedCandidateKeys(() => selectedCandidates.map((candidate) => candidateKey(candidate)));
       // 自动结果仅来自 Node 服务对保存设置和官方身份的唯一匹配；页面不会自行按名称或价格猜测跨区商品。
       setWizard((current) => applyAutomaticRegionResolutions(current, resolved));
+      void loadAiChineseNameSuggestions(selectedCandidates, nameSuggestionGeneration.current);
     } catch (error) {
       if (regionResolutionGeneration.current !== generation) return;
       handleProductError(error, "跨区匹配未完成，请稍后重试。");
@@ -476,6 +544,7 @@ export function SubscriptionWizardPage({ api, gameNameApi, onUnauthorized }: { a
       setResolvedCandidateKeys(() => selectedCandidates.map((candidate) => candidateKey(candidate)));
       // 自动结果仍只能由 Node 服务最新的官方关系发现写入；函数式更新避免读取过期向导状态。
       setWizard((current) => applyAutomaticRegionResolutions(current, resolved));
+      void loadAiChineseNameSuggestions(selectedCandidates, nameSuggestionGeneration.current);
     } catch (error) {
       if (regionResolutionGeneration.current !== generation) return;
       handleProductError(error, "跨区匹配未完成，请稍后重试。");
@@ -660,7 +729,17 @@ export function SubscriptionWizardPage({ api, gameNameApi, onUnauthorized }: { a
                 const inputId = `chinese-name-${key}`;
                 return <label className="regional-option" key={key} htmlFor={inputId}>
                   <span>{selected.canonicalTitle} 的简体中文显示名称</span>
-                  <input id={inputId} value={wizard.chineseNameDrafts[key] ?? ""} onChange={(event) => setWizard((current) => setChineseNameDraft(current, key, event.target.value))} required />
+                  <input
+                    id={inputId}
+                    value={wizard.chineseNameDrafts[key] ?? ""}
+                    // 任意人工编辑都撤销 AI 来源标记；名称本身仍只保存在按候选键隔离的草稿中，等待最终确认服务重验。
+                    onChange={(event) => {
+                      setAiSuggestedCandidateKeys((keys) => keys.filter((candidateKey) => candidateKey !== key));
+                      setWizard((current) => setChineseNameDraft(current, key, event.target.value));
+                    }}
+                    required
+                  />
+                  {aiSuggestedCandidateKeys.includes(key) ? <small>AI 建议，待确认</small> : null}
                 </label>;
               })}
             </div>

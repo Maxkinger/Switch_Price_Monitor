@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { handleGameNameRoute } from "../src/routes/game-name-routes";
 import { GameNameService } from "../src/services/game-name-service";
+import { AiGameNameSuggestionError } from "../src/services/deepseek-game-name-suggestion-service";
 import type { SessionReader } from "../src/routes/auth-guard";
 import { InMemoryGameNameStore } from "./support/in-memory-business-stores";
 
@@ -82,6 +83,123 @@ describe("简体中文游戏名称管理 HTTP 路由", () => {
         { candidateKey: "browser-key-type-miss", displayNameZhCn: null },
       ],
     });
+  });
+
+  it("目录建议保留包含官方 URL 的既有 UI 关联键，不套用 AI 短键上限", async () => {
+    // 目录端点只在同源浏览器与 Node 间往返真实 UI 键；若误复用 AI 的 64 字符外发上限，正常任天堂商品 URL 会被错误拒绝为 422。
+    const uiCandidateKey = "US:https://www.nintendo.com/us/store/products/overcooked-2-nintendo-switch-2-edition-switch/";
+    const response = await routeRequest(new GameNameService(new InMemoryGameNameStore()), allowedSessions, "/api/game-names/suggestions", "POST", {
+      candidates: [{ ...validAiCandidate(uiCandidateKey), canonicalTitle: "Overcooked! 2 – Nintendo Switch 2 Edition" }],
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ suggestions: [{ candidateKey: uiCandidateKey, displayNameZhCn: null }] });
+  });
+
+  it("AI 建议只返回候选且不写入名称目录或游戏", async () => {
+    /**
+     * AI 适配器在此仅替代不可联网的供应商边界；名称服务和内存仓储保持真实，
+     * 因而若路由错误复用 saveManual、backfill 或目录写事务，待处理游戏状态会直接暴露回归。
+     */
+    const store = new InMemoryGameNameStore();
+    store.seedPending(pendingGame("game-1", "overcooked 2|ghost town games|game"));
+    const names = new GameNameService(store);
+    const backfill = vi.spyOn(names, "backfill");
+    const saveManual = vi.spyOn(names, "saveManual");
+    const ai = {
+      suggest: vi.fn().mockResolvedValue([
+        { candidateKey: "key-1", displayNameZhCn: "胡闹厨房 2", confidence: "high" as const },
+      ]),
+    };
+
+    const response = await routeRequestWithAi("/api/game-names/ai-suggestions", "POST", {
+      candidates: [{ candidateKey: "key-1", canonicalTitle: "Overcooked! 2", publisher: "Ghost Town Games", productType: "game" }],
+    }, allowedSessions, names, ai);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      suggestions: [{ candidateKey: "key-1", displayNameZhCn: "胡闹厨房 2", confidence: "high" }],
+    });
+    // 直接观察两个持久化入口；只读取 pending 列表不足以证明错误调用没有被替身或幂等行为掩盖。
+    expect(backfill).not.toHaveBeenCalled();
+    expect(saveManual).not.toHaveBeenCalled();
+    expect((await names.listPending()).map((game) => game.gameId)).toEqual(["game-1"]);
+  });
+
+  it("AI 未配置时返回固定 503，未认证请求仍为 401", async () => {
+    /**
+     * 未认证优先于配置状态，避免匿名调用者借 503 探测部署是否配置 AI；
+     * 已认证响应也只能含固定业务文案，不能回显 Key、模型或供应商网络错误。
+     */
+    await expect(routeRequestWithAi("/api/game-names/ai-suggestions", "POST", { candidates: [] }, deniedSessions, null)).resolves.toMatchObject({ status: 401 });
+    const response = await routeRequestWithAi("/api/game-names/ai-suggestions", "POST", { candidates: [] }, allowedSessions, null);
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ code: "AI_NOT_CONFIGURED", error: "AI 名称建议尚未配置。" });
+  });
+
+  it.each([1, 10])("AI 建议接受 %i 项边界并保持同数目响应", async (count) => {
+    // 1 和 10 是外部成本合同的闭区间边界；错误的 < 或 <= 会拒绝合法单项/满批请求。
+    const candidates = Array.from({ length: count }, (_, index) => ({
+      candidateKey: `candidate-${index + 1}`,
+      canonicalTitle: `Official title ${index + 1}`,
+      publisher: index % 2 === 0 ? "Nintendo" : null,
+      productType: "game",
+    }));
+    const ai = { suggest: vi.fn(async (input: typeof candidates) => input.map((candidate) => ({ candidateKey: candidate.candidateKey, displayNameZhCn: null, confidence: "low" as const }))) };
+
+    const response = await routeRequestWithAi("/api/game-names/ai-suggestions", "POST", { candidates }, allowedSessions, null, ai);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ suggestions: candidates.map((candidate) => ({ candidateKey: candidate.candidateKey, displayNameZhCn: null, confidence: "low" })) });
+  });
+
+  it.each([
+    { candidates: [], label: "零项" },
+    { candidates: Array.from({ length: 11 }, (_, index) => validAiCandidate(`candidate-${index + 1}`)), label: "十一项" },
+  ])("AI 建议以固定 422 拒绝$label候选数量", async ({ candidates }) => {
+    const ai = { suggest: vi.fn(async () => []) };
+    const response = await routeRequestWithAi("/api/game-names/ai-suggestions", "POST", { candidates }, allowedSessions, null, ai);
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({ code: "VALIDATION_ERROR", error: "AI 名称建议候选数量应为 1 到 10 项。" });
+    expect(ai.suggest).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { candidate: { ...validAiCandidate("duplicate"), candidateKey: "bad\nkey" }, label: "含控制字符的候选键" },
+    { candidate: validAiCandidate("k".repeat(65)), label: "超长候选键" },
+    { candidate: { ...validAiCandidate("candidate"), canonicalTitle: "bad\u0085title" }, label: "含控制字符的官方标题" },
+    { candidate: { ...validAiCandidate("candidate"), canonicalTitle: "题".repeat(201) }, label: "超长官方标题" },
+    { candidate: { ...validAiCandidate("candidate"), publisher: "bad\tpub" }, label: "含控制字符的发行商" },
+    { candidate: { ...validAiCandidate("candidate"), publisher: "社".repeat(121) }, label: "超长发行商" },
+  ])("AI 建议以固定 422 拒绝$label", async ({ candidate }) => {
+    const ai = { suggest: vi.fn(async () => []) };
+    const response = await routeRequestWithAi("/api/game-names/ai-suggestions", "POST", { candidates: [candidate] }, allowedSessions, null, ai);
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(ai.suggest).not.toHaveBeenCalled();
+  });
+
+  it("AI 建议拒绝重复 candidateKey，避免一个响应键关联多份官方身份", async () => {
+    const ai = { suggest: vi.fn(async () => []) };
+    const response = await routeRequestWithAi("/api/game-names/ai-suggestions", "POST", {
+      candidates: [validAiCandidate("duplicate"), { ...validAiCandidate("duplicate"), canonicalTitle: "Different official title" }],
+    }, allowedSessions, null, ai);
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({ code: "VALIDATION_ERROR", error: "名称建议候选标识不能重复。" });
+    expect(ai.suggest).not.toHaveBeenCalled();
+  });
+
+  it.each(["网络失败", "请求超时", "供应商非成功响应"])("配置后的 AI %s 统一映射为固定 503", async () => {
+    // 真实适配器会把网络、AbortSignal 超时与非 2xx 都收敛为同一领域错误；HTTP 层必须保持可重试 503，不能落入通用 500。
+    const ai = { suggest: vi.fn(async () => { throw new AiGameNameSuggestionError("AI 名称建议暂时不可用。"); }) };
+    const response = await routeRequestWithAi("/api/game-names/ai-suggestions", "POST", { candidates: [validAiCandidate("candidate-1")] }, allowedSessions, null, ai);
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ code: "AI_UNAVAILABLE", error: "AI 名称建议暂时不可用。" });
   });
 
   it.each([
@@ -231,6 +349,36 @@ async function routeRequest(
   return response;
 }
 
+/**
+ * AI 路由测试通过与现有 helper 相同的真实 Request 和会话边界调用，只额外传入窄 suggest 依赖。
+ * 断言目标是浏览器可见 HTTP 合同而非替身调用次数，且不会把 Key、模型或网络客户端带入测试请求。
+ */
+async function routeRequestWithAi(
+  path: string,
+  method: string,
+  body: unknown,
+  sessions: SessionReader,
+  service: GameNameService | null,
+  ai?: { suggest(candidates: unknown[]): Promise<unknown> } | null,
+): Promise<Response> {
+  const response = await (handleGameNameRoute as unknown as (
+    request: Request,
+    routeSessions: SessionReader,
+    names: GameNameService,
+    localDevelopmentAuthBypass?: boolean,
+    aiSuggestions?: { suggest(candidates: unknown[]): Promise<unknown> } | null,
+  ) => Promise<Response | null>)(new Request(`http://localhost${path}`, {
+    method,
+    headers: {
+      "content-type": "application/json",
+      ...(sessions === allowedSessions ? { cookie: "session=valid-test-token" } : {}),
+    },
+    body: JSON.stringify(body),
+  }), sessions, service ?? new GameNameService(new InMemoryGameNameStore()), false, ai);
+  if (response === null) throw new Error("AI 名称建议测试请求未被路由处理");
+  return response;
+}
+
 /** 标准人工补丁只含 Task 2 服务允许的四字段，后续用例逐个变异以证明每条边界都有独立保护。 */
 function validManualPatch(): Record<string, unknown> {
   return {
@@ -238,6 +386,16 @@ function validManualPatch(): Record<string, unknown> {
     source: "manual",
     evidenceUrl: null,
     saveToCatalog: true,
+  };
+}
+
+/** AI 路由的最小合法候选遵循批内短键、官方标题、可空发行商与受控商品类型合同，不包含 URL、价格或持久化标识。 */
+function validAiCandidate(candidateKey: string): Record<string, unknown> {
+  return {
+    candidateKey,
+    canonicalTitle: "Overcooked! 2",
+    publisher: "Ghost Town Games",
+    productType: "game",
   };
 }
 

@@ -4,23 +4,26 @@ import { createApiRequestTracker } from "../src/app/api-request-tracker";
 import { GameNameApiError, createGameNameApiClient } from "../src/app/game-name-api-client";
 
 /**
- * 名称客户端测试把 fetch 固定在内存边界，确保四个管理员端点始终使用同源 Cookie，
+ * 名称客户端测试把 fetch 固定在内存边界，确保五个管理员端点始终使用同源 Cookie，
  * 且名称、证据和复用选择只进入受控 JSON；测试不得访问真实数据库、公开证据站或管理员会话。
  */
 describe("game name API client", () => {
-  it("uses the four same-origin game-name contracts without exposing credentials", async () => {
+  it("uses the five same-origin game-name contracts without exposing credentials", async () => {
     const request = vi.fn(async () => Response.json({ games: [], suggestions: [] })) as unknown as typeof fetch;
     const client = createGameNameApiClient(request);
 
     await client.listPending();
     await client.backfill();
     await client.suggestNames([{ candidateKey: "kirby", canonicalTitle: "Kirby", publisher: "Nintendo", productType: "game" }]);
+    await client.suggestAiNames([{ candidateKey: "kirby", canonicalTitle: "Kirby", publisher: "Nintendo", productType: "game" }]);
     await client.saveGameName("game/kirby", { displayNameZhCn: "星之卡比", source: "manual", evidenceUrl: null, saveToCatalog: true });
 
     expect(request).toHaveBeenNthCalledWith(1, "/api/game-names?status=pending", expect.objectContaining({ method: "GET", credentials: "same-origin" }));
     expect(request).toHaveBeenNthCalledWith(2, "/api/game-names/backfill", expect.objectContaining({ method: "POST", credentials: "same-origin" }));
     expect(request).toHaveBeenNthCalledWith(3, "/api/game-names/suggestions", expect.objectContaining({ method: "POST", credentials: "same-origin", body: JSON.stringify({ candidates: [{ candidateKey: "kirby", canonicalTitle: "Kirby", publisher: "Nintendo", productType: "game" }] }) }));
-    expect(request).toHaveBeenNthCalledWith(4, "/api/game-names/game%2Fkirby", expect.objectContaining({ method: "PATCH", credentials: "same-origin", body: JSON.stringify({ displayNameZhCn: "星之卡比", source: "manual", evidenceUrl: null, saveToCatalog: true }) }));
+    // AI 建议仍只发送已公开的官方身份字段；同源 Cookie 由浏览器携带，客户端绝不读取或拼接认证材料。
+    expect(request).toHaveBeenNthCalledWith(4, "/api/game-names/ai-suggestions", expect.objectContaining({ method: "POST", credentials: "same-origin", body: JSON.stringify({ candidates: [{ candidateKey: "kirby", canonicalTitle: "Kirby", publisher: "Nintendo", productType: "game" }] }) }));
+    expect(request).toHaveBeenNthCalledWith(5, "/api/game-names/game%2Fkirby", expect.objectContaining({ method: "PATCH", credentials: "same-origin", body: JSON.stringify({ displayNameZhCn: "星之卡比", source: "manual", evidenceUrl: null, saveToCatalog: true }) }));
   });
 
   it("keeps a validation summary and balances the global request tracker", async () => {

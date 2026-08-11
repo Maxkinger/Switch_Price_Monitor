@@ -38,6 +38,7 @@ import { handleSubscriptionRoute } from "../routes/subscription-routes";
 import { AuthService } from "../services/auth-service";
 import { CollectionService } from "../services/collection-service";
 import { DailyCnyRateService } from "../services/daily-cny-rate-service";
+import { DeepSeekGameNameSuggestionService } from "../services/deepseek-game-name-suggestion-service";
 import { DashboardService } from "../services/dashboard-service";
 import { ExportService } from "../services/export-service";
 import { GameNameService } from "../services/game-name-service";
@@ -108,7 +109,7 @@ export function createServerDependencies(
   config: Pick<
     ServerConfig,
     "cookieSecure" | "telegramBotToken" | "telegramChatId"
-  > & Partial<Pick<ServerConfig, "localDevelopmentAuthBypass">>,
+  > & Partial<Pick<ServerConfig, "localDevelopmentAuthBypass" | "deepSeekApiKey" | "deepSeekModel">>,
 ): NodeServerDependencies {
   if (
     (config.telegramBotToken === undefined)
@@ -175,6 +176,17 @@ export function createServerDependencies(
   const confirmationRepository = new PostgresSubscriptionConfirmationRepository(database);
   // 同一名称服务实例负责确认阶段的精确词条决议；后续名称管理路由也必须复用该实例，避免不同仓储或优先级造成展示状态分叉。
   const gameNames = new GameNameService(new PostgresGameNameRepository(database));
+  /**
+   * AI 只在私有 Key 已存在时装配；Key 始终停留在服务实例和固定 HTTPS 请求头中，绝不进入路由响应、浏览器状态或日志。
+   * 使用既有出站网络快照可沿用受控代理策略，但 AI 建议服务没有仓储依赖，因此无论成功、失败或未配置都不会写入游戏或目录。
+   */
+  const aiGameNameSuggestions = config.deepSeekApiKey === undefined
+    ? null
+    : new DeepSeekGameNameSuggestionService(
+      config.deepSeekApiKey,
+      config.deepSeekModel ?? "deepseek-v4-flash",
+      outboundFetch,
+    );
   const confirmation = new SubscriptionConfirmationService(
     confirmationRepository,
     officialPages,
@@ -214,10 +226,17 @@ export function createServerDependencies(
       ),
       (request) => handleDashboardRoute(request, routeSessions, dashboard),
       /**
-       * 名称管理复用确认流程同一服务实例，但会直接校验真实 AuthService，而不是 routeSessions 的本机开发旁路。
-       * 批量回填和可复用词条写入会持久改变多个当前/未来游戏的展示名称，必须在任何环境都要求有效 Cookie 会话。
+       * 名称管理在正式环境继续直接校验真实 AuthService；仅已验证的本机旁路配置才把同一受限标志传给路由。
+       * 该标志与 Node 入口的 127.0.0.1 强制监听成对存在，使本机回填/更正可测试，同时不允许 Docker、NAS 或请求参数继承匿名写权限。
        */
-      (request) => handleGameNameRoute(request, auth, gameNames),
+      (request) => handleGameNameRoute(
+        request,
+        auth,
+        gameNames,
+        // 仅显式 true 可触发回环开发旁路；生产仍把真实 AuthService 交给名称路由完成严格 session 验证。
+        config.localDevelopmentAuthBypass === true,
+        aiGameNameSuggestions,
+      ),
       (request) => handleManualRefreshRoute(request, routeSessions, refresh),
       (request) => handleHistoryRoute(request, routeSessions, history),
       (request) => handleExportRoute(request, routeSessions, exports),

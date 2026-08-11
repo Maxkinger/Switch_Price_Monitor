@@ -2,10 +2,34 @@ import { describe, expect, it } from "vitest";
 import { readServerConfig } from "../src/server/config";
 
 /**
+ * DeepSeek 配置测试共用的最小合法环境；只包含启动服务所必需的公开假值，
+ * 防止测试意外读取开发机的真实环境变量或把真实 API Key 写入断言输出。
+ */
+function baseEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return {
+    DATABASE_URL: "postgres://example.invalid/switch",
+    COOKIE_SECURE: "false",
+    ...overrides,
+  };
+}
+
+/**
  * Node 配置测试只传入显式白名单环境，不读取测试进程真实环境。
  * 这样数据库连接串和 Telegram 凭据既不会进入快照，也不会因开发机环境差异改变断言。
  */
 describe("Node 服务配置", () => {
+  it("只在存在非空 Key 时暴露 DeepSeek 配置，模型缺省为 flash", () => {
+    // 若可选功能在 Key 缺失时仍暴露模型或 Key，后续装配可能错误启用外部调用；模型白名单也不能让任意环境文本传到供应商。
+    expect(readServerConfig(baseEnvironment({ DEEPSEEK_API_KEY: "test-key" }))).toMatchObject({
+      deepSeekApiKey: "test-key",
+      deepSeekModel: "deepseek-v4-flash",
+    });
+    expect(readServerConfig(baseEnvironment({ DEEPSEEK_API_KEY: "" })))
+      .not.toHaveProperty("deepSeekApiKey");
+    expect(() => readServerConfig(baseEnvironment({ DEEPSEEK_MODEL: "arbitrary" })))
+      .toThrow("DEEPSEEK_MODEL_INVALID");
+  });
+
   it("解析显式 LAN HTTP 配置并为非秘密运行参数提供安全默认值", () => {
     const config = readServerConfig({
       DATABASE_URL: "postgres://example.invalid/switch",

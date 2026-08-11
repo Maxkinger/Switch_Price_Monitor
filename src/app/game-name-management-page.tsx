@@ -1,17 +1,20 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   GameNameApiError,
+  type AiGameNameSuggestion,
   type GameNameBackfillResponse,
   type GameNameProductType,
+  type GameNameSuggestionCandidate,
   type PendingGameNameDto,
   type SaveGameNameInput,
 } from "./game-name-api-client";
 
-/** 管理页只取得队列、回填和单条写入能力；建议端点留给向导，不能把 Task 7 状态混入当前页面。 */
+/** 管理页只取得队列、回填、单条写入和按需建议能力；AI 端点只返回草稿，不能扩大保存合同。 */
 interface GameNameManagementApi {
   listPending(): Promise<{ games: PendingGameNameDto[] }>;
   backfill(): Promise<GameNameBackfillResponse>;
+  suggestAiNames(candidates: GameNameSuggestionCandidate[]): Promise<{ suggestions: AiGameNameSuggestion[] }>;
   saveGameName(gameId: string, input: SaveGameNameInput): Promise<unknown>;
 }
 
@@ -37,6 +40,15 @@ export function GameNameManagementPage({ api, onUnauthorized }: { api: GameNameM
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [catalogGameIds, setCatalogGameIds] = useState<Set<string>>(new Set());
   const [savingGameIds, setSavingGameIds] = useState<Set<string>>(new Set());
+  // AI 请求按 gameId 独立追踪，避免一行网络较慢时冻结管理员对其他游戏的核对或保存操作。
+  const [suggestingGameIds, setSuggestingGameIds] = useState<Set<string>>(new Set());
+  // 标记仅表示当前输入值来自尚未确认的 AI 草稿；人工再次编辑即撤销，绝不暗示数据已经写入。
+  const [aiSuggestedGameIds, setAiSuggestedGameIds] = useState<Set<string>>(new Set());
+  /**
+   * 仅记录本次页面会话内被管理员碰过的草稿；ref 让迟到请求在结算时读取最新意图，
+   * 从而区分“初始本为空，可预填”和“原有名称被明确清空，必须保留空值”两种相同文本状态。
+   */
+  const editedDraftGameIds = useRef<Set<string>>(new Set());
   const [isBackfilling, setIsBackfilling] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -110,6 +122,55 @@ export function GameNameManagementPage({ api, onUnauthorized }: { api: GameNameM
     }
   }
 
+  /**
+   * 向 AI 端点仅发送当前行的公开官方身份，并以 gameId 关联回应，避免标题重复时错填另一条待处理游戏。
+   * 迟到响应只能覆盖从未被编辑的初始 legacyNameZh 或初始空草稿；管理员主动清空也属于编辑意图。
+   * 此操作只更新 React 草稿和“待确认”标识，从不调用 saveGameName，因此 AI 永远不能绕过管理员最终保存。
+   */
+  async function suggestAiName(game: PendingGameNameDto): Promise<void> {
+    setSuggestingGameIds((current) => new Set(current).add(game.gameId));
+    setNotice(null);
+    try {
+      const response = await api.suggestAiNames([{
+        candidateKey: game.gameId,
+        canonicalTitle: game.officialTitle,
+        publisher: game.publisher,
+        productType: game.productType,
+      }]);
+      const suggestion = response.suggestions.find((entry) => entry.candidateKey === game.gameId)?.displayNameZhCn;
+      if (suggestion === null || suggestion === undefined) return;
+      setDrafts((current) => {
+        const draft = current[game.gameId] ?? "";
+        // ref 记录点击后发生的编辑，避免延迟网络响应把管理员主动清空的旧名称误判为“初始为空”。
+        if (editedDraftGameIds.current.has(game.gameId) || (draft !== game.legacyNameZh && draft !== "")) return current;
+        setAiSuggestedGameIds((ids) => new Set(ids).add(game.gameId));
+        return { ...current, [game.gameId]: suggestion };
+      });
+    } catch (error) {
+      // 认证失效必须让外层壳卸载旧管理页；503、超时与网络错误只显示服务端脱敏摘要，按钮随后可重试。
+      if (error instanceof GameNameApiError && error.status === 401) onUnauthorized();
+      else setNotice(error instanceof GameNameApiError ? error.message : "AI 名称建议暂时无法读取，请稍后重试。");
+    } finally {
+      setSuggestingGameIds((current) => {
+        const next = new Set(current);
+        next.delete(game.gameId);
+        return next;
+      });
+    }
+  }
+
+  /** 人工输入立即记为编辑意图并取消 AI 来源标记，确保清空与普通修改都不会被迟到模型结果覆盖。 */
+  function updateDraft(gameId: string, value: string): void {
+    editedDraftGameIds.current.add(gameId);
+    setDrafts((current) => ({ ...current, [gameId]: value }));
+    setAiSuggestedGameIds((current) => {
+      if (!current.has(gameId)) return current;
+      const next = new Set(current);
+      next.delete(gameId);
+      return next;
+    });
+  }
+
   /** 复用选择按 gameId 独立保存；它只影响下一次该行提交，不会批量提升其他历史候选。 */
   function toggleCatalog(gameId: string): void {
     setCatalogGameIds((current) => {
@@ -134,8 +195,9 @@ export function GameNameManagementPage({ api, onUnauthorized }: { api: GameNameM
       <div className="game-name-list">{games.map((game) => <article className="game-name-card" key={game.gameId}>
         <header><div><h3>{game.officialTitle}</h3><p><span>{game.publisher ?? "发行商未提供"}</span><span>{productTypeLabels[game.productType]}</span></p></div><small>{game.identityKey === null ? "缺少精确官方身份" : "官方身份已核对"}</small></header>
         <div className="game-name-card__form">
-          <label><span>简体中文显示名称</span><input value={drafts[game.gameId] ?? ""} onChange={(event) => setDrafts((current) => ({ ...current, [game.gameId]: event.target.value }))} /></label>
+          <label><span>简体中文显示名称</span><input value={drafts[game.gameId] ?? ""} onChange={(event) => updateDraft(game.gameId, event.target.value)} />{aiSuggestedGameIds.has(game.gameId) ? <small className="game-name-ai-marker">AI 建议，待确认</small> : null}</label>
           <label className="game-name-catalog-choice"><input type="checkbox" checked={catalogGameIds.has(game.gameId)} onChange={() => toggleCatalog(game.gameId)} />保存为可复用词条</label>
+          <button className="secondary-button game-name-ai-button" type="button" disabled={suggestingGameIds.has(game.gameId)} onClick={() => void suggestAiName(game)}>{suggestingGameIds.has(game.gameId) ? "生成中…" : "生成 AI 建议"}</button>
           <button className="primary-button" type="button" disabled={savingGameIds.has(game.gameId) || game.identityKey === null} onClick={() => void saveGameName(game.gameId)}>{savingGameIds.has(game.gameId) ? "保存中…" : "保存中文名称"}</button>
         </div>
       </article>)}</div>

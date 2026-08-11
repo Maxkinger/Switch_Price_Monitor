@@ -21,12 +21,16 @@ services:
         # Node 只在项目数据库可接受连接后启动；应用自身仍负责迁移锁、校验和与失败退出。
         condition: service_healthy
     environment:
-      # 所有运行秘密只从 NAS 未提交 `.env` 注入；变量缺失时 Compose 在容器创建前失败，不能使用示例默认密码。
+      # 数据库等必填秘密只从 NAS 未提交 `.env` 注入；必填项缺失时 Compose 在容器创建前失败，不能使用示例默认密码。
       PORT: "${PORT:-3000}"
       DATABASE_URL: "${DATABASE_URL:?DATABASE_URL_REQUIRED}"
       COOKIE_SECURE: "${COOKIE_SECURE:?COOKIE_SECURE_REQUIRED}"
       TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
       TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+      # AI Key 仅按变量名从权限受控的私有 .env 传给 app 进程，空值保留手工名称流程；Compose、健康检查和日志不得打印或回显该秘密。
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      # 模型仅允许私有 .env 覆盖受控默认值；它不是秘密，但固定默认可防止生产请求漂移到未批准模型。
+      DEEPSEEK_MODEL: "${DEEPSEEK_MODEL:-deepseek-v4-flash}"
       MAXIMUM_BODY_BYTES: "${MAXIMUM_BODY_BYTES:-1048576}"
       SHUTDOWN_GRACE_MS: "${SHUTDOWN_GRACE_MS:-10000}"
     ports:

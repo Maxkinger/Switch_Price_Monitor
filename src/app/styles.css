@@ -874,10 +874,14 @@ button:focus-visible {
 .game-name-card header p span, .game-name-card header small { border-radius: 999px; padding: 5px 8px; color: #735848; background: #f7e5d4; font-size: 12px; }
 .game-name-card header small { flex: 0 0 auto; color: #765f51; background: #f2e8df; }
 /* 每行名称草稿、复用选择和保存动作分列；窄屏再降为单列，避免中文长名称挤压原生复选框。 */
-.game-name-card__form { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: end; gap: 12px; margin-top: 17px; }
+.game-name-card__form { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: end; gap: 12px; margin-top: 17px; }
 .game-name-card__form > label:first-child { display: grid; gap: 7px; color: #645248; font-size: 14px; font-weight: 700; }
 .game-name-catalog-choice { display: flex; align-items: center; gap: 7px; min-height: 43px; color: #5e493d; font-size: 14px; }
 .game-name-catalog-choice input { min-width: auto; padding: 0; accent-color: #a7562b; }
+/* AI 标记贴近草稿输入且使用非成功色，强调模型文本仍需管理员确认、不会改变保存或目录复用的业务状态。 */
+.game-name-ai-marker { color: #7a5a43; font-size: 12px; font-weight: 700; }
+/* 建议按钮沿用次要操作视觉层级，避免与唯一会写入数据库的“保存中文名称”争夺注意力。 */
+.game-name-ai-button { white-space: nowrap; }
 
 /* 详情补全按服务端三态分组：自动结果仅作只读草稿提示，候选与链接操作不会在视觉上混为一条不透明状态。 */
 .missing-region-option {

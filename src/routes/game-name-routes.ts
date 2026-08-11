@@ -6,6 +6,10 @@ import {
   GameNameValidationError,
   type SaveManualGameNameInput,
 } from "../services/game-name-service";
+import {
+  AiGameNameSuggestionError,
+  type DeepSeekGameNameSuggestionService,
+} from "../services/deepseek-game-name-suggestion-service";
 import { gameNameIdentityKey } from "../shared/game-name-identity";
 import { requireAdmin, type SessionReader } from "./auth-guard";
 
@@ -28,23 +32,38 @@ type GameNameRouteService = Pick<
   "listPending" | "backfill" | "resolveForConfirmedGame" | "saveManual"
 >;
 
+/**
+ * AI 路由只依赖 Task 1 服务公开的 suggest 能力，不取得 Key、模型、fetch 或名称仓储；
+ * 这个窄接口保证同源 HTTP 层只能转发已收窄的公开候选，不能借 AI 建议触发持久化或泄漏供应商认证材料。
+ */
+type GameNameAiSuggestionService = Pick<DeepSeekGameNameSuggestionService, "suggest">;
+
 type GameNameAction =
   | { kind: "list" }
   | { kind: "backfill" }
   | { kind: "suggestions" }
+  | { kind: "ai-suggestions" }
   | { kind: "save"; gameId: string };
 
 const gameNameSources = ["publisher", "mainland-platform", "hk-reference", "manual"] as const;
 const productTypes: readonly ProductType[] = ["game", "upgrade-pack", "dlc", "season-pass", "bundle", "other"];
+const MAXIMUM_AI_CANDIDATES = 10;
+const MAXIMUM_AI_CANDIDATE_KEY_LENGTH = 64;
+const MAXIMUM_UI_CANDIDATE_KEY_LENGTH = 2_048;
+const MAXIMUM_OFFICIAL_TITLE_LENGTH = 200;
+const MAXIMUM_PUBLISHER_LENGTH = 120;
+const CONTROL_CHARACTER = /[\u0000-\u001F\u007F-\u009F]/u;
 
 /**
- * 受认证的名称管理入口只匹配四条精确 API 合同，并在认证通过后才解析管理员 JSON 或访问存储。
- * 建议端点只读取已确认目录作为 UI 预填；最终订阅创建仍由确认服务重新验证官方身份，浏览器候选绝不形成持久化身份。
+ * 受认证的名称管理入口只匹配五条精确 API 合同，并在认证通过后才解析管理员 JSON 或访问存储。
+ * 两类建议端点只读：目录建议只查询已确认词条，AI 建议仅发送公开候选给可选服务；最终订阅创建仍重新验证官方身份，浏览器候选绝不形成持久化身份。
  */
 export async function handleGameNameRoute(
   request: Request,
   sessions: SessionReader,
   service: GameNameRouteService,
+  localDevelopmentAuthBypass = false,
+  aiSuggestions: GameNameAiSuggestionService | null = null,
 ): Promise<Response | null> {
   const url = new URL(request.url);
   const action = readAction(request.method, url.pathname);
@@ -52,10 +71,10 @@ export async function handleGameNameRoute(
 
   try {
     /**
-     * 共享 requireAdmin 当前保留项目级本机开发旁路；名称管理另做真实 Cookie/Session 校验。
-     * 批量回填会修改多个游戏，人工名称还可能写入未来复用目录，均属高影响操作，不能继承其他开发期路由的匿名直入。
+     * 正式运行始终同时经过共享守卫和真实 Cookie/Session 校验：回填会修改多个游戏，人工保存还可建立未来复用词条。
+     * 唯一例外是启动配置已显式开启的本机开发旁路；进程入口会把该模式强制绑定到 127.0.0.1，因而不能由请求、Cookie 或浏览器地址伪造为局域网匿名写入。
      */
-    if (!(await requireAdmin(request, sessions)) || !(await requireGameNameAdmin(request, sessions))) {
+    if (!(await requireAdmin(request, sessions)) || (!localDevelopmentAuthBypass && !(await requireGameNameAdmin(request, sessions)))) {
       return Response.json({ code: "UNAUTHORIZED", error: "请先登录。" }, { status: 401 });
     }
     if (action.kind === "list") {
@@ -81,6 +100,17 @@ export async function handleGameNameRoute(
       }));
       return Response.json({ suggestions });
     }
+    if (action.kind === "ai-suggestions") {
+      /**
+       * 未配置 Key 时不解析正文、更不创建外部客户端；固定 503 让已认证管理员知晓可选能力不可用，
+       * 同时避免响应泄漏 Key 是否为空白、模型配置或供应商网络细节。认证已在此前完成，匿名请求仍固定 401。
+       */
+      if (aiSuggestions === null) {
+        return Response.json({ code: "AI_NOT_CONFIGURED", error: "AI 名称建议尚未配置。" }, { status: 503 });
+      }
+      // AI 专用收窄只允许短批内键、标题、发行商与类型，绝无 URL、价格、会话或其他运行时字段。
+      return Response.json({ suggestions: await aiSuggestions.suggest(readAiSuggestionCandidates(await readJson(request))) });
+    }
 
     const input = readManualInput(await readJson(request));
     // 单游戏写入可能同时建立未来复用词条，严格认证和字段收窄必须先于任何数据库事务。
@@ -90,19 +120,22 @@ export async function handleGameNameRoute(
   } catch (error) {
     const notFound = error instanceof GameNameNotFoundError;
     const validation = error instanceof GameNameRequestError || error instanceof GameNameValidationError;
+    const aiUnavailable = error instanceof AiGameNameSuggestionError;
     return Response.json({
-      code: notFound ? "NOT_FOUND" : validation ? "VALIDATION_ERROR" : "INTERNAL_ERROR",
+      code: notFound ? "NOT_FOUND" : validation ? "VALIDATION_ERROR" : aiUnavailable ? "AI_UNAVAILABLE" : "INTERNAL_ERROR",
       // 只有已分类的领域/请求错误可向管理员显示；SQL、数据库 URL、外部网页、堆栈和未知 message 一律替换。
       error: notFound || validation
         ? error.message
-        : "游戏名称暂时无法处理，请稍后重试。",
-    }, { status: notFound ? 404 : validation ? 422 : 500 });
+        : aiUnavailable
+          ? "AI 名称建议暂时不可用。"
+          : "游戏名称暂时无法处理，请稍后重试。",
+    }, { status: notFound ? 404 : validation ? 422 : aiUnavailable ? 503 : 500 });
   }
 }
 
 /**
  * 名称管理专属严格守卫只提取精确 session Cookie，并始终调用注入的真实会话读取器。
- * 空 Cookie 直接拒绝，既避免无意义摘要查询，也防止 localDevelopmentAuthBypass 的“任意 token 为真”语义被这组高影响端点继承。
+ * 空 Cookie 直接拒绝，既避免无意义摘要查询，也保证正式、NAS 与未开启本机旁路的进程不能由空请求取得名称写权限。
  */
 async function requireGameNameAdmin(request: Request, sessions: SessionReader): Promise<boolean> {
   const cookieHeader = request.headers.get("cookie");
@@ -120,6 +153,7 @@ function readAction(method: string, pathname: string): GameNameAction | null {
   if (method === "GET" && pathname === "/api/game-names") return { kind: "list" };
   if (method === "POST" && pathname === "/api/game-names/backfill") return { kind: "backfill" };
   if (method === "POST" && pathname === "/api/game-names/suggestions") return { kind: "suggestions" };
+  if (method === "POST" && pathname === "/api/game-names/ai-suggestions") return { kind: "ai-suggestions" };
   const match = method === "PATCH" ? pathname.match(/^\/api\/game-names\/([^/]+)$/u) : null;
   if (!match) return null;
   try {
@@ -148,20 +182,41 @@ async function readJson(request: Request): Promise<unknown> {
 }
 
 /** 建议载荷只接受普通顶层对象与候选数组；数组元素逐字段重建，未知浏览器字段不会穿透服务边界。 */
-function readSuggestionCandidates(value: unknown): NameSuggestionCandidate[] {
+function readSuggestionCandidates(value: unknown, maximumCandidateKeyLength = MAXIMUM_UI_CANDIDATE_KEY_LENGTH): NameSuggestionCandidate[] {
   if (!isRecord(value) || !Array.isArray(value.candidates)) {
     throw new GameNameRequestError("名称建议请求无效。");
   }
-  return value.candidates.map((candidate) => readSuggestionCandidate(candidate));
+  const candidates = value.candidates.map((candidate) => readSuggestionCandidate(candidate, maximumCandidateKeyLength));
+  if (new Set(candidates.map((candidate) => candidate.candidateKey)).size !== candidates.length) {
+    throw new GameNameRequestError("名称建议候选标识不能重复。");
+  }
+  return candidates;
 }
 
-/** 标题、发行商与类型必须完整，才能计算与 PostgreSQL normalized_name 相同的精确键；candidateKey 仅用于返回顺序关联。 */
-function readSuggestionCandidate(value: unknown): NameSuggestionCandidate {
+/**
+ * AI 外部调用只接受 1..10 项；数量在路由边界先于适配器和网络校验，确保非法管理员请求稳定返回 422，
+ * 而适配器抛出的同名领域错误只表示已经配置后的网络、超时或供应商不可用状态。
+ */
+function readAiSuggestionCandidates(value: unknown): NameSuggestionCandidate[] {
+  const candidates = readSuggestionCandidates(value, MAXIMUM_AI_CANDIDATE_KEY_LENGTH);
+  if (candidates.length < 1 || candidates.length > MAXIMUM_AI_CANDIDATES) {
+    throw new GameNameRequestError("AI 名称建议候选数量应为 1 到 10 项。");
+  }
+  return candidates;
+}
+
+/**
+ * 标题、发行商与类型必须完整，才能计算与 PostgreSQL normalized_name 相同的精确键；candidateKey 仅用于返回顺序关联。
+ * AI 批内键限制为 64 字符；同源目录建议保留既有 `region:productUrl` UI 键但限制为 2048 字符，绝不会发给外部模型。
+ * 官方标题允许至 200 字符以容纳版本后缀，发行商与现有中文名称合同同为 120 字符；
+ * 三类文本都拒绝 C0/C1 控制字符，避免放大提示词、日志注入或让不可见差异破坏精确身份关联。
+ */
+function readSuggestionCandidate(value: unknown, maximumCandidateKeyLength: number): NameSuggestionCandidate {
   if (!isRecord(value)) throw new GameNameRequestError("名称建议候选无效。");
   return {
-    candidateKey: readNonEmptyString(value.candidateKey, "名称建议候选标识无效。"),
-    canonicalTitle: readNonEmptyString(value.canonicalTitle, "名称建议官方标题无效。"),
-    publisher: value.publisher === null ? null : readNonEmptyString(value.publisher, "名称建议发行商无效。"),
+    candidateKey: readBoundedText(value.candidateKey, maximumCandidateKeyLength, "名称建议候选标识无效。"),
+    canonicalTitle: readBoundedText(value.canonicalTitle, MAXIMUM_OFFICIAL_TITLE_LENGTH, "名称建议官方标题无效。"),
+    publisher: value.publisher === null ? null : readBoundedText(value.publisher, MAXIMUM_PUBLISHER_LENGTH, "名称建议发行商无效。"),
     productType: readProductType(value.productType),
   };
 }
@@ -227,10 +282,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** 浏览器关联键和官方身份文本拒绝空白，但保留原值供精确规范化或 UI 关联，绝不进行翻译或模糊别名替换。 */
-function readNonEmptyString(value: unknown, message: string): string {
-  if (typeof value !== "string" || value.trim().length === 0) throw new GameNameRequestError(message);
-  return value;
+/** 建议字段按修剪后的领域上限收窄并拒绝全部 C0/C1 控制字符；返回修剪文本，使身份计算与外部 prompt 不携带无意义边缘空白。 */
+function readBoundedText(value: unknown, maximumLength: number, message: string): string {
+  if (typeof value !== "string" || CONTROL_CHARACTER.test(value)) throw new GameNameRequestError(message);
+  const normalized = value.trim();
+  if (normalized.length < 1 || normalized.length > maximumLength) throw new GameNameRequestError(message);
+  return normalized;
 }
 
 /** 路由专属输入错误只用于不可信 JSON 与查询参数，不能包装数据库或外部提供方异常。 */

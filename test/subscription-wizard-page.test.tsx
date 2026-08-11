@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { type RegionResolutionResponse, createProductApiClient } from "../src/app/api-client";
-import { type GameNameSuggestionCandidate, createGameNameApiClient } from "../src/app/game-name-api-client";
+import { GameNameApiError, type AiGameNameSuggestion, type GameNameSuggestionCandidate, createGameNameApiClient } from "../src/app/game-name-api-client";
 import { SubscriptionWizardPage } from "../src/app/subscription-wizard-page";
 import type { OfficialProductCandidate } from "../src/shared/domain";
 
@@ -59,9 +59,15 @@ function wizardApi(resolutions: RegionResolutionResponse[]): ReturnType<typeof c
   };
 }
 
-/** 名称建议客户端只暴露向导所需方法；它返回的空值必须保留为必填输入，不能被浏览器自行翻译或猜测。 */
-function nameSuggestionApi(suggestions: Array<{ candidateKey: string; displayNameZhCn: string | null }>): Pick<ReturnType<typeof createGameNameApiClient>, "suggestNames"> {
-  return { suggestNames: vi.fn(async (_candidates: GameNameSuggestionCandidate[]) => ({ suggestions })) };
+/** 名称建议客户端只暴露向导所需的两类只读建议；空值必须保留为必填输入，不能由浏览器自行翻译或猜测。 */
+function nameSuggestionApi(
+  suggestions: Array<{ candidateKey: string; displayNameZhCn: string | null }>,
+  aiSuggestions: AiGameNameSuggestion[] = [],
+): Pick<ReturnType<typeof createGameNameApiClient>, "suggestNames" | "suggestAiNames"> {
+  return {
+    suggestNames: vi.fn(async (_candidates: GameNameSuggestionCandidate[]) => ({ suggestions })),
+    suggestAiNames: vi.fn(async (_candidates: GameNameSuggestionCandidate[]) => ({ suggestions: aiSuggestions })),
+  };
 }
 
 describe("添加订阅向导的跨区候选折叠", () => {
@@ -129,6 +135,186 @@ describe("添加订阅向导的跨区候选折叠", () => {
       expect.objectContaining({ selected: usCandidate, displayNameZhCn: "胡闹厨房 2" }),
       expect.objectContaining({ selected: kirbyCandidate, displayNameZhCn: "星之卡比 探索发现" }),
     ]);
+  });
+
+  it("prefills AI suggestions only after regional verification and never replaces a later administrator draft", async () => {
+    // 这条回归会在 AI 请求错误地发生在候选点击时、覆盖非空人工草稿或把 AI 文本当作已确认名称时失败。
+    const user = userEvent.setup();
+    let resolveLateAiResponse: (value: { suggestions: AiGameNameSuggestion[] }) => void = () => undefined;
+    let aiResponseConsumed = false;
+    const lateAiResponse = new Promise<{ suggestions: AiGameNameSuggestion[] }>((resolve) => { resolveLateAiResponse = resolve; });
+    const api = wizardApi([]);
+    const names = nameSuggestionApi([]);
+    let temporaryCandidateKey = "";
+    vi.mocked(names.suggestAiNames).mockImplementation(async (candidates) => {
+      temporaryCandidateKey = candidates[0]?.candidateKey ?? "";
+      const response = await lateAiResponse;
+      // 只有 mock 已继续执行到返回点，后续断言才会覆盖 React 消费迟到响应后的真实回写分支。
+      aiResponseConsumed = true;
+      return response;
+    });
+
+    render(<SubscriptionWizardPage api={api} gameNameApi={names} onUnauthorized={vi.fn()} />);
+
+    await user.type(screen.getByRole("textbox", { name: "游戏名称" }), "Overcooked! 2");
+    await user.click(screen.getByRole("button", { name: "搜索官方商品" }));
+    await user.click(await screen.findByRole("button", { name: /Overcooked! 2 – Nintendo Switch 2 Edition/ }));
+    expect(names.suggestAiNames).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "核验其他地区" }));
+    await waitFor(() => expect(names.suggestAiNames).toHaveBeenCalledTimes(1));
+    const aiRequestBody = JSON.stringify(vi.mocked(names.suggestAiNames).mock.calls[0]?.[0]);
+    // AI 批次键必须由浏览器本地生成且不含官方 URL；否则服务端即使丢弃额外字段，也会把真实商品地址作为合法 candidateKey 发给供应商。
+    expect(temporaryCandidateKey).not.toBe("");
+    expect(temporaryCandidateKey).not.toContain(usCandidate.productUrl);
+    expect(aiRequestBody).not.toContain(usCandidate.productUrl);
+
+    const input = screen.getByRole("textbox", { name: `${usCandidate.canonicalTitle} 的简体中文显示名称` });
+    await user.type(input, "管理员名称");
+    resolveLateAiResponse({ suggestions: [{ candidateKey: temporaryCandidateKey, displayNameZhCn: "AI 建议名", confidence: "high" }] });
+
+    await waitFor(() => expect(aiResponseConsumed).toBe(true));
+    await waitFor(() => expect((screen.getByRole("textbox", { name: `${usCandidate.canonicalTitle} 的简体中文显示名称` }) as HTMLInputElement).value).toBe("管理员名称"));
+    expect(screen.queryByText("AI 建议，待确认")).toBeNull();
+  });
+
+  it("does not replace an administrator-edited whitespace draft when a late AI response settles", async () => {
+    // 最终确认会单独修剪并校验空白，但编辑意图不能被体验性 AI 请求吞掉；移除“草稿存在”保护会让该用例把空白改成 AI 名称。
+    const user = userEvent.setup();
+    let resolveLateAiResponse: (value: { suggestions: AiGameNameSuggestion[] }) => void = () => undefined;
+    let aiResponseConsumed = false;
+    const lateAiResponse = new Promise<{ suggestions: AiGameNameSuggestion[] }>((resolve) => { resolveLateAiResponse = resolve; });
+    const api = wizardApi([]);
+    const names = nameSuggestionApi([]);
+    let temporaryCandidateKey = "";
+    vi.mocked(names.suggestAiNames).mockImplementation(async (candidates) => {
+      temporaryCandidateKey = candidates[0]?.candidateKey ?? "";
+      const response = await lateAiResponse;
+      aiResponseConsumed = true;
+      return response;
+    });
+
+    render(<SubscriptionWizardPage api={api} gameNameApi={names} onUnauthorized={vi.fn()} />);
+    await user.type(screen.getByRole("textbox", { name: "游戏名称" }), "Overcooked! 2");
+    await user.click(screen.getByRole("button", { name: "搜索官方商品" }));
+    await user.click(await screen.findByRole("button", { name: /Overcooked! 2 – Nintendo Switch 2 Edition/ }));
+    await user.click(screen.getByRole("button", { name: "核验其他地区" }));
+
+    const input = screen.getByRole("textbox", { name: `${usCandidate.canonicalTitle} 的简体中文显示名称` });
+    await user.type(input, "   ");
+    resolveLateAiResponse({ suggestions: [{ candidateKey: temporaryCandidateKey, displayNameZhCn: "AI 建议名", confidence: "high" }] });
+
+    await waitFor(() => expect(aiResponseConsumed).toBe(true));
+    await waitFor(() => expect((input as HTMLInputElement).value).toBe("   "));
+    expect(screen.queryByText("AI 建议，待确认")).toBeNull();
+  });
+
+  it("marks an AI-filled empty draft as pending confirmation", async () => {
+    // 标识必须源自实际 AI 写入，而不是接口成功、目录建议或名称非空本身，防止管理员误把其他来源当作模型文本。
+    const user = userEvent.setup();
+    const api = wizardApi([]);
+    const names = nameSuggestionApi([]);
+    vi.mocked(names.suggestAiNames).mockImplementation(async (candidates) => ({
+      suggestions: [{ candidateKey: candidates[0]?.candidateKey ?? "missing", displayNameZhCn: "AI 建议名", confidence: "high" }],
+    }));
+
+    render(<SubscriptionWizardPage api={api} gameNameApi={names} onUnauthorized={vi.fn()} />);
+    await user.type(screen.getByRole("textbox", { name: "游戏名称" }), "Overcooked! 2");
+    await user.click(screen.getByRole("button", { name: "搜索官方商品" }));
+    await user.click(await screen.findByRole("button", { name: /Overcooked! 2 – Nintendo Switch 2 Edition/ }));
+    await user.click(screen.getByRole("button", { name: "核验其他地区" }));
+
+    expect(await screen.findByDisplayValue("AI 建议名")).toBeTruthy();
+    expect(screen.getByText("AI 建议，待确认")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "确认订阅" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("maps multiple URL-free AI batch keys back to their independent UI drafts", async () => {
+    const user = userEvent.setup();
+    const api = wizardApi([]);
+    vi.mocked(api.searchProducts).mockResolvedValue({ status: "available", candidates: [usCandidate, kirbyCandidate] });
+    const names = nameSuggestionApi([]);
+    vi.mocked(names.suggestAiNames).mockImplementation(async (candidates) => ({
+      suggestions: candidates.map((candidate, index) => ({
+        candidateKey: candidate.candidateKey,
+        displayNameZhCn: index === 0 ? "AI 胡闹厨房" : "AI 星之卡比",
+        confidence: "high" as const,
+      })),
+    }));
+
+    render(<SubscriptionWizardPage api={api} gameNameApi={names} onUnauthorized={vi.fn()} />);
+    await user.type(screen.getByRole("textbox", { name: "游戏名称" }), "two games");
+    await user.click(screen.getByRole("button", { name: "搜索官方商品" }));
+    await user.click(await screen.findByRole("button", { name: /Overcooked! 2 – Nintendo Switch 2 Edition/ }));
+    await user.click(screen.getByRole("button", { name: /Kirby and the Forgotten Land/ }));
+    await user.click(screen.getByRole("button", { name: "核验其他地区" }));
+
+    expect(await screen.findByDisplayValue("AI 胡闹厨房")).toBeTruthy();
+    expect(screen.getByDisplayValue("AI 星之卡比")).toBeTruthy();
+    const sentCandidates = vi.mocked(names.suggestAiNames).mock.calls[0]?.[0] ?? [];
+    // 两个本地关联键必须唯一，且整个 AI 请求正文都不能出现任一地区商品 URL 哨兵。
+    expect(new Set(sentCandidates.map((candidate) => candidate.candidateKey)).size).toBe(2);
+    expect(JSON.stringify(sentCandidates)).not.toContain(usCandidate.productUrl);
+    expect(JSON.stringify(sentCandidates)).not.toContain(kirbyCandidate.productUrl);
+  });
+
+  it("ignores an old AI batch after a new search creates a newer suggestion generation", async () => {
+    const user = userEvent.setup();
+    let resolveStaleAi: (value: { suggestions: AiGameNameSuggestion[] }) => void = () => undefined;
+    const staleAi = new Promise<{ suggestions: AiGameNameSuggestion[] }>((resolve) => { resolveStaleAi = resolve; });
+    const api = wizardApi([]);
+    vi.mocked(api.searchProducts)
+      .mockResolvedValueOnce({ status: "available", candidates: [usCandidate] })
+      .mockResolvedValueOnce({ status: "available", candidates: [kirbyCandidate] });
+    const names = nameSuggestionApi([]);
+    let firstBatchKey = "";
+    vi.mocked(names.suggestAiNames)
+      .mockImplementationOnce(async (candidates) => {
+        firstBatchKey = candidates[0]?.candidateKey ?? "";
+        return staleAi;
+      })
+      .mockImplementationOnce(async (candidates) => ({
+        suggestions: [{ candidateKey: candidates[0]?.candidateKey ?? "missing", displayNameZhCn: "新搜索建议", confidence: "high" }],
+      }));
+
+    render(<SubscriptionWizardPage api={api} gameNameApi={names} onUnauthorized={vi.fn()} />);
+    const query = screen.getByRole("textbox", { name: "游戏名称" });
+    await user.type(query, "old search");
+    await user.click(screen.getByRole("button", { name: "搜索官方商品" }));
+    await user.click(await screen.findByRole("button", { name: /Overcooked! 2 – Nintendo Switch 2 Edition/ }));
+    await user.click(screen.getByRole("button", { name: "核验其他地区" }));
+    await waitFor(() => expect(names.suggestAiNames).toHaveBeenCalledTimes(1));
+
+    await user.clear(query);
+    await user.type(query, "new search");
+    await user.click(screen.getByRole("button", { name: "搜索官方商品" }));
+    await user.click(await screen.findByRole("button", { name: /Kirby and the Forgotten Land/ }));
+    await user.click(screen.getByRole("button", { name: "核验其他地区" }));
+    expect(await screen.findByDisplayValue("新搜索建议")).toBeTruthy();
+
+    resolveStaleAi({ suggestions: [{ candidateKey: firstBatchKey, displayNameZhCn: "过期搜索建议", confidence: "high" }] });
+    await waitFor(() => expect(screen.queryByDisplayValue("过期搜索建议")).toBeNull());
+    // 旧批次即使迟到也不能覆盖新搜索的 UI 键、名称草稿或 AI 来源标记。
+    expect(screen.getByDisplayValue("新搜索建议")).toBeTruthy();
+    expect(screen.getAllByText("AI 建议，待确认")).toHaveLength(1);
+  });
+
+  it("keeps regional results and manual confirmation available when the AI endpoint returns 503", async () => {
+    // 该回归在 AI 错误清空地区结果、触发认证壳或禁止原有手工确认路径时失败；503 是可选能力未配置的受控业务状态。
+    const user = userEvent.setup();
+    const api = wizardApi([]);
+    const names = nameSuggestionApi([]);
+    vi.mocked(names.suggestAiNames).mockRejectedValue(new GameNameApiError("AI 名称建议尚未配置。", 503));
+
+    render(<SubscriptionWizardPage api={api} gameNameApi={names} onUnauthorized={vi.fn()} />);
+    await user.type(screen.getByRole("textbox", { name: "游戏名称" }), "Overcooked! 2");
+    await user.click(screen.getByRole("button", { name: "搜索官方商品" }));
+    await user.click(await screen.findByRole("button", { name: /Overcooked! 2 – Nintendo Switch 2 Edition/ }));
+    await user.click(screen.getByRole("button", { name: "核验其他地区" }));
+
+    expect((await screen.findByRole("status")).textContent).toContain("AI 名称建议尚未配置。");
+    const input = screen.getByRole("textbox", { name: `${usCandidate.canonicalTitle} 的简体中文显示名称` });
+    await user.type(input, "管理员名称");
+    expect((screen.getByRole("button", { name: "确认订阅" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("retries Japanese regional discovery after a safe manual-link message and renders the automatic candidate", async () => {

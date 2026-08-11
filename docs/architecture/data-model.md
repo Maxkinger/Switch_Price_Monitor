@@ -8,6 +8,7 @@
 - 当前唯一数据层是项目专属 PostgreSQL 17；NAS 不导入 D1 历史。
 - 所有金额使用整数最小货币单位，时间使用 `TIMESTAMPTZ`，布尔值使用 `BOOLEAN`，结构化设置使用 `JSONB`。
 - `settings` 在 `0003_proxy_settings.sql` 增加 `proxy_enabled`、`proxy_protocol`、`proxy_host`、`proxy_port` 四个无认证端点字段；协议和端口由 CHECK 约束收窄，密码、用户名和完整代理 URL 永不入库。
+- DeepSeek 只在管理员请求名称建议时使用服务器私有环境变量；API Key、模型响应、提示词和未确认建议都不属于数据模型，不写入 PostgreSQL。
 - SQL 动态值必须参数化；跨表业务写入使用显式事务。迁移与调度使用不同的 PostgreSQL advisory lock。
 - 价格以不可变快照保存。采集日志保留 90 天；价格历史按管理员偏好永久、1 年或 2 年保留。
 
@@ -52,6 +53,7 @@ subscriptions / regional_products ── * notification_events
 ## 4. 敏感数据与导出
 
 - Telegram Bot Token 与 Chat ID 仅由成对环境变量注入，不存入 `settings`，设置 API 和页面都没有秘密字段。
+- DeepSeek API Key 仅由私有服务器环境变量注入；名称建议在浏览器中只是待确认草稿，管理员保存前不会进入 `games`、`game_name_catalog` 或任何审计表，设置 API、CSV 和页面均不得读取或回显 Key。
 - 密码、恢复码与会话仅保存不可逆验证材料或摘要；数据库 bootstrap 密码不进入 app 容器。
 - CSV 只允许订阅、价格历史和采集日志白名单字段，排除认证、会话、恢复码、Telegram 和数据库凭据。
 - 普通日志不得输出连接串、SQL 参数、第三方响应正文、Cookie、浏览器页面内容或异常堆栈中的秘密。
