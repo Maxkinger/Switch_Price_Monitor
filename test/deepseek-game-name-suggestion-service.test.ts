@@ -59,11 +59,43 @@ describe("DeepSeek 中文游戏名称建议服务", () => {
     }]);
 
     const systemPrompt = readSystemPrompt(request);
-    expect(systemPrompt).toContain("常用简体中文名称");
+    expect(systemPrompt).toContain("常用简体中文译名");
     expect(systemPrompt).toContain("Nintendo Switch 2 Edition");
-    expect(systemPrompt).toContain("只有确实无法判断时返回 null");
-    expect(systemPrompt).toContain("不得声称官方确认");
-    expect(systemPrompt).toContain("返回 JSON 之外的文字");
+    expect(systemPrompt).toContain("本体确实无法可靠识别或翻译");
+    expect(systemPrompt).toContain("结果只供管理员确认");
+    expect(systemPrompt).toContain("不得添加解释、来源、Markdown");
+  });
+
+  it("先识别常用中文本体名再组合升级包后缀，并把已知组合判为可预填建议", async () => {
+    // 该标题的本体与商品后缀均明确；若提示词仍把“没有官方来源证明”理解为低置信度，页面会错误得到 null 而无法预填。
+    const request = vi.fn<typeof globalThis.fetch>().mockResolvedValue(modelResponse(JSON.stringify({ suggestions: [{
+      candidateKey: "upgrade-pack-1",
+      displayNameZhCn: "胡闹厨房！2 - Nintendo Switch 2 Edition 升级包",
+      confidence: "high",
+    }] })));
+    const service = new DeepSeekGameNameSuggestionService(configuredReader(), request);
+
+    await expect(service.suggest([{
+      candidateKey: "upgrade-pack-1",
+      canonicalTitle: "Overcooked! 2 - Nintendo Switch 2 Edition Upgrade Pack",
+      publisher: "Team17",
+      productType: "game",
+    }])).resolves.toEqual([{
+      candidateKey: "upgrade-pack-1",
+      displayNameZhCn: "胡闹厨房！2 - Nintendo Switch 2 Edition 升级包",
+      confidence: "high",
+    }]);
+
+    const systemPrompt = readSystemPrompt(request);
+    expect(systemPrompt).toContain("先识别");
+    expect(systemPrompt).toContain("游戏本体");
+    expect(systemPrompt).toContain("Upgrade Pack");
+    expect(systemPrompt).toContain("升级包");
+    expect(systemPrompt).toContain("缺少官方来源证明不能作为 low 或 null 的理由");
+    expect(systemPrompt).toContain("Overcooked! 2 - Nintendo Switch 2 Edition Upgrade Pack");
+    expect(systemPrompt).toContain("胡闹厨房！2 - Nintendo Switch 2 Edition 升级包");
+    expect(systemPrompt).toContain("DAVE THE DIVER Nintendo Switch 2 Edition");
+    expect(systemPrompt).toContain("潜水员戴夫 Nintendo Switch 2 Edition");
   });
 
   it("配置缺失时在请求前返回专用错误且绝不外发", async () => {

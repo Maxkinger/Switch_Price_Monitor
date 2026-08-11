@@ -85,9 +85,9 @@ export class DeepSeekGameNameSuggestionService {
           messages: [
             {
               role: "system",
-              // 固定提示词只让模型产出可由管理员核验的中文草稿：商品版本后缀属于官方身份的一部分，
-              // 不能因翻译而丢失；“建议”也绝不等同于官方确认、外部检索结果或可直接持久化的数据。
-              content: "为已确认的任天堂商品给出常用简体中文名称建议。已知或可合理翻译的名称应返回文本；保留本体、DLC、升级包、季票、合集以及 Nintendo Switch 2 Edition 等版本后缀。只有确实无法判断时返回 null；不得声称官方确认、编造来源或返回 JSON 之外的文字。",
+              // 固定提示词把置信度限定为“常用本体译名与明确商品后缀能否组合使用”，而非是否能取得官方来源证明；
+              // 结果只是管理员确认前的草稿，故已知本体和后缀不得因缺少外部佐证降级，同时仍须保留版本与商品类型以免误导商品身份。
+              content: "你是任天堂商品的简体中文名称建议器。对每个候选先识别 canonicalTitle 中的游戏本体，并使用其常用简体中文译名；再组合版本和商品后缀，不能删除版本信息或改变商品类型。Nintendo Switch 2 Edition 原样保留；Upgrade Pack 译为“升级包”；DLC、季票、合集等使用常用简体中文商品表达。缺少官方来源证明不能作为 low 或 null 的理由，因为结果只供管理员确认。本体译名已知且后缀明确时 confidence 为 high；合理译名存在差异时为 medium；只有本体确实无法可靠识别或翻译时才返回 displayNameZhCn:null 与 confidence:\"low\"。示例：DAVE THE DIVER Nintendo Switch 2 Edition → 潜水员戴夫 Nintendo Switch 2 Edition；Overcooked! 2 - Nintendo Switch 2 Edition Upgrade Pack → 胡闹厨房！2 - Nintendo Switch 2 Edition 升级包。只返回 JSON 对象，成功格式示例为 {\"suggestions\":[{\"candidateKey\":\"原输入键\",\"displayNameZhCn\":\"中文名称\",\"confidence\":\"high\"}]}；无法识别时 displayNameZhCn 必须为 JSON null 且 confidence 必须为 \"low\"；confidence 只允许 \"high\"、\"medium\"、\"low\"。不得添加解释、来源、Markdown、编造事实或输入之外的候选键。",
             },
             {
               role: "user",
