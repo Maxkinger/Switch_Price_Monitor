@@ -13,6 +13,44 @@ import type { DashboardOverview } from "../services/dashboard-service";
 import type { ProductHealthState } from "../services/price-rules";
 
 /**
+ * 加密后的 AI 配置载荷只在持久化边界传递二进制字段，版本号固定为当前 AES-GCM 编码；不允许仓储接触 API Key、模型或地址明文。
+ * updatedAt 由服务统一提供，以使审计时间可测试并避免数据库适配器根据本机时钟造成跨节点不一致。
+ */
+export type EncryptedAiProviderConfiguration = {
+  algorithmVersion: 1;
+  nonce: Uint8Array;
+  ciphertext: Uint8Array;
+  updatedAt: string;
+};
+
+/** 只读摘要严格排除 API Key；只有服务成功解密并复验当前规则后才可把模型和固定官方地址交给设置页面。 */
+export type AiProviderConfigurationSummary = {
+  configured: boolean;
+  model: string | null;
+  apiBaseUrl: string | null;
+};
+
+/**
+ * 瞬时内存凭据是 DeepSeek 请求所需的完整最小集合；地址字面量约束阻止调用方把 Authorization 发送至任意兼容端点。
+ * 该 DTO 不得进入普通设置响应、日志、导出或数据库列。
+ */
+export type AiProviderCredentials = {
+  apiKey: string;
+  model: string;
+  apiBaseUrl: "https://api.deepseek.com";
+};
+
+/**
+ * AI 密文仓储端口只允许读取、原子替换和删除单例。服务负责加解密及业务校验，PostgreSQL 实现负责参数化 SQL，
+ * 从而既避免主密钥泄漏到适配器，也避免业务层持有 pg 行或驱动对象。
+ */
+export interface AiProviderConfigurationStore {
+  getEncrypted(): Promise<EncryptedAiProviderConfiguration | null>;
+  saveEncrypted(value: EncryptedAiProviderConfiguration): Promise<void>;
+  clear(): Promise<void>;
+}
+
+/**
  * PostgreSQL 迁移期间供服务层使用的窄仓储端口。
  * 这些接口只暴露消费者实际需要的领域 DTO，不包含 pg 类型、SQL、数据库行或驱动 API，
  * 以便 Node 服务与内存测试替身共享同一业务服务而不共享持久化细节。

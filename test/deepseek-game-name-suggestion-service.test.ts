@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   AiGameNameSuggestionError,
+  AiProviderNotConfiguredError,
   DeepSeekGameNameSuggestionService,
   type AiGameNameCandidate,
 } from "../src/services/deepseek-game-name-suggestion-service";
+import type { AiProviderCredentials } from "../src/repositories/ports";
 
 /** 每个候选只提供服务合同允许的公开身份字段；单项测试可在运行时追加敏感哨兵，验证服务会重新构造严格白名单。 */
 function candidate(candidateKey: string): AiGameNameCandidate {
@@ -20,7 +22,38 @@ function modelResponse(content: string): Response {
   return Response.json({ choices: [{ message: { content } }] });
 }
 
+/** 每次建议都由 reader 返回瞬时凭据；测试替身可验证服务未在构造期固化已删除或刚更新的配置。 */
+function configuredReader(apiKey = "test-key", model = "deepseek-v4-flash") {
+  return { getCredentials: async (): Promise<AiProviderCredentials> => ({ apiKey, model, apiBaseUrl: "https://api.deepseek.com" }) };
+}
+
 describe("DeepSeek 中文游戏名称建议服务", () => {
+  it("配置缺失时在请求前返回专用错误且绝不外发", async () => {
+    // 配置可能被管理员刚删除、密文被篡改或主密钥不可用；此时必须在构造 HTTP 请求前停止，不能把空 Authorization 发送到供应商。
+    const request = vi.fn<typeof globalThis.fetch>();
+    const service = new DeepSeekGameNameSuggestionService({ getCredentials: async () => null }, request);
+
+    await expect(service.suggest([candidate("official-1")])).rejects.toBeInstanceOf(AiProviderNotConfiguredError);
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("每次建议重新读取配置，保存或清除后无需重启且清除不外发", async () => {
+    // reader 模拟同一 Node 进程中的设置保存/删除：若服务把构造期凭据闭包缓存，第二次应错误继续使用旧 Key 并触发该回归。
+    let credentials: AiProviderCredentials | null = null;
+    const reader = { getCredentials: async () => credentials };
+    const request = vi.fn<typeof globalThis.fetch>().mockResolvedValue(modelResponse(JSON.stringify([
+      { candidateKey: "official-1", displayNameZhCn: "胡闹厨房 2", confidence: "high" },
+    ])));
+    const service = new DeepSeekGameNameSuggestionService(reader, request);
+
+    await expect(service.suggest([candidate("official-1")])).rejects.toBeInstanceOf(AiProviderNotConfiguredError);
+    credentials = { apiKey: "newly-saved-key", model: "deepseek-chat", apiBaseUrl: "https://api.deepseek.com" };
+    await expect(service.suggest([candidate("official-1")])).resolves.toHaveLength(1);
+    credentials = null;
+    await expect(service.suggest([candidate("official-1")])).rejects.toBeInstanceOf(AiProviderNotConfiguredError);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
   it("只向固定 DeepSeek 端点发送精确白名单和该调用专用 Authorization", async () => {
     // 运行时对象故意夹带会话、价格、URL 与其他系统秘密；任何对象展开或直接序列化都会让唯一一次外部请求正文命中哨兵。
     const request = vi.fn<typeof globalThis.fetch>().mockResolvedValue(modelResponse("not-json"));
@@ -32,7 +65,7 @@ describe("DeepSeek 中文游戏名称建议服务", () => {
       productUrl: "https://runtime-url-sentinel.invalid/product",
       telegramToken: "telegram-runtime-sentinel",
     } as AiGameNameCandidate;
-    const service = new DeepSeekGameNameSuggestionService(apiKey, "deepseek-v4-flash", request);
+    const service = new DeepSeekGameNameSuggestionService(configuredReader(apiKey), request);
 
     await expect(service.suggest([unsafeCandidate])).resolves.toEqual([
       { candidateKey: "official-1", displayNameZhCn: null, confidence: "low" },
@@ -66,7 +99,7 @@ describe("DeepSeek 中文游戏名称建议服务", () => {
       { candidateKey: "official-2", displayNameZhCn: "低置信度", confidence: "low" },
       { candidateKey: "official-3", displayNameZhCn: "名".repeat(121), confidence: "medium" },
     ])));
-    const service = new DeepSeekGameNameSuggestionService("test-key", "deepseek-v4-pro", request);
+    const service = new DeepSeekGameNameSuggestionService(configuredReader("test-key", "deepseek-v4-pro"), request);
 
     await expect(service.suggest([
       candidate("official-1"), candidate("official-2"), candidate("official-3"),
@@ -82,7 +115,7 @@ describe("DeepSeek 中文游戏名称建议服务", () => {
     const request = vi.fn<typeof globalThis.fetch>().mockResolvedValue(modelResponse(JSON.stringify([
       { candidateKey: "official-1", displayNameZhCn: "  胡闹厨房 2  ", confidence: "medium", extra: "discard" },
     ])));
-    const service = new DeepSeekGameNameSuggestionService("test-key", "deepseek-v4-flash", request);
+    const service = new DeepSeekGameNameSuggestionService(configuredReader(), request);
 
     await expect(service.suggest([candidate("official-1")])).resolves.toEqual([
       { candidateKey: "official-1", displayNameZhCn: "胡闹厨房 2", confidence: "medium" },
@@ -95,7 +128,7 @@ describe("DeepSeek 中文游戏名称建议服务", () => {
       { candidateKey: "official-1", displayNameZhCn: 42, confidence: "high" },
       { candidateKey: "official-1", displayNameZhCn: "胡闹厨房 2", confidence: "high" },
     ])));
-    const service = new DeepSeekGameNameSuggestionService("test-key", "deepseek-v4-flash", request);
+    const service = new DeepSeekGameNameSuggestionService(configuredReader(), request);
 
     await expect(service.suggest([candidate("official-1")])).resolves.toEqual([
       { candidateKey: "official-1", displayNameZhCn: null, confidence: "low" },
@@ -107,7 +140,7 @@ describe("DeepSeek 中文游戏名称建议服务", () => {
     const request = vi.fn<typeof globalThis.fetch>().mockResolvedValue(modelResponse(JSON.stringify([
       { candidateKey: "official-1", displayNameZhCn: "胡闹\u0085厨房", confidence: "high" },
     ])));
-    const service = new DeepSeekGameNameSuggestionService("test-key", "deepseek-v4-flash", request);
+    const service = new DeepSeekGameNameSuggestionService(configuredReader(), request);
 
     await expect(service.suggest([candidate("official-1")])).resolves.toEqual([
       { candidateKey: "official-1", displayNameZhCn: null, confidence: "low" },
@@ -117,7 +150,7 @@ describe("DeepSeek 中文游戏名称建议服务", () => {
   it("拒绝空批次和超过十项的批次，避免不可控提示词体积", async () => {
     // 若缺少批次边界，单个管理员请求可放大外部成本和超时风险；校验必须发生在网络请求之前。
     const request = vi.fn<typeof globalThis.fetch>();
-    const service = new DeepSeekGameNameSuggestionService("test-key", "deepseek-v4-flash", request);
+    const service = new DeepSeekGameNameSuggestionService(configuredReader(), request);
 
     await expect(service.suggest([])).rejects.toThrow("AI 名称建议候选数量无效。");
     await expect(service.suggest(Array.from({ length: 11 }, (_, index) => candidate(`official-${index}`))))
@@ -130,9 +163,9 @@ describe("DeepSeek 中文游戏名称建议服务", () => {
     const unavailable = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response("provider-internal-detail", { status: 429 }));
     const failed = vi.fn<typeof globalThis.fetch>().mockRejectedValue(new Error("network-internal-detail"));
 
-    await expect(new DeepSeekGameNameSuggestionService("test-key", "deepseek-v4-flash", unavailable).suggest([candidate("official-1")]))
+    await expect(new DeepSeekGameNameSuggestionService(configuredReader(), unavailable).suggest([candidate("official-1")]))
       .rejects.toEqual(new AiGameNameSuggestionError("AI 名称建议暂时不可用。"));
-    await expect(new DeepSeekGameNameSuggestionService("test-key", "deepseek-v4-flash", failed).suggest([candidate("official-1")]))
+    await expect(new DeepSeekGameNameSuggestionService(configuredReader(), failed).suggest([candidate("official-1")]))
       .rejects.toThrow("AI 名称建议暂时不可用。");
   });
 
@@ -143,9 +176,11 @@ describe("DeepSeek 中文游戏名称建议服务", () => {
     const request = vi.fn<typeof globalThis.fetch>().mockImplementation((_input, init) => new Promise<Response>((_resolve, reject) => {
       init?.signal?.addEventListener("abort", () => reject(new DOMException("provider-timeout-detail", "TimeoutError")), { once: true });
     }));
-    const service = new DeepSeekGameNameSuggestionService("test-key", "deepseek-v4-flash", request);
+    const service = new DeepSeekGameNameSuggestionService(configuredReader(), request);
 
     const pending = service.suggest([candidate("official-1")]);
+    // 动态 reader 先完成一次微任务；确认 fetch 已绑定 abort 监听后再触发，避免测试把调度时序误判为超时合同失败。
+    await Promise.resolve();
     controller.abort();
 
     await expect(pending).rejects.toThrow("AI 名称建议暂时不可用。");

@@ -21,6 +21,7 @@ import {
 
 const expectedTables = [
   "admin_credentials",
+  "ai_provider_configuration",
   "exchange_rates",
   "fetch_logs",
   "game_name_catalog",
@@ -77,6 +78,19 @@ describe("PostgreSQL 初始 schema", () => {
 
     expect(tables.rows.map((row) => row.table_name)).toEqual(expectedTables);
     expect(indexes.rows.map((row) => row.indexname)).toEqual(expectedBusinessIndexes);
+  });
+
+  it("为 AI 配置建立仅允许 AES-GCM 密文单例的表", async () => {
+    // 删除单例、算法版本、12 字节 nonce 或至少 16 字节认证标签任一约束后，以下真实写入均会意外成功。
+    const invalidRows: Array<[string, string]> = [
+      ["id", "INSERT INTO ai_provider_configuration (id, algorithm_version, nonce, ciphertext, updated_at) VALUES (2, 1, decode('000000000000000000000000', 'hex'), decode('00112233445566778899aabbccddeeff00', 'hex'), CURRENT_TIMESTAMP)"],
+      ["version", "INSERT INTO ai_provider_configuration (id, algorithm_version, nonce, ciphertext, updated_at) VALUES (1, 2, decode('000000000000000000000000', 'hex'), decode('00112233445566778899aabbccddeeff00', 'hex'), CURRENT_TIMESTAMP)"],
+      ["nonce", "INSERT INTO ai_provider_configuration (id, algorithm_version, nonce, ciphertext, updated_at) VALUES (1, 1, decode('00', 'hex'), decode('00112233445566778899aabbccddeeff00', 'hex'), CURRENT_TIMESTAMP)"],
+      ["ciphertext", "INSERT INTO ai_provider_configuration (id, algorithm_version, nonce, ciphertext, updated_at) VALUES (1, 1, decode('000000000000000000000000', 'hex'), decode('00112233445566778899aabbccddeeff', 'hex'), CURRENT_TIMESTAMP)"],
+    ];
+    for (const [, statement] of invalidRows) {
+      await expect(database.query(statement)).rejects.toMatchObject({ code: "23514" });
+    }
   });
 
   it("从空库完成全部迁移后使用 Compose 预建的普通应用角色", async () => {

@@ -6,7 +6,7 @@
 
 - 只使用 `scripts/backup-postgres.sh` 和 `scripts/restore-postgres.sh`，env、Compose、项目/备份/归档路径以及 Compose project、服务名和数据库名都显式传参；不依赖计划任务 cwd 自动发现 `.env`。
 - PostgreSQL 17 的 `pg_dump`/`pg_restore` 在数据库容器内运行，宿主无需安装客户端，密码不进入宿主命令参数。
-- 备份文件包含认证摘要、业务记录和可能敏感的诊断数据，按秘密数据管理；目录权限建议 `700`，脚本 `umask 077`。
+- 备份文件包含认证摘要、业务记录、可能敏感的诊断数据及 AES-GCM AI 配置密文，按秘密数据管理；目录权限建议 `700`，脚本 `umask 077`。归档不含 Node 私有 `AI_CREDENTIAL_ENCRYPTION_KEY`，恢复环境必须以相同主密钥才能使用原有 AI 配置；主密钥丢失时只能在设置页清除密文并重新配置，不能从归档还原。
 - 默认保留最近 14 个成功归档；允许范围为 1..10000。保留顺序按每库 18 位单调 sequence，不依赖可修改的 mtime。
 - 恢复绝不使用 `--clean`，绝不覆盖在线数据库。app 必须为 `exited/dead`，目标必须是独立 Compose project 的 app 角色所有空库。
 
@@ -99,8 +99,8 @@ docker compose --env-file .env -f docker-compose.prod.yml -p switch-price-monito
 
 脚本在写入前两次确认 app 已停止，验证目标由普通 app 角色拥有且没有用户对象，校验归档和应用镜像迁移 manifest，然后以 `--single-transaction --exit-on-error --no-owner --no-privileges` 恢复。成功后还会验证：
 
-- 迁移账本非空且与镜像文件名/校验和完全一致。
-- public 表集合与当前迁移精确一致，共 15 张：`schema_migrations`、`settings`、`games`、`regional_products`、`subscriptions`、`subscription_regions`、`price_snapshots`、`exchange_rates`、`fetch_logs`、`regional_product_health`、`notification_events`、`admin_credentials`、`sessions`、`login_attempts`、`manual_refresh_requests`；缺表或额外旧表均拒绝。
+- 迁移账本必须精确为 `0001_initial.sql`、`0002_remove_target_price.sql`、`0003_proxy_settings.sql`、不可变的 `0004_simplified_chinese_game_names.sql` 与新增的 `0005_ai_provider_configuration.sql`，并逐项与运行镜像文件名和 SHA-256 校验和一致；不得把缺少历史中文名称迁移或 AI 密文迁移的归档误判为可恢复。
+- public 表集合与当前五条迁移精确一致，共 17 张：`schema_migrations`、`settings`、`games`、`regional_products`、`subscriptions`、`subscription_regions`、`price_snapshots`、`exchange_rates`、`fetch_logs`、`regional_product_health`、`notification_events`、`admin_credentials`、`sessions`、`login_attempts`、`manual_refresh_requests`、`game_name_catalog`、`ai_provider_configuration`。其中 `game_name_catalog` 保存已确认中文名称的精确身份词条，`ai_provider_configuration` 保存 AES-GCM AI 配置密文；任一缺表或额外旧/未知表都会拒绝并清回显式空目标库，不能以不完整结构启动。
 - 管理员记录为 0 行，或只有唯一 `id=1`。
 
 post-validation 失败时，脚本只清理这个已证明为空且仍持锁的显式目标数据库，重新证明为空后才允许重试；它不会修改生产数据库、其他数据库、表空间或角色级共享授权。

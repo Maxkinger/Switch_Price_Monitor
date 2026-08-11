@@ -35,6 +35,7 @@ export async function resetApiTestData(database: AppDatabase): Promise<void> {
     subscriptions,
     regional_products,
     games,
+    ai_provider_configuration,
     settings
     RESTART IDENTITY CASCADE`);
 }
@@ -71,11 +72,13 @@ export function createTestAuthDispatcher(
 export function createTestNodeDispatcher(
   database: AppDatabase,
   cookieSecure = false,
+  aiCredentialEncryptionKey?: Uint8Array,
 ): TestApiDispatcher {
   return createServerDependencies(database, {
     cookieSecure,
     telegramBotToken: undefined,
     telegramChatId: undefined,
+    ...(aiCredentialEncryptionKey === undefined ? {} : { aiCredentialEncryptionKey }),
   }).http.dispatchApi;
 }
 

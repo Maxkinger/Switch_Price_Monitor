@@ -166,7 +166,7 @@ contractTest("生产服务具备健康依赖、重启、init、非 root 与持�
   assert.equal(compose.volumes, undefined);
 });
 
-contractTest("生产 bootstrap 管理角色、普通应用角色与可选 AI 秘密严格分离", () => {
+contractTest("生产 bootstrap 管理角色、普通应用角色与 AI 加密主密钥严格分离", () => {
   const compose = parseCompose("docker-compose.prod.yml");
   const source = readAsset("docker-compose.prod.yml");
   const appEnvironment = compose.services.app.environment;
@@ -177,12 +177,13 @@ contractTest("生产 bootstrap 管理角色、普通应用角色与可选 AI 秘
   assert.equal(appEnvironment.COOKIE_SECURE, "false");
   assert.equal(appEnvironment.TELEGRAM_BOT_TOKEN, "");
   assert.equal(appEnvironment.TELEGRAM_CHAT_ID, "");
-  // Compose 只从私有环境按变量名注入可选 AI 配置；fixture 是公开假值，源码中出现其值即表示把秘密写死进部署资产。
-  assert.equal(appEnvironment.DEEPSEEK_API_KEY, fixtureEnvironment.DEEPSEEK_API_KEY);
-  assert.equal(appEnvironment.DEEPSEEK_MODEL, fixtureEnvironment.DEEPSEEK_MODEL);
-  assert.match(source, /DEEPSEEK_API_KEY:\s*["']?\$\{DEEPSEEK_API_KEY:-\}["']?/u);
-  assert.match(source, /DEEPSEEK_MODEL:\s*["']?\$\{DEEPSEEK_MODEL:-deepseek-v4-flash\}["']?/u);
-  assert.doesNotMatch(source, new RegExp(fixtureEnvironment.DEEPSEEK_API_KEY, "u"));
+  // 生产 Compose 只能将进程私有的主密钥交给 app：真实 API Key、模型和地址均由设置页写入的密文载荷提供，
+  // 因而旧变量一旦重新出现就会形成绕过 AES-GCM 持久化的第二来源，必须由此合同阻止。
+  assert.equal(appEnvironment.AI_CREDENTIAL_ENCRYPTION_KEY, fixtureEnvironment.AI_CREDENTIAL_ENCRYPTION_KEY);
+  assert.match(source, /AI_CREDENTIAL_ENCRYPTION_KEY:\s*["']?\$\{AI_CREDENTIAL_ENCRYPTION_KEY:-\}["']?/u);
+  assert.doesNotMatch(source, new RegExp(fixtureEnvironment.AI_CREDENTIAL_ENCRYPTION_KEY, "u"));
+  assert.equal("DEEPSEEK_API_KEY" in appEnvironment, false);
+  assert.equal("DEEPSEEK_MODEL" in appEnvironment, false);
   assert.equal(databaseEnvironment.POSTGRES_DB, fixtureEnvironment.POSTGRES_DB);
   assert.equal(databaseEnvironment.POSTGRES_USER, fixtureEnvironment.POSTGRES_USER);
   assert.equal(databaseEnvironment.POSTGRES_PASSWORD, fixtureEnvironment.POSTGRES_PASSWORD);
@@ -329,8 +330,7 @@ contractTest(".env.example 提供固定版本和全部安全占位而不携带�
     "COOKIE_SECURE",
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_CHAT_ID",
-    "DEEPSEEK_API_KEY",
-    "DEEPSEEK_MODEL",
+    "AI_CREDENTIAL_ENCRYPTION_KEY",
     "BACKUP_DIR",
     "BACKUP_RETENTION",
     "MAXIMUM_BODY_BYTES",
@@ -345,8 +345,10 @@ contractTest(".env.example 提供固定版本和全部安全占位而不携带�
   assert.equal(example.COOKIE_SECURE, "false");
   assert.equal(example.TELEGRAM_BOT_TOKEN, "");
   assert.equal(example.TELEGRAM_CHAT_ID, "");
-  assert.equal(example.DEEPSEEK_API_KEY, "");
-  assert.equal(example.DEEPSEEK_MODEL, "deepseek-v4-flash");
+  // 样例只能声明空主密钥，防止可复制的密钥进入仓库；管理员须在私有文件中自行生成随机值。
+  assert.equal(example.AI_CREDENTIAL_ENCRYPTION_KEY, "");
+  assert.equal("DEEPSEEK_API_KEY" in example, false);
+  assert.equal("DEEPSEEK_MODEL" in example, false);
   assert.notEqual(example.POSTGRES_USER, example.APP_DATABASE_USER);
   assert.notEqual(example.POSTGRES_PASSWORD, example.APP_DATABASE_PASSWORD);
   assert.match(example.POSTGRES_PASSWORD, /replace|替换/i);
@@ -450,9 +452,8 @@ const fixtureEnvironment = {
   COOKIE_SECURE: "false",
   TELEGRAM_BOT_TOKEN: "",
   TELEGRAM_CHAT_ID: "",
-  // 仅用于 Compose 插值的公开假值；不得复制到 YAML 源码或作为真实服务凭据使用。
-  DEEPSEEK_API_KEY: "fixture-deepseek-key-not-secret",
-  DEEPSEEK_MODEL: "deepseek-v4-flash",
+  // 仅用于 Compose 插值的不可用哨兵；不得复制到 YAML 源码或作为真实加密主密钥使用。
+  AI_CREDENTIAL_ENCRYPTION_KEY: "fixture-ai-encryption-key-not-secret",
   MAXIMUM_BODY_BYTES: "1048576",
   SHUTDOWN_GRACE_MS: "10000",
 };

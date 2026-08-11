@@ -12,10 +12,11 @@ export interface ServerConfig {
   shutdownGraceMs: number;
   telegramBotToken?: string;
   telegramChatId?: string;
-  /** 仅在私有运行环境配置了非空 Key 时存在；依赖装配据此决定是否启用可选 AI，不会让秘密流向浏览器。 */
-  deepSeekApiKey?: string;
-  /** 与 Key 成对暴露的受控模型枚举，避免环境变量把任意模型名称或第三方端点策略带入外部请求。 */
-  deepSeekModel?: "deepseek-v4-flash" | "deepseek-v4-pro";
+  /**
+   * 仅 Node 进程保有的 AES-256-GCM 主密钥。它解不开浏览器数据、不会写入数据库或响应；缺失时仍可启动，
+   * 但已保存的 AI 密文统一视为不可用，以保留手工中文名称流程。
+   */
+  aiCredentialEncryptionKey?: Uint8Array;
 }
 
 const DEFAULT_PORT = 3000;
@@ -24,11 +25,9 @@ const DEFAULT_SHUTDOWN_GRACE_MS = 10_000;
 const MAXIMUM_BODY_BYTES_LIMIT = 10_485_760;
 const MINIMUM_SHUTDOWN_GRACE_MS = 100;
 const MAXIMUM_SHUTDOWN_GRACE_MS = 120_000;
-const DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash" as const;
-const DEEPSEEK_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro"] as const;
 
 /**
- * 只读取 Node 服务明确允许的十一项环境变量，并把错误限制为固定代码。
+ * 只读取 Node 服务明确允许的环境变量，并把错误限制为固定代码。
  * 数据库 URL 与 Telegram 凭据从不进入错误正文，调用方也无法借返回对象取得无关环境秘密。
  */
 export function readServerConfig(environment: NodeJS.ProcessEnv): ServerConfig {
@@ -47,9 +46,8 @@ export function readServerConfig(environment: NodeJS.ProcessEnv): ServerConfig {
   );
   const telegramBotToken = readOptionalSecret(environment.TELEGRAM_BOT_TOKEN);
   const telegramChatId = readOptionalSecret(environment.TELEGRAM_CHAT_ID);
-  // AI 是可选的管理员预填能力：空白 Key 不阻止既有手工名称流程，也不把无效空白凭据交给后续 HTTP 客户端。
-  const deepSeekApiKey = readOptionalNonBlankSecret(environment.DEEPSEEK_API_KEY);
-  const deepSeekModel = readDeepSeekModel(environment.DEEPSEEK_MODEL);
+  // AI 是可选的管理员草稿能力；旧 DeepSeek 环境变量故意完全不读取，防止出现绕过数据库加密的第二配置来源。
+  const aiCredentialEncryptionKey = readOptionalAiCredentialEncryptionKey(environment.AI_CREDENTIAL_ENCRYPTION_KEY);
   if ((telegramBotToken === undefined) !== (telegramChatId === undefined)) {
     throw new Error("TELEGRAM_CREDENTIALS_INCOMPLETE");
   }
@@ -89,8 +87,7 @@ export function readServerConfig(environment: NodeJS.ProcessEnv): ServerConfig {
     ...(telegramBotToken === undefined
       ? {}
       : { telegramBotToken, telegramChatId }),
-    // 模型配置不能在 Key 缺失时单独泄漏到依赖层，以免将“未配置”误判为可调用的 AI 服务。
-    ...(deepSeekApiKey === undefined ? {} : { deepSeekApiKey, deepSeekModel }),
+    ...(aiCredentialEncryptionKey === undefined ? {} : { aiCredentialEncryptionKey }),
   };
 }
 
@@ -106,23 +103,19 @@ function readOptionalSecret(value: string | undefined): string | undefined {
 }
 
 /**
- * DeepSeek Key 的空白值等同未配置；保留非空原值而不 trim 或记录，避免误改供应商签名材料或把秘密写入错误信息。
- * 此规则只用于可选 AI 凭据，Telegram 的既有“空字符串”合同保持不变。
+ * 主密钥只能以标准 Base64 传入并解码为恰好 32 字节；Buffer 的宽松解码会接受部分垃圾字符，
+ * 所以除字节长度外还要用规范编码反向比对。错误永远不包含原环境值，避免启动日志泄漏主密钥。
  */
-function readOptionalNonBlankSecret(value: string | undefined): string | undefined {
-  return value === undefined || value.trim().length === 0 ? undefined : value;
-}
-
-/**
- * 模型即使 Key 暂缺也必须先校验：部署拼写错误应在启动时以固定代码发现，而不是日后配置 Key 后静默请求未知模型。
- * 只允许产品确认过的两个标识，错误绝不拼接环境原值，防止运维日志回显秘密或不可信文本。
- */
-function readDeepSeekModel(value: string | undefined): typeof DEEPSEEK_MODELS[number] {
-  if (value === undefined) return DEFAULT_DEEPSEEK_MODEL;
-  if (!DEEPSEEK_MODELS.includes(value as typeof DEEPSEEK_MODELS[number])) {
-    throw new Error("DEEPSEEK_MODEL_INVALID");
+function readOptionalAiCredentialEncryptionKey(value: string | undefined): Uint8Array | undefined {
+  if (value === undefined || value.length === 0) return undefined;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/u.test(value) || value.length % 4 !== 0) {
+    throw new Error("AI_CREDENTIAL_ENCRYPTION_KEY_INVALID");
   }
-  return value as typeof DEEPSEEK_MODELS[number];
+  const decoded = Buffer.from(value, "base64");
+  if (decoded.byteLength !== 32 || decoded.toString("base64") !== value) {
+    throw new Error("AI_CREDENTIAL_ENCRYPTION_KEY_INVALID");
+  }
+  return new Uint8Array(decoded);
 }
 
 /**

@@ -167,6 +167,12 @@ button:disabled {
   justify-content: flex-end;
 }
 
+/* AI 卡片含保存与危险清除两类操作；保持间距和右对齐，避免确认按钮挤压模型、地址等非秘密输入。 */
+.settings-ai-actions {
+  gap: 10px;
+  margin-top: 18px;
+}
+
 .page-header {
   /* 标题和官方来源边界在同一行呈现，明确本页面不会直接抓取第三方站。 */
   display: flex;

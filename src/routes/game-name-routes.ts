@@ -7,6 +7,7 @@ import {
   type SaveManualGameNameInput,
 } from "../services/game-name-service";
 import {
+  AiProviderNotConfiguredError,
   AiGameNameSuggestionError,
   type DeepSeekGameNameSuggestionService,
 } from "../services/deepseek-game-name-suggestion-service";
@@ -36,7 +37,7 @@ type GameNameRouteService = Pick<
  * AI 路由只依赖 Task 1 服务公开的 suggest 能力，不取得 Key、模型、fetch 或名称仓储；
  * 这个窄接口保证同源 HTTP 层只能转发已收窄的公开候选，不能借 AI 建议触发持久化或泄漏供应商认证材料。
  */
-type GameNameAiSuggestionService = Pick<DeepSeekGameNameSuggestionService, "suggest">;
+type GameNameAiSuggestionService = Pick<DeepSeekGameNameSuggestionService, "suggest"> & Partial<Pick<DeepSeekGameNameSuggestionService, "isConfigured">>;
 
 type GameNameAction =
   | { kind: "list" }
@@ -105,7 +106,7 @@ export async function handleGameNameRoute(
        * 未配置 Key 时不解析正文、更不创建外部客户端；固定 503 让已认证管理员知晓可选能力不可用，
        * 同时避免响应泄漏 Key 是否为空白、模型配置或供应商网络细节。认证已在此前完成，匿名请求仍固定 401。
        */
-      if (aiSuggestions === null) {
+      if (aiSuggestions === null || aiSuggestions.isConfigured !== undefined && !(await aiSuggestions.isConfigured())) {
         return Response.json({ code: "AI_NOT_CONFIGURED", error: "AI 名称建议尚未配置。" }, { status: 503 });
       }
       // AI 专用收窄只允许短批内键、标题、发行商与类型，绝无 URL、价格、会话或其他运行时字段。
@@ -120,16 +121,19 @@ export async function handleGameNameRoute(
   } catch (error) {
     const notFound = error instanceof GameNameNotFoundError;
     const validation = error instanceof GameNameRequestError || error instanceof GameNameValidationError;
+    const aiNotConfigured = error instanceof AiProviderNotConfiguredError;
     const aiUnavailable = error instanceof AiGameNameSuggestionError;
     return Response.json({
-      code: notFound ? "NOT_FOUND" : validation ? "VALIDATION_ERROR" : aiUnavailable ? "AI_UNAVAILABLE" : "INTERNAL_ERROR",
+      code: notFound ? "NOT_FOUND" : validation ? "VALIDATION_ERROR" : aiNotConfigured ? "AI_NOT_CONFIGURED" : aiUnavailable ? "AI_UNAVAILABLE" : "INTERNAL_ERROR",
       // 只有已分类的领域/请求错误可向管理员显示；SQL、数据库 URL、外部网页、堆栈和未知 message 一律替换。
       error: notFound || validation
         ? error.message
-        : aiUnavailable
+        : aiNotConfigured
+          ? "AI 名称建议尚未配置。"
+          : aiUnavailable
           ? "AI 名称建议暂时不可用。"
           : "游戏名称暂时无法处理，请稍后重试。",
-    }, { status: notFound ? 404 : validation ? 422 : aiUnavailable ? 503 : 500 });
+    }, { status: notFound ? 404 : validation ? 422 : aiNotConfigured || aiUnavailable ? 503 : 500 });
   }
 }
 

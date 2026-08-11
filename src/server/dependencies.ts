@@ -11,6 +11,7 @@ import { createLocalBrowserLauncher } from "../providers/playwright/browser-laun
 import { createJapaneseUpgradeBrowserBatch } from "../providers/playwright/japanese-upgrade-browser";
 import { ProviderChain } from "../providers/provider-chain";
 import { PostgresAuthRepository } from "../repositories/postgres/auth-repository";
+import { PostgresAiProviderConfigurationRepository } from "../repositories/postgres/ai-provider-configuration-repository";
 import { PostgresCollectionRepository } from "../repositories/postgres/collection-repository";
 import { PostgresDashboardRepository } from "../repositories/postgres/dashboard-repository";
 import { PostgresExchangeRateRepository } from "../repositories/postgres/exchange-rate-repository";
@@ -27,6 +28,7 @@ import { PostgresSubscriptionConfirmationRepository } from "../repositories/post
 import { PostgresSubscriptionDetailRepository } from "../repositories/postgres/subscription-detail-repository";
 import { PostgresSubscriptionRepository } from "../repositories/postgres/subscription-repository";
 import { handleAuthRoute } from "../routes/auth-routes";
+import { handleAiProviderSettingsRoute } from "../routes/ai-provider-settings-routes";
 import { handleDashboardRoute } from "../routes/dashboard-routes";
 import { handleExportRoute } from "../routes/export-routes";
 import { handleGameNameRoute } from "../routes/game-name-routes";
@@ -36,6 +38,7 @@ import { handleProductRoute } from "../routes/product-routes";
 import { handleSettingsRoute } from "../routes/settings-routes";
 import { handleSubscriptionRoute } from "../routes/subscription-routes";
 import { AuthService } from "../services/auth-service";
+import { AiProviderConfigurationService } from "../services/ai-provider-configuration-service";
 import { CollectionService } from "../services/collection-service";
 import { DailyCnyRateService } from "../services/daily-cny-rate-service";
 import { DeepSeekGameNameSuggestionService } from "../services/deepseek-game-name-suggestion-service";
@@ -109,7 +112,7 @@ export function createServerDependencies(
   config: Pick<
     ServerConfig,
     "cookieSecure" | "telegramBotToken" | "telegramChatId"
-  > & Partial<Pick<ServerConfig, "localDevelopmentAuthBypass" | "deepSeekApiKey" | "deepSeekModel">>,
+  > & Partial<Pick<ServerConfig, "localDevelopmentAuthBypass" | "aiCredentialEncryptionKey">>,
 ): NodeServerDependencies {
   if (
     (config.telegramBotToken === undefined)
@@ -177,16 +180,14 @@ export function createServerDependencies(
   // 同一名称服务实例负责确认阶段的精确词条决议；后续名称管理路由也必须复用该实例，避免不同仓储或优先级造成展示状态分叉。
   const gameNames = new GameNameService(new PostgresGameNameRepository(database));
   /**
-   * AI 只在私有 Key 已存在时装配；Key 始终停留在服务实例和固定 HTTPS 请求头中，绝不进入路由响应、浏览器状态或日志。
-   * 使用既有出站网络快照可沿用受控代理策略，但 AI 建议服务没有仓储依赖，因此无论成功、失败或未配置都不会写入游戏或目录。
+   * AI 密文服务始终装配但仅在每次请求成功解密后外发；主密钥未配置或配置被删除时只返回固定未配置状态，
+   * 不会在启动期缓存 Key，也不会改变名称仍须人工确认才写库的业务边界。
    */
-  const aiGameNameSuggestions = config.deepSeekApiKey === undefined
-    ? null
-    : new DeepSeekGameNameSuggestionService(
-      config.deepSeekApiKey,
-      config.deepSeekModel ?? "deepseek-v4-flash",
-      outboundFetch,
-    );
+  const aiProviderConfiguration = new AiProviderConfigurationService(
+    new PostgresAiProviderConfigurationRepository(database),
+    config.aiCredentialEncryptionKey,
+  );
+  const aiGameNameSuggestions = new DeepSeekGameNameSuggestionService(aiProviderConfiguration, outboundFetch);
   const confirmation = new SubscriptionConfirmationService(
     confirmationRepository,
     officialPages,
@@ -224,6 +225,8 @@ export function createServerDependencies(
         true,
         new ProxyConnectionTestService(outboundNetwork, createProxyBrowserConnectionProbe(browserLauncher)),
       ),
+      // AI Key 专用端点在普通设置之前精确匹配；两者都复用同一会话守卫，但此端点绝不混入公开 AppSettings DTO。
+      (request) => handleAiProviderSettingsRoute(request, routeSessions, aiProviderConfiguration),
       (request) => handleDashboardRoute(request, routeSessions, dashboard),
       /**
        * 名称管理在正式环境继续直接校验真实 AuthService；仅已验证的本机旁路配置才把同一受限标志传给路由。

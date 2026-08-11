@@ -1,4 +1,5 @@
 import type { ProductType } from "../providers/types";
+import type { AiProviderConfigurationReader } from "./ai-provider-configuration-service";
 
 /**
  * 发送给 AI 的候选只保留已由官方发现流程确认的公开身份字段；candidateKey 仅用于本次 UI 结果关联，
@@ -24,7 +25,13 @@ export interface AiGameNameSuggestion {
  */
 export class AiGameNameSuggestionError extends Error {}
 
-const DEEPSEEK_CHAT_COMPLETIONS_URL = "https://api.deepseek.com/chat/completions";
+/**
+ * 区分“管理员尚未配置、已删除或密文不可解”与已配置后的供应商故障。路由据此返回固定 AI_NOT_CONFIGURED，
+ * 既帮助管理员进入设置页修复，又不暴露主密钥、密文状态或数据库失败原因。
+ */
+export class AiProviderNotConfiguredError extends Error {}
+
+const DEEPSEEK_CHAT_COMPLETIONS_PATH = "/chat/completions";
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAXIMUM_CANDIDATES = 10;
 const MAXIMUM_DISPLAY_NAME_LENGTH = 120;
@@ -36,34 +43,44 @@ const CONTROL_CHARACTER = /[\u0000-\u001F\u007F-\u009F]/u;
  */
 export class DeepSeekGameNameSuggestionService {
   public constructor(
-    private readonly apiKey: string,
-    private readonly model: "deepseek-v4-flash" | "deepseek-v4-pro",
+    private readonly configuration: AiProviderConfigurationReader,
     private readonly request: typeof fetch = fetch,
   ) {}
+
+  /**
+   * 路由在解析管理员草稿前使用此只读状态做固定 503；随后 suggest 仍会再次读取，
+   * 因而清除与外发之间的竞态最多降级为未配置，绝不会继续使用旧 Key。
+   */
+  public async isConfigured(): Promise<boolean> {
+    return (await this.configuration.getCredentials()) !== null;
+  }
 
   /**
    * 为一批 1..10 个官方候选生成建议。输入边界先于网络调用校验，限制提示词成本与 10 秒超时占用；
    * 网络或非成功 HTTP 只抛固定可用性错误，而模型 JSON 内容错误安全降级为可手工填写的低置信度空建议。
    */
   public async suggest(candidates: AiGameNameCandidate[]): Promise<AiGameNameSuggestion[]> {
+    // 先判断配置状态，使已认证管理员在配置刚删除后即使提交陈旧/空草稿也得到统一的可恢复 503，且不会解析正文或外发。
+    const credentials = await this.configuration.getCredentials();
+    if (credentials === null) throw new AiProviderNotConfiguredError("AI 名称建议尚未配置。");
     if (candidates.length === 0 || candidates.length > MAXIMUM_CANDIDATES) {
       throw new AiGameNameSuggestionError("AI 名称建议候选数量无效。");
     }
 
     let response: Response;
     try {
-      response = await this.request(DEEPSEEK_CHAT_COMPLETIONS_URL, {
+      response = await this.request(`${credentials.apiBaseUrl}${DEEPSEEK_CHAT_COMPLETIONS_PATH}`, {
         method: "POST",
         // 不跟随供应商返回的重定向，确保携带 Key 的 Authorization 只用于代码中固定的 DeepSeek HTTPS 地址。
         redirect: "error",
         headers: {
           "content-type": "application/json",
           // 固定 HTTPS origin 是 Key 唯一的发送目标；请求 URL 不接受调用方输入，避免凭据被重定向到任意地址。
-          authorization: `Bearer ${this.apiKey}`,
+          authorization: `Bearer ${credentials.apiKey}`,
         },
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         body: JSON.stringify({
-          model: this.model,
+          model: credentials.model,
           response_format: { type: "json_object" },
           messages: [
             {

@@ -49,4 +49,39 @@ describe("全局请求加载遮罩", () => {
 
     await waitFor(() => expect(screen.queryByRole("status", { name: "正在同步数据" })).toBeNull());
   });
+
+  it("keeps the global overlay off while the settings AI summary is pending", async () => {
+    // AI 配置读取只影响 DeepSeek 卡片；若它进入全局计数器，管理员会在公开偏好已加载后仍被全屏遮罩锁住，无法继续修改普通设置。
+    let resolveAiSummary: (response: Response) => void = () => undefined;
+    vi.stubGlobal("fetch", vi.fn((input: string) => {
+      if (input === "/api/settings") return Promise.resolve(Response.json(settings()));
+      if (input === "/api/settings/ai-provider") return new Promise<Response>((resolve) => { resolveAiSummary = resolve; });
+      throw new Error(`unexpected request: ${input}`);
+    }));
+    window.history.replaceState(null, "", "/settings");
+
+    render(<AppShell onUnauthorized={vi.fn()} />);
+
+    // 公开设置已可编辑时，全局遮罩必须保持关闭；AI 卡片自身仍禁用，避免摘要未确定前与保存/清除发生竞态。
+    expect(await screen.findByLabelText("默认搜索区")).toBeTruthy();
+    expect(screen.queryByRole("status", { name: "正在同步数据" })).toBeNull();
+    expect((screen.getByLabelText("DeepSeek API Key") as HTMLInputElement).matches(":disabled")).toBe(true);
+
+    resolveAiSummary(Response.json({ configured: false, model: null, apiBaseUrl: null }));
+    await waitFor(() => expect((screen.getByLabelText("DeepSeek API Key") as HTMLInputElement).matches(":disabled")).toBe(false));
+  });
 });
+
+/** 设置路由公开 DTO 只含偏好字段，刻意不包含密码、会话或任何 AI Key。 */
+function settings() {
+  return {
+    enabledRegions: ["US", "JP"],
+    defaultSearchRegion: "US",
+    theme: "warm-card",
+    timezone: "Asia/Shanghai",
+    dailyReportTime: "09:00",
+    taxState: "OR",
+    priceHistoryRetention: "forever",
+    createdAt: "2026-08-11T00:00:00.000Z",
+  };
+}

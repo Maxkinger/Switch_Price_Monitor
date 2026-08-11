@@ -75,8 +75,8 @@ test("仅含迁移的 fresh 备份可恢复为空业务库", { timeout: 120_000 
   assertCustomArchive(freshDump);
   createEmptyDatabase(freshDatabase);
   restore(freshDump, freshDatabase);
-  // 迁移账本必须包含目标价删除后的代理设置迁移，恢复空库不能漏列或只恢复旧两条版本。
-  assert.equal(sql(freshDatabase, "SELECT count(*) FROM schema_migrations").trim(), "3");
+  // 迁移账本必须含既有 0004 中文名称迁移与新增 0005 密文表；两者均不可在备份/恢复时静默丢失。
+  assert.equal(sql(freshDatabase, "SELECT count(*) FROM schema_migrations").trim(), "5");
   assert.equal(sql(freshDatabase, "SELECT count(*) FROM admin_credentials").trim(), "0");
   assert.equal(sql(freshDatabase, "SELECT count(*) FROM price_snapshots").trim(), "0");
 });
@@ -214,6 +214,39 @@ test("缺失任一非代表性必需表的 archive 也必须拒绝并清回空�
   assert.throws(() => restore(missingRequiredTableDump, requiredTableFailureDatabase), /迁移|完整|表|校验/);
   assert.equal(countUserObjects(requiredTableFailureDatabase), 0, "任一必需表缺失都必须把目标清回可重试空库");
   const retryDump = backup("11");
+  restore(retryDump, requiredTableFailureDatabase);
+  assertRestoredFixture(requiredTableFailureDatabase);
+});
+
+test("缺失 AI 密文配置表的 archive 必须拒绝并清回空库", { timeout: 120_000 }, () => {
+  // ai_provider_configuration 保存 AES-GCM 密文而非可选 UI 草稿；迁移账本即使仍含 0005，缺表也会让重启后的设置读取失去持久化合同。
+  sql(sourceDatabase, "ALTER TABLE ai_provider_configuration RENAME TO ai_provider_configuration_missing");
+  const missingAiConfigurationDump = backup("12");
+  sql(sourceDatabase, "ALTER TABLE ai_provider_configuration_missing RENAME TO ai_provider_configuration");
+  createEmptyDatabase(requiredTableFailureDatabase);
+  assert.throws(() => restore(missingAiConfigurationDump, requiredTableFailureDatabase), /迁移|完整|表|校验/);
+  assert.equal(countUserObjects(requiredTableFailureDatabase), 0, "缺失 AI 密文表的 archive 也必须清回可重试空库");
+});
+
+test("缺失已确认中文名称词条表的 archive 必须拒绝并清回空库", { timeout: 120_000 }, () => {
+  // game_name_catalog 是不可变 0004 迁移创建的已确认名称审计表；即使本任务只新增 0005，恢复守卫也必须保护完整历史迁移合同。
+  sql(sourceDatabase, "ALTER TABLE game_name_catalog RENAME TO game_name_catalog_missing");
+  const missingGameNameCatalogDump = backup("15");
+  sql(sourceDatabase, "ALTER TABLE game_name_catalog_missing RENAME TO game_name_catalog");
+  createEmptyDatabase(requiredTableFailureDatabase);
+  assert.throws(() => restore(missingGameNameCatalogDump, requiredTableFailureDatabase), /迁移|完整|表|校验/);
+  assert.equal(countUserObjects(requiredTableFailureDatabase), 0, "缺失 0004 名称词条表的 archive 也必须清回可重试空库");
+});
+
+test("含未声明 public 表的 archive 必须拒绝并清回空库", { timeout: 120_000 }, () => {
+  // 未知表可能来自未受审计的手工写入或错误版本；精确集合守卫不能只验证必需表都在，否则会把不受当前迁移约束的数据带入目标库。
+  sql(sourceDatabase, "CREATE TABLE unexpected_restore_table (id integer primary key)");
+  const unexpectedTableDump = backup("16");
+  sql(sourceDatabase, "DROP TABLE unexpected_restore_table");
+  createEmptyDatabase(requiredTableFailureDatabase);
+  assert.throws(() => restore(unexpectedTableDump, requiredTableFailureDatabase), /迁移|完整|表|校验/);
+  assert.equal(countUserObjects(requiredTableFailureDatabase), 0, "含未知 public 表的 archive 必须清回可重试空库");
+  const retryDump = backup("17");
   restore(retryDump, requiredTableFailureDatabase);
   assertRestoredFixture(requiredTableFailureDatabase);
 });
@@ -356,7 +389,9 @@ function createMigratedSchema() {
   sql(sourceDatabase, "\\i /fixtures/0001_initial.sql");
   sql(sourceDatabase, "\\i /fixtures/0002_remove_target_price.sql");
   sql(sourceDatabase, "\\i /fixtures/0003_proxy_settings.sql");
-  sql(sourceDatabase, `INSERT INTO schema_migrations (version, checksum) VALUES ('0001_initial.sql', '${migrationChecksum("0001_initial.sql")}'), ('0002_remove_target_price.sql', '${migrationChecksum("0002_remove_target_price.sql")}'), ('0003_proxy_settings.sql', '${migrationChecksum("0003_proxy_settings.sql")}')`);
+  sql(sourceDatabase, "\\i /fixtures/0004_simplified_chinese_game_names.sql");
+  sql(sourceDatabase, "\\i /fixtures/0005_ai_provider_configuration.sql");
+  sql(sourceDatabase, `INSERT INTO schema_migrations (version, checksum) VALUES ('0001_initial.sql', '${migrationChecksum("0001_initial.sql")}'), ('0002_remove_target_price.sql', '${migrationChecksum("0002_remove_target_price.sql")}'), ('0003_proxy_settings.sql', '${migrationChecksum("0003_proxy_settings.sql")}'), ('0004_simplified_chinese_game_names.sql', '${migrationChecksum("0004_simplified_chinese_game_names.sql")}'), ('0005_ai_provider_configuration.sql', '${migrationChecksum("0005_ai_provider_configuration.sql")}')`);
 }
 
 /** 账本校验和必须来自迁移精确字节；不能用夹具常量掩盖未来 app manifest 与恢复记录的不一致。 */
@@ -456,7 +491,8 @@ function countUserObjects(database) {
 
 /** 只读取迁移、管理员与代表性价格字段，证明恢复完整性且不读取认证材料。 */
 function assertRestoredFixture(database) {
-  assert.equal(sql(database, "SELECT version FROM schema_migrations ORDER BY version").trim(), "0001_initial.sql\n0002_remove_target_price.sql\n0003_proxy_settings.sql");
+  // 恢复清单按完整文件名字典序对照，确保既有名称迁移与新增密文迁移都保留精确 checksum 账本。
+  assert.equal(sql(database, "SELECT version FROM schema_migrations ORDER BY version").trim(), "0001_initial.sql\n0002_remove_target_price.sql\n0003_proxy_settings.sql\n0004_simplified_chinese_game_names.sql\n0005_ai_provider_configuration.sql");
   assert.equal(sql(database, "SELECT count(*) FROM admin_credentials WHERE id = 1").trim(), "1");
   assert.equal(sql(database, "SELECT amount_minor || ':' || cny_fen || ':' || source FROM price_snapshots").trim(), "5980:28000:official");
   assert.equal(sql(database, "SELECT count(*) FROM settings WHERE id = 1").trim(), "1");

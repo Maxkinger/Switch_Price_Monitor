@@ -65,7 +65,7 @@ chmod 700 /volume1/docker/switch-price-monitor/backups
 - `BACKUP_DIR=/volume1/docker/switch-price-monitor/backups`、`BACKUP_RETENTION=14`。
 - 局域网纯 HTTP 使用 `COOKIE_SECURE=false`。未来只在可信 HTTPS 已生效后改为 `true`。
 - Telegram 两项必须同时为空或同时填写；设置页不能补录这两项秘密。
-- `DEEPSEEK_API_KEY` 仅在此权限受控、未提交的私有 `.env` 中按需填写；空值会禁用 AI 名称建议但不影响手工名称确认，绝不能把 Key 复制到设置页、数据库、镜像、截图、工单或日志。未设置 `DEEPSEEK_MODEL` 时默认 `deepseek-v4-flash`；私有 `.env` 仅允许 `deepseek-v4-flash` 或 `deepseek-v4-pro`，其他值会在启动时以固定错误拒绝。
+- 在可信本机执行 `openssl rand -base64 32` 生成主密钥，写入 `AI_CREDENTIAL_ENCRYPTION_KEY`；只保存于此权限受控、未提交的 `.env`，不能打印、截图、提交、放入备份说明或传给 PostgreSQL。首次设置页保存 DeepSeek Key、模型和地址前必须配置它；空值会保持 AI 未配置而不影响手工名称确认。Key、模型和地址在设置页经 AES-256-GCM 加密持久化，读取时 Key 永不回显，地址只允许 `https://api.deepseek.com`。主密钥丢失或更换后历史密文无法恢复，管理员应在设置页清除旧配置并重新填写全部三项。
 
 ## 3. 首次启动
 
@@ -88,7 +88,7 @@ docker compose --env-file .env -f docker-compose.prod.yml -p switch-price-monito
 docker compose --env-file .env -f docker-compose.prod.yml -p switch-price-monitor logs --tail 100 postgres
 ```
 
-日志中不应出现 `DATABASE_URL`、密码、DeepSeek API Key、Telegram Token、Chat ID、Cookie、恢复码、任天堂页面正文、DeepSeek 响应正文或浏览器会话信息。如出现，应先停止分享日志并按泄露流程轮换对应秘密。
+日志中不应出现 `DATABASE_URL`、密码、`AI_CREDENTIAL_ENCRYPTION_KEY`、DeepSeek API Key、Telegram Token、Chat ID、Cookie、恢复码、任天堂页面正文、DeepSeek 响应正文或浏览器会话信息。如出现，应先停止分享日志并按泄露流程轮换对应秘密。
 
 ## 4. 首次应用初始化
 

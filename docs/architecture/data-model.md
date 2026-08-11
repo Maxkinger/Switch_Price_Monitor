@@ -1,14 +1,14 @@
 # 数据模型（PostgreSQL 17）
 
 状态：仓库实现完成；全新 NAS 数据库初始化待验收
-最后更新：2026-08-10
+最后更新：2026-08-11
 
 ## 1. 设计原则
 
 - 当前唯一数据层是项目专属 PostgreSQL 17；NAS 不导入 D1 历史。
 - 所有金额使用整数最小货币单位，时间使用 `TIMESTAMPTZ`，布尔值使用 `BOOLEAN`，结构化设置使用 `JSONB`。
 - `settings` 在 `0003_proxy_settings.sql` 增加 `proxy_enabled`、`proxy_protocol`、`proxy_host`、`proxy_port` 四个无认证端点字段；协议和端口由 CHECK 约束收窄，密码、用户名和完整代理 URL 永不入库。
-- DeepSeek 只在管理员请求名称建议时使用服务器私有环境变量；API Key、模型响应、提示词和未确认建议都不属于数据模型，不写入 PostgreSQL。
+- DeepSeek 只在管理员请求名称建议时使用；API Key、模型和官方地址作为一个 AES-256-GCM 密文载荷保存在专用单例，模型响应、提示词和未确认建议不写入 PostgreSQL。
 - SQL 动态值必须参数化；跨表业务写入使用显式事务。迁移与调度使用不同的 PostgreSQL advisory lock。
 - 价格以不可变快照保存。采集日志保留 90 天；价格历史按管理员偏好永久、1 年或 2 年保留。
 
@@ -19,6 +19,7 @@
 | `schema_migrations` | 记录迁移文件名和 SHA-256；已应用文件不得改写，恢复时必须与应用镜像 manifest 完全一致。 |
 | `settings` | 单管理员全局偏好：启用地区、默认搜索区、主题、时区、日报时间、税务州和价格历史保留策略；默认区必须属于启用地区。 |
 | `admin_credentials` | 单一管理员密码哈希、恢复码校验值和初始化状态；不保存明文。 |
+| `ai_provider_configuration` | 固定 `id=1` 的 AI 配置密文单例：只保存算法版本、随机 nonce、密文和更新时间；Key、模型和地址同包加密，不保存明文或可查询元数据。 |
 | `sessions` | 会话令牌摘要、过期与撤销状态；原始令牌只存在于 Cookie。 |
 | `login_attempts` | 登录失败计数与锁定时间；并发更新使用单条原子 upsert，成功登录清除状态。 |
 | `games` | 逻辑商品主档；规范化名称的非空值唯一，避免并发重复创建。`display_name_zh_cn`、来源和确认时刻是仅影响展示的游戏级人工/目录结果，绝不参与官方身份、URL、价格 ID 或价格快照计算；旧 `name_zh` 仅作兼容与管理候选。 |
@@ -53,7 +54,7 @@ subscriptions / regional_products ── * notification_events
 ## 4. 敏感数据与导出
 
 - Telegram Bot Token 与 Chat ID 仅由成对环境变量注入，不存入 `settings`，设置 API 和页面都没有秘密字段。
-- DeepSeek API Key 仅由私有服务器环境变量注入；名称建议在浏览器中只是待确认草稿，管理员保存前不会进入 `games`、`game_name_catalog` 或任何审计表，设置 API、CSV 和页面均不得读取或回显 Key。
+- 设置页提交的 DeepSeek API Key、模型和地址只以同包 AES-256-GCM 密文保存；Node 私有 `AI_CREDENTIAL_ENCRYPTION_KEY` 不入库且永不进入备份内容说明、CSV、设置 API 或页面。主密钥丢失时旧密文不可恢复，管理员只能清除后重新配置；名称建议在浏览器中仍只是待确认草稿，管理员保存前不会进入 `games`、`game_name_catalog` 或任何审计表。
 - 密码、恢复码与会话仅保存不可逆验证材料或摘要；数据库 bootstrap 密码不进入 app 容器。
 - CSV 只允许订阅、价格历史和采集日志白名单字段，排除认证、会话、恢复码、Telegram 和数据库凭据。
 - 普通日志不得输出连接串、SQL 参数、第三方响应正文、Cookie、浏览器页面内容或异常堆栈中的秘密。
@@ -62,4 +63,4 @@ subscriptions / regional_products ── * notification_events
 
 首次 PostgreSQL 数据目录必须为空。只读 init hook 用容器内部 bootstrap 角色创建普通应用数据库所有者并转移数据库与 `public` schema 所有权；重复执行或错误非空目录必须失败，不能隐式修复。
 
-备份采用 PostgreSQL 17 custom archive、原子临时文件与每库单调序号。恢复只允许 app 停止、普通 app 角色拥有的独立空库；成功后验证迁移账本、当前迁移定义的 17 张 public 表精确集合，以及管理员只能为 0 行或唯一 `id=1`。详细合同见 [PostgreSQL 备份恢复](../deployment/postgres-backup-restore.md)。
+备份采用 PostgreSQL 17 custom archive、原子临时文件与每库单调序号。归档会包含 AI 密文行但不包含 Node 主密钥；恢复只允许 app 停止、普通 app 角色拥有的独立空库，成功后验证迁移账本、当前迁移定义的 17 张 public 表精确集合，以及管理员只能为 0 行或唯一 `id=1`。详细合同见 [PostgreSQL 备份恢复](../deployment/postgres-backup-restore.md)。

@@ -218,16 +218,16 @@ fail_post_validation() {
   die "$message"
 }
 
-# 此处是迁移验证模式：恢复后必须有非空不可变迁移账本，且 public 表集合与当前完整迁移集精确一致。
-# 同时比较总数、必需表命中数和额外表数，任一必需表缺失、旧表残留或未知表混入都拒绝；不能用五表抽样把
-# 缺少会话、订阅、汇率、通知或调度状态的 archive 错报为可启动数据库。
+# 此处是迁移验证模式：恢复后必须有五条不可变迁移的非空账本，且 public 表集合必须与当前完整迁移集精确一致，共 17 表。
+# `0004_simplified_chinese_game_names.sql` 的 game_name_catalog 与 `0005_ai_provider_configuration.sql` 的 ai_provider_configuration 都是历史/安全合同；
+# 同时比较总数、必需表命中数和额外表数，任一缺失、旧表残留或未知表混入都拒绝，不能把缺少认证、订阅、汇率、通知、名称审计或加密配置的 archive 错报为可启动数据库。
 if ! validation="$(compose exec -T "$database_service" sh -ceu '
   exec env PGPASSWORD="$APP_DATABASE_PASSWORD" psql --host="$1" --username="$APP_DATABASE_USER" --dbname="$2" \
-    --quiet --no-psqlrc --tuples-only --no-align --command "SELECT (SELECT count(*) FROM schema_migrations) || '\'':'\'' || count(*) || '\'':'\'' || count(*) FILTER (WHERE tablename IN ('\''schema_migrations'\'', '\''settings'\'', '\''games'\'', '\''regional_products'\'', '\''subscriptions'\'', '\''subscription_regions'\'', '\''price_snapshots'\'', '\''exchange_rates'\'', '\''fetch_logs'\'', '\''regional_product_health'\'', '\''notification_events'\'', '\''admin_credentials'\'', '\''sessions'\'', '\''login_attempts'\'', '\''manual_refresh_requests'\'')) || '\'':'\'' || count(*) FILTER (WHERE tablename NOT IN ('\''schema_migrations'\'', '\''settings'\'', '\''games'\'', '\''regional_products'\'', '\''subscriptions'\'', '\''subscription_regions'\'', '\''price_snapshots'\'', '\''exchange_rates'\'', '\''fetch_logs'\'', '\''regional_product_health'\'', '\''notification_events'\'', '\''admin_credentials'\'', '\''sessions'\'', '\''login_attempts'\'', '\''manual_refresh_requests'\'')) FROM pg_tables WHERE schemaname = '\''public'\''"
+    --quiet --no-psqlrc --tuples-only --no-align --command "SELECT (SELECT count(*) FROM schema_migrations) || '\'':'\'' || count(*) || '\'':'\'' || count(*) FILTER (WHERE tablename IN ('\''schema_migrations'\'', '\''settings'\'', '\''games'\'', '\''regional_products'\'', '\''subscriptions'\'', '\''subscription_regions'\'', '\''price_snapshots'\'', '\''exchange_rates'\'', '\''fetch_logs'\'', '\''regional_product_health'\'', '\''notification_events'\'', '\''admin_credentials'\'', '\''sessions'\'', '\''login_attempts'\'', '\''manual_refresh_requests'\'', '\''game_name_catalog'\'', '\''ai_provider_configuration'\'')) || '\'':'\'' || count(*) FILTER (WHERE tablename NOT IN ('\''schema_migrations'\'', '\''settings'\'', '\''games'\'', '\''regional_products'\'', '\''subscriptions'\'', '\''subscription_regions'\'', '\''price_snapshots'\'', '\''exchange_rates'\'', '\''fetch_logs'\'', '\''regional_product_health'\'', '\''notification_events'\'', '\''admin_credentials'\'', '\''sessions'\'', '\''login_attempts'\'', '\''manual_refresh_requests'\'', '\''game_name_catalog'\'', '\''ai_provider_configuration'\'')) FROM pg_tables WHERE schemaname = '\''public'\''"
 ' sh "$database_service" "$target_database" 2>/dev/null)"; then
   fail_post_validation '恢复后的迁移验证失败'
 fi
-[[ "$validation" =~ ^[1-9][0-9]*:15:15:0[[:space:]]*$ ]] || fail_post_validation '恢复后的迁移或完整表集合验证失败'
+[[ "$validation" =~ ^5:17:17:0[[:space:]]*$ ]] || fail_post_validation '恢复后的迁移或完整表集合验证失败'
 if ! restored_manifest="$(compose exec -T "$database_service" sh -ceu 'exec env PGPASSWORD="$APP_DATABASE_PASSWORD" psql --host="$1" --username="$APP_DATABASE_USER" --dbname="$2" --quiet --no-psqlrc --tuples-only --no-align --command "SELECT version || '\''|'\'' || checksum FROM schema_migrations ORDER BY version"' sh "$database_service" "$target_database" 2>/dev/null)"; then
   fail_post_validation '迁移校验失败'
 fi

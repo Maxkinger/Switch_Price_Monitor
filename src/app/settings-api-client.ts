@@ -3,6 +3,20 @@ import type { ApiRequestTracker } from "./api-request-tracker";
 import type { PublicSettingsPatch } from "./settings-form";
 import type { ProxyConnectionTestResult } from "../services/proxy-connection-test-service";
 
+/** 浏览器可读取的 AI 配置摘要；API Key 永远不属于此 DTO，不能被渲染、缓存或重新提交。 */
+export type AiProviderConfigurationSummary = {
+  configured: boolean;
+  model: string | null;
+  apiBaseUrl: string | null;
+};
+
+/** 保存时一次性提交完整 AI 配置；服务端不会从旧密文补回 Key，避免它成为秘密回显来源。 */
+export type AiProviderConfigurationInput = {
+  apiKey: string;
+  model: string;
+  apiBaseUrl: string;
+};
+
 /**
  * 设置页面只需要的同源 API 契约。接口不包含 Telegram、密码、恢复码或会话令牌，
  * 因为这些值不能由此公开偏好页面读取、缓存或再次提交。
@@ -11,6 +25,9 @@ export interface SettingsApiClient {
   getSettings(): Promise<AppSettings>;
   saveSettings(patch: PublicSettingsPatch): Promise<AppSettings>;
   testProxy(settings: PublicSettingsPatch["proxy"]): Promise<ProxyConnectionTestResult>;
+  getAiProviderConfiguration(): Promise<AiProviderConfigurationSummary>;
+  saveAiProviderConfiguration(input: AiProviderConfigurationInput): Promise<AiProviderConfigurationSummary>;
+  clearAiProviderConfiguration(): Promise<void>;
 }
 
 /**
@@ -51,6 +68,23 @@ export function createSettingsApiClient(request: typeof fetch = fetch, tracker?:
     }
   }
 
+  /**
+   * AI 配置接口与公开设置 PATCH 彻底分离：只接受专用路径和专用 DTO，
+   * 防止 API Key 因类型复用、LocalStorage 辅助逻辑或普通偏好请求而进入错误的数据边界。
+   */
+  async function requestAiJson<TResponse>(method: "GET" | "PUT", body?: AiProviderConfigurationInput): Promise<TResponse> {
+    // AI 卡片自行管理等待与禁用，不能占用应用壳的全屏请求遮罩；否则一个缓慢的摘要读取会阻断独立的公开设置表单。
+    const response = await request("/api/settings/ai-provider", {
+      method,
+      credentials: "same-origin",
+      headers: body === undefined ? undefined : { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const payload = (await response.json().catch(() => ({}))) as { error?: string };
+    if (!response.ok) throw new SettingsApiError(payload.error ?? "AI 配置请求未完成，请稍后重试。", response.status);
+    return payload as TResponse;
+  }
+
   return {
     /** 读取初始化后由服务端管理的公开偏好，页面不会自行推导默认区、时区或保留策略。 */
     async getSettings(): Promise<AppSettings> {
@@ -70,6 +104,23 @@ export function createSettingsApiClient(request: typeof fetch = fetch, tracker?:
         if (!response.ok) throw new SettingsApiError(payload.error ?? "代理连接测试未完成，请稍后重试。", response.status);
         return payload as ProxyConnectionTestResult;
       } finally { finish?.(); }
+    },
+    /** 读取服务端脱敏摘要；成功 JSON 不会被解释为或扩展为含 Key 的配置对象。 */
+    async getAiProviderConfiguration(): Promise<AiProviderConfigurationSummary> {
+      return requestAiJson<AiProviderConfigurationSummary>("GET");
+    },
+    /** 保存时才让内存中的 Key 进入同源请求体，服务端成功响应仍只能是无 Key 摘要。 */
+    async saveAiProviderConfiguration(input: AiProviderConfigurationInput): Promise<AiProviderConfigurationSummary> {
+      return requestAiJson<AiProviderConfigurationSummary>("PUT", input);
+    },
+    /** 删除请求故意没有正文，避免空 Key、旧模型或任何秘密草稿被多余地传输或记录。 */
+    async clearAiProviderConfiguration(): Promise<void> {
+      // 清除和保存一样由卡片局部禁用，避免幂等恢复操作把整个已认证应用锁进无关的全屏遮罩。
+      const response = await request("/api/settings/ai-provider", { method: "DELETE", credentials: "same-origin" });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new SettingsApiError(payload.error ?? "AI 配置清除未完成，请稍后重试。", response.status);
+      }
     },
   };
 }
